@@ -1,0 +1,1514 @@
+"""
+AetherLens — Entity Resolution Module
+Gemini-powered cross-source identity consolidation.
+Builds a structured Person Object from raw OSINT search results.
+"""
+
+import json
+import re
+import datetime
+import requests
+
+import config
+from modules.sanitizer import safe_str, safe_list, safe_int, safe_phone, defensive
+
+# ── Person Object schema ───────────────────────────────────────────────────────
+
+EMPTY_PERSON = {
+    "confirmed_name":       "",
+    "name_variants":        [],
+    "usernames":            {},
+    "platforms_confirmed":  [],
+    "profile_urls":         {},
+    "bio_data":             {},
+    "location_stated":      [],
+    "join_dates":           {},
+    "follower_counts":      {},
+    "post_counts":          {},
+    "web_mentions":         [],
+    "news_appearances":     [],
+    "github_data":          {},
+    "confidence_score":     0,
+    "data_sources":         [],
+    "data_gaps":            [],
+    # Cross-platform discovery fields
+    "confirmed_linked_profiles": [],
+    "potential_linked_profiles": [],
+    "emails_found":              [],
+    "phones_found":              [],
+    "websites_found":            [],
+    "linkedin_intelligence":     {},
+    "cross_platform_summary": {
+        "total_confirmed":   0,
+        "total_potential":   0,
+        "platforms_present": [],
+        "discovery_method":  [],
+    },
+    # Account timeline fields
+    "account_timeline":       [],
+    "oldest_account":         {},
+    "newest_account":         {},
+    "account_creation_flags": [],
+    "digital_age_years":      0,
+}
+
+
+def _new_person() -> dict:
+    return json.loads(json.dumps(EMPTY_PERSON))
+
+
+# ── Gemini API call ────────────────────────────────────────────────────────────
+
+def _call_gemini(prompt: str) -> str:
+    """
+    Send a prompt to Gemini and return the text response.
+    Returns empty string if API key not configured or request fails.
+    """
+    api_key = config.GEMINI_API_KEY
+    if not api_key or api_key == "your_gemini_key_here":
+        return ""
+
+    url = f"{config.GEMINI_ENDPOINT}?key={api_key}"
+    payload = {
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {
+            "temperature":     0.1,
+            "topP":            0.9,
+            "maxOutputTokens": 4096,
+        },
+        "safetySettings": [
+            {"category": "HARM_CATEGORY_HARASSMENT",        "threshold": "BLOCK_NONE"},
+            {"category": "HARM_CATEGORY_HATE_SPEECH",       "threshold": "BLOCK_NONE"},
+            {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+            {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
+        ],
+    }
+    try:
+        resp = requests.post(url, json=payload, timeout=30)
+        resp.raise_for_status()
+        data = resp.json()
+        candidates = data.get("candidates", [])
+        if candidates:
+            parts = candidates[0].get("content", {}).get("parts", [])
+            if parts:
+                return parts[0].get("text", "")
+    except Exception:
+        pass
+    return ""
+
+
+# ── Prompt builder ─────────────────────────────────────────────────────────────
+
+SYSTEM_PROMPT = """You are an expert OSINT analyst performing entity resolution.
+You receive raw search results about a person from multiple online sources.
+Your task is to determine if multiple records refer to the same individual,
+extract all available structured data, and return ONLY a valid JSON object.
+
+STRICT RULES:
+1. Return ONLY the JSON object — no markdown, no code fences, no explanation.
+2. NEVER hallucinate or invent information not present in the source data.
+3. If a field cannot be determined from the data, set it to "Not found" (string) or [] (list) or {} (dict).
+4. Flag any inconsistencies between sources in the "data_gaps" array.
+5. confidence_score must be an integer 0-100 based on evidence strength.
+6. "platforms_confirmed" must only list platforms with actual evidence.
+7. Use exact text from source data — no paraphrasing of uncertain facts.
+
+Return this exact JSON structure (no extra keys):
+{
+  "confirmed_name": "string or Not found",
+  "name_variants": ["list of alternative names/aliases found"],
+  "usernames": {"platform": "username"},
+  "platforms_confirmed": ["list of platforms with evidence"],
+  "profile_urls": {"platform": "url"},
+  "bio_data": {"source": "bio text"},
+  "location_stated": ["list of locations mentioned"],
+  "join_dates": {"platform": "date string"},
+  "follower_counts": {"platform": integer_or_Not found},
+  "post_counts": {"platform": integer_or_Not found},
+  "web_mentions": ["list of notable web mentions with URL"],
+  "news_appearances": ["list of news titles with URL"],
+  "github_data": {"repos": N, "followers": N, "bio": "text", "joined": "date"},
+  "confidence_score": integer_0_to_100,
+  "data_sources": ["list of sources used"],
+  "data_gaps": ["list of missing or inconsistent fields"]
+}"""
+
+
+def _build_prompt(query: str, search_results: dict) -> str:
+    results_json = json.dumps(search_results, indent=2, ensure_ascii=False)
+    return f"""{SYSTEM_PROMPT}
+
+TARGET QUERY: "{query}"
+
+RAW SEARCH DATA:
+{results_json}
+
+Now return the JSON Person Object:"""
+
+
+# ── JSON extractor ─────────────────────────────────────────────────────────────
+
+def _extract_json(text: str) -> dict | None:
+    """Extract first valid JSON object from Gemini response text."""
+    # Strip markdown fences if present
+    text = re.sub(r"```(?:json)?", "", text).strip()
+    # Try direct parse
+    try:
+        return json.loads(text)
+    except Exception:
+        pass
+    # Try to find first {...} block
+    match = re.search(r"\{.*\}", text, re.DOTALL)
+    if match:
+        try:
+            return json.loads(match.group())
+        except Exception:
+            pass
+    return None
+
+
+# ── Local fallback resolver ────────────────────────────────────────────────────
+
+def _local_resolve(query: str, search_results: dict) -> dict:
+    """
+    Rule-based fallback when Gemini is unavailable.
+    Extracts structured data directly from search result fields.
+    """
+    person = _new_person()
+    results = search_results.get("results", [])
+
+    if not results:
+        person["data_gaps"].append("No search results available")
+        return person
+
+    person["confirmed_name"] = query
+    sources_seen = set()
+    urls = {}
+    bios = {}
+    github_found = {}
+
+    for r in results:
+        platform = r.get("platform", "Unknown")
+        url      = r.get("url", "")
+        snippet  = r.get("snippet", "")
+        name     = r.get("full_name", "")
+        raw      = r.get("raw", {})
+
+        if r.get("confidence", 0) == 0:
+            continue
+
+        sources_seen.add(platform)
+        if url:
+            urls[platform] = url
+        if snippet:
+            bios[platform] = snippet[:200]
+
+        # Name variants
+        if name and name.lower() != query.lower() and name not in person["name_variants"]:
+            person["name_variants"].append(name)
+
+        # Web / news mentions
+        if platform == "Google News" and url:
+            person["news_appearances"].append(f"{name} — {url}")
+        elif url and platform not in ("GitHub", "Reddit"):
+            person["web_mentions"].append(f"{name} — {url}")
+
+        # GitHub specific
+        if platform == "GitHub" and raw:
+            github_found = {
+                "repos":     raw.get("public_repos", "Not found"),
+                "followers": raw.get("followers", "Not found"),
+                "bio":       raw.get("bio") or "Not found",
+                "joined":    raw.get("created_at", "Not found")[:10] if raw.get("created_at") else "Not found",
+            }
+            person["follower_counts"]["GitHub"] = raw.get("followers", "Not found")
+            person["post_counts"]["GitHub"]     = raw.get("public_repos", "Not found")
+            uname = raw.get("login", "")
+            if uname:
+                person["usernames"]["GitHub"] = uname
+
+        # Reddit specific
+        if platform == "Reddit" and raw:
+            person["follower_counts"]["Reddit"] = raw.get("total_karma", "Not found")
+            uname = raw.get("name", "")
+            if uname:
+                person["usernames"]["Reddit"] = uname
+
+        # Join date extraction from result metadata
+        jd = r.get("join_date", "")
+        if jd and platform not in person["join_dates"]:
+            person["join_dates"][platform] = {
+                "join_date":         jd,
+                "join_year":         r.get("join_year", 0),
+                "join_month":        r.get("join_month", ""),
+                "join_timestamp":    r.get("join_timestamp", ""),
+                "account_age_years": r.get("account_age_years", 0),
+                "account_age_days":  r.get("account_age_days", 0),
+                "last_active":       r.get("last_active", ""),
+                "date_confidence":   r.get("date_confidence", ""),
+                "date_source":       r.get("date_source", ""),
+            }
+
+    person["platforms_confirmed"] = sorted(sources_seen)
+    person["profile_urls"]        = urls
+    person["bio_data"]            = bios
+    person["data_sources"]        = sorted(sources_seen)
+    if github_found:
+        person["github_data"] = github_found
+
+    # Confidence: based on number of sources with valid results
+    n = len(sources_seen)
+    if n >= 4:
+        person["confidence_score"] = 80
+    elif n == 3:
+        person["confidence_score"] = 65
+    elif n == 2:
+        person["confidence_score"] = 45
+    elif n == 1:
+        person["confidence_score"] = 30
+    else:
+        person["confidence_score"] = 10
+
+    # Data gaps
+    if not person["location_stated"]:
+        person["data_gaps"].append("Location: Not found in any source")
+    if not person["join_dates"]:
+        person["data_gaps"].append("Join dates: Not found")
+    if not person["github_data"]:
+        person["data_gaps"].append("GitHub profile: Not searched or not found")
+    if not person["news_appearances"]:
+        person["data_gaps"].append("News appearances: None found")
+
+    return person
+
+
+# ── Fusion document resolution ─────────────────────────────────────────────────
+
+FUSION_PROMPT = """You are an entity resolution engine.
+Given this raw structured data extracted from uploaded documents,
+identify the primary subject.
+Extract and structure all information about this person.
+
+Rules:
+- Primary subject = person appearing most frequently in the data
+- Never use filenames or sheet names as person names
+- Extract all phone numbers
+- Extract all locations
+- Extract all dates and events
+- Extract all relationships
+- Link all records referring to same person into one entity
+- Return structured Person Object JSON matching the exact schema
+
+Raw data: {data_json}
+
+Return this exact JSON structure (no markdown, no code fences):
+{{
+  "confirmed_name": "primary subject full name",
+  "name_variants": [],
+  "usernames": {{}},
+  "platforms_confirmed": [],
+  "profile_urls": {{}},
+  "bio_data": {{}},
+  "location_stated": [],
+  "join_dates": {{}},
+  "follower_counts": {{}},
+  "post_counts": {{}},
+  "web_mentions": [],
+  "news_appearances": [],
+  "github_data": {{}},
+  "confidence_score": 0,
+  "data_sources": [],
+  "data_gaps": []
+}}"""
+
+
+def _call_bedrock_for_fusion(prompt: str) -> str:
+    """
+    Call Claude Opus 4 on AWS Bedrock (ap-south-1) for fusion entity resolution.
+    Primary engine — data stays in India (DPDP compliance).
+    """
+    try:
+        if getattr(config, "bedrock_client", None) is None:
+            return ""
+        body = json.dumps({
+            "anthropic_version": "bedrock-2023-05-31",
+            "max_tokens": 2048,
+            "messages": [{"role": "user", "content": prompt}],
+        })
+        response = config.bedrock_client.invoke_model(
+            modelId     = config.BEDROCK_MODEL_ID,
+            body        = body,
+            contentType = "application/json",
+            accept      = "application/json",
+        )
+        result = json.loads(response["body"].read())
+        return result["content"][0]["text"] or ""
+    except Exception as e:
+        try:
+            print(f"[BEDROCK] Entity resolution failed: {e}")
+        except Exception:
+            pass
+        return ""
+
+
+def _call_grok_for_fusion(prompt: str) -> str:
+    """Call Grok 4 for fusion entity resolution (fallback when Gemini unavailable)."""
+    try:
+        if not config.grok_client:
+            return ""
+        resp = config.grok_client.chat.completions.create(
+            model=config.GROK_MODEL,
+            max_tokens=2048,
+            temperature=0.1,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return resp.choices[0].message.content if resp.choices else ""
+    except Exception:
+        return ""
+
+
+# ── Filename / document-artifact detection ───────────────────────────────────
+FILENAME_SKIP_PATTERNS = [
+    # Test and validation prefixes
+    "test", "retest", "val",
+    "val0", "val1", "val2",
+    # Empty / null indicators
+    "empty", "empty_data", "empty_doc",
+    "null", "zero_data", "zero",
+    "no_data", "blank",
+    # Source-file indicators
+    "source_a", "source_b", "source_c", "source_d",
+    # Generic document names
+    "profile", "document", "report", "file", "data",
+    "background", "field_note", "observation", "log",
+    "records", "transactions", "surveillance", "calls",
+    "financial", "bank", "telecom", "challans",
+    "anpr", "timeline",
+    # AETHERLENS artifacts
+    "aetherlens", "restricted", "intelligence",
+    # Location/infrastructure strings that are never valid person names
+    "point", "link", "bridge", "sea", "worli", "bandra", "nariman",
+    "tower", "plaza", "mall", "junction", "station", "airport",
+    "highway", "flyover", "naka", "park", "garden", "sector",
+    # Legal/academic subject-category strings that are never person names
+    "procedure", "jurisprudence", "legislation", "ordinance",
+    "constitution", "amendment", "tribunal", "jurisdiction",
+]
+
+
+_NAME_SUFFIX_WORDS = {
+    "alias", "aka", "residence", "address", "home", "office",
+    "case", "file", "ref", "reference", "id", "no", "number",
+    "ltd", "pvt", "inc", "llp", "llc", "co",
+    "mr", "mrs", "ms", "dr", "prof",
+    "son", "daughter", "wife", "husband", "father", "mother",
+    "profile", "record", "report", "note", "log", "unit", "section", "details",
+    "1", "2", "3", "a", "b",
+}
+
+def _is_name_with_suffix(primary: str, variant: str) -> bool:
+    """Return True if variant is primary name plus trailing descriptor words (not a real alias)."""
+    p = primary.lower().strip()
+    v = variant.lower().strip()
+    if not v.startswith(p):
+        return False
+    suffix = v[len(p):].strip()
+    if not suffix:
+        return False
+    return all(w in _NAME_SUFFIX_WORDS for w in suffix.split())
+
+
+# Words that can NEVER appear in a real human name.
+# If any individual word in a candidate matches one of these, the candidate
+# is a document/category label, not a person.  Keep entries lowercase.
+_IMPOSSIBLE_NAME_WORDS = {
+    # Time / calendar
+    "year", "years", "month", "months", "week", "weeks",
+    "semester", "quarter", "term", "session", "annual", "quarterly",
+    "monthly", "weekly", "daily", "period", "duration", "date", "time",
+    # Academic / institutional
+    "academic", "course", "subject", "class", "grade", "curriculum",
+    "syllabus", "module", "lesson", "chapter", "unit", "section",
+    "department", "faculty", "division", "programme", "program",
+    "college", "school", "university", "institute", "board",
+    # Legal / procedural
+    "procedure", "proceedings", "act", "bill", "code", "statute",
+    "regulation", "ordinance", "amendment", "clause", "article",
+    "law", "laws", "jurisprudence", "legislation", "jurisdiction",
+    "tribunal", "constitution",
+    # Document / data labels
+    "report", "profile", "document", "file", "record", "log",
+    "data", "dataset", "entry", "form", "sheet", "table",
+    "summary", "overview", "details", "information", "info",
+    "type", "category", "level", "status", "mode", "format",
+    # Miscellaneous non-name nouns
+    "policy", "procedure", "process", "method", "system",
+    "plan", "scheme", "project", "case", "matter", "issue",
+    "number", "no", "id", "ref", "reference", "code",
+}
+
+
+def is_bad_subject_name(candidate, raw_documents=None) -> bool:
+    """
+    Return True if `candidate` is clearly a filename, test artifact, or
+    document-title string that should NEVER be treated as a real subject.
+    Uses both a blocklist (FILENAME_SKIP_PATTERNS) and a positive guard
+    (_IMPOSSIBLE_NAME_WORDS) so category phrases like "Academic Year" or
+    "Criminal Procedure" are caught even if they are new / unseen.
+    """
+    if not candidate:
+        return True
+
+    # Reject multi-line strings — text-extraction artifacts like "Zafar Ahmed Khan\nCase"
+    if "\n" in str(candidate) or "\r" in str(candidate):
+        return True
+
+    c_lower = (
+        str(candidate).lower().strip()
+        .replace(" ", "_")
+        .replace("-", "_")
+    )
+
+    # Too short to be a real name
+    if len(str(candidate).strip()) < 3:
+        return True
+
+    # Contains only digits / separators
+    if re.match(r'^[\d\s\-_]+$', str(candidate).strip()):
+        return True
+
+    # Reject names that start with a law-enforcement / officer role title
+    _ROLE_TITLES = {
+        "officer", "constable", "inspector", "sub-inspector", "sub_inspector",
+        "si", "dsp", "sp", "ips", "ips officer", "asi", "pi", "psi",
+        "head constable", "dy sp", "dysp", "superintendent",
+        "field officer", "investigating officer", "io",
+    }
+    first_word = str(candidate).strip().split()[0].lower().rstrip(".:,")
+    if first_word in _ROLE_TITLES:
+        return True
+    # Also reject if candidate starts with a full role phrase
+    for title in _ROLE_TITLES:
+        if c_lower.startswith(title.replace("-", "_").replace(" ", "_")):
+            return True
+
+    # Positive guard: reject if ANY individual word is an impossible-name word.
+    # Handles "Academic Year", "Criminal Procedure", "Annual Report", etc.
+    # without needing to enumerate every possible phrase.
+    words = [w.strip(".:,()[]") for w in str(candidate).strip().split()]
+    if any(w.lower() in _IMPOSSIBLE_NAME_WORDS for w in words):
+        return True
+
+    # Match against skip patterns (substring check on normalised string)
+    for pattern in FILENAME_SKIP_PATTERNS:
+        if pattern in c_lower:
+            return True
+
+    # Match against uploaded filenames
+    for doc in (raw_documents or []):
+        fname = (
+            doc.get("filename", "") or doc.get("name", "")
+        ).lower()
+        for ext in (".csv", ".pdf", ".txt", ".xlsx", ".xls", ".json"):
+            fname = fname.replace(ext, "")
+        fname = fname.replace(" ", "_").replace("-", "_").strip()
+        if not fname:
+            continue
+        if c_lower == fname:
+            return True
+        if len(fname) > 4 and fname in c_lower:
+            return True
+
+    return False
+
+
+_ENTITY_SKIP = [
+    "field officer report", "field intelligence note", "intelligence report",
+    "background profile document", "surveillance log", "activity log",
+    "case file", "subject file", "aetherlens", "restricted", "classification",
+    "authorized", "data completeness warning", "warning", "field officer",
+    "field officer unit", "observer", "section", "page", "not found",
+    "unknown", "confirmed", "unconfirmed", "case ref", "source",
+    "ed mum", "ncb ggn", "ncb mum",
+]
+
+
+# ── Permanent phone extraction pipeline ──────────────────────────────────────
+
+PHONE_REGEX = re.compile(
+    r"(?<!\d)"                              # no digit immediately before
+    r"("
+    r"\+91[-]?\d{5}[-]?\d{5}"              # +91-XXXXX-XXXXX  (India — no space inside)
+    r"|\+92[-]?\d{3}[-]?\d{7}"             # +92-XXX-XXXXXXX  (Pakistan)
+    r"|\+971[-]?\d{2}[-]?\d{7}"            # +971-XX-XXXXXXX  (UAE)
+    r"|\+65[-]?\d{4}[-]?\d{4}"             # +65-XXXX-XXXX    (Singapore)
+    r"|\+\d{1,3}[-]?\d{6,12}"              # generic international (no space — stops at space)
+    r"|\b91[6-9]\d{9}\b"                   # 91XXXXXXXXXX — CDR no-prefix format
+    r"|\b0[6-9]\d{9}\b"                    # 0XXXXXXXXXX  — leading-zero format
+    r"|\b[6-9]\d{9}\b"                     # plain 10-digit Indian mobile
+    r")"
+    r"(?!\d)"                              # no digit immediately after
+)
+
+
+def extract_all_phones(raw_documents: list) -> list:
+    """
+    Permanent comprehensive phone extractor.
+    Scans ingestion results, structured rows, and raw text from every document.
+    Works on any file format, any phone format.
+    """
+    phones: set = set()
+
+    for doc in safe_list(raw_documents):
+        # Source 1: ingestion entities result
+        entities = safe_list(doc.get("entities", {}).get("phones", [])) if isinstance(doc.get("entities"), dict) else []
+        for p in entities:
+            val = p.get("value", "") if isinstance(p, dict) else str(p)
+            clean = safe_phone(safe_str(val))
+            if clean:
+                phones.add(clean)
+
+        # Source 2: structured rows (CDR / CSV columns)
+        for row in safe_list(doc.get("structured_rows", [])):
+            if not isinstance(row, dict):
+                continue
+            for val in row.values():
+                text = safe_str(val)
+                for m in PHONE_REGEX.findall(text):
+                    clean = safe_phone(m)
+                    if clean:
+                        phones.add(clean)
+
+        # Source 3: full document text — prefer full_text (unlimited) over raw_text (5000-char preview)
+        text = safe_str(doc.get("full_text", "") or doc.get("raw_text", ""))
+        for m in PHONE_REGEX.findall(text):
+            clean = safe_phone(m)
+            if clean:
+                phones.add(clean)
+
+    # ── Post-extraction validation ────────────────────────────────────────────
+    def is_valid_phone(p: str) -> bool:
+        """
+        Rejects CDR fragments, monetary values, and short numbers that
+        slipped past the regex (e.g. '4451 2023-10-20 22', '9921 2023-04-12 23').
+        Rules:
+          - Strip everything except digits → must be 7–15 digits
+          - Must not be a year (4 digits)
+          - Must not look like a date string (YYYY-MM-DD prefix)
+          - Must not start with a 4-digit run that looks like a year (19xx/20xx)
+            unless the full string is a valid intl format
+        """
+        cleaned = p.strip()
+        digits  = re.sub(r"\D", "", cleaned)
+
+        # Reject IP addresses — e.g. "122.177.43.21"
+        if re.match(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$", cleaned):
+            return False
+
+        # Reject IP fragments with leading single digit + space
+        # e.g. "1 1221774321", "4 18522010145" (ISP data columns)
+        if re.match(r"^\d\s+\d{8,}$", cleaned):
+            return False
+
+        # Must be 7–15 actual digits
+        if not (7 <= len(digits) <= 15):
+            return False
+        # Reject year-like 4-digit match
+        if len(digits) == 4:
+            return False
+        # Reject date-format false positive (YYYY-MM-DD)
+        if re.match(r"^\d{4}[-/]\d{2}[-/]\d{2}", cleaned):
+            return False
+        # Reject CDR fragments: strings where there are multiple whitespace-separated
+        # tokens that mix digits and date-like parts (e.g. "4451 2023-10-20 22")
+        tokens = cleaned.split()
+        if len(tokens) >= 2:
+            # If any token looks like a date (YYYY-MM-DD) it's a CDR row fragment
+            if any(re.match(r"\d{4}-\d{2}-\d{2}", t) for t in tokens):
+                return False
+        # Reject bare 4-digit codes (e.g. "4451", "9921")
+        if re.fullmatch(r"\d{4}", digits):
+            return False
+        # Reject CDR row fragments: phone + fixed-width padding + call duration
+        # e.g. "+91-98201-44109              320"  or "+971-50-4412831              840"
+        # Signature: 2+ consecutive spaces followed by 1–4 digits at end of string
+        if re.search(r"\s{2,}\d{1,4}\s*$", cleaned):
+            return False
+        # Reject numbers shorter than 10 digits without an explicit country-code prefix
+        # "128 1221774321" and "3 18522010145" are ISP data volumes (128 MB, 3 GB)
+        if len(digits) < 10 and not cleaned.startswith("+"):
+            return False
+        # Reject numbers whose digit string starts with a known data-volume or
+        # ISP-account-ID prefix (128 MB, 256 MB, 512 MB, 1024/2048/4096 KB, etc.)
+        _DATA_PREFIXES = ("128", "256", "512", "1024", "2048", "4096", "3185", "1852")
+        for _pfx in _DATA_PREFIXES:
+            if digits.startswith(_pfx) and len(digits) > 8:
+                return False
+        # Reject ISP account-ID patterns  e.g. "1234/JIO/2022/00123"
+        if re.match(r"^\d{4}/\w+/\d{4}/\d+$", cleaned):
+            return False
+        # Reject enrollment-number formats  e.g. "ALG/LLB/2022/001"
+        if re.match(r"^[A-Za-z]+/[A-Za-z]+/\d{4}/", cleaned):
+            return False
+        # Indian mobile — last 10 digits must start with 6-9
+        if "+91" in cleaned or cleaned.startswith("91"):
+            local = digits[-10:]
+            if len(local) == 10 and local[0] not in "6789":
+                return False
+        return True
+
+    # Filter 1: use is_valid_phone validator
+    # Filter 2: also check date-format false positives
+    _DATE_RE = re.compile(r"^\d{4}[-/]\d{2}[-/]\d{2}")
+    filtered: set = set()
+    for p in phones:
+        if not is_valid_phone(p):
+            continue
+        if _DATE_RE.match(p.strip()):
+            continue
+        filtered.add(p)
+
+    # Deduplicate: normalize to last-10-digits key so +91-9876543210
+    # and 9876543210 are treated as the same subscriber number.
+    # Preference order: +country format > bare 10-digit > other
+    seen_digits: dict = {}   # last-10-digit key -> canonical representation
+    for p in filtered:
+        digits = re.sub(r"\D", "", p)
+        # Use last 10 digits as the dedup key (handles 91XXXXXXXXXX, 0XXXXXXXXXX, +91...)
+        key = digits[-10:] if len(digits) >= 10 else digits
+        existing = seen_digits.get(key)
+        if existing is None:
+            seen_digits[key] = p
+        else:
+            # Prefer the version with a + prefix (international canonical form)
+            if p.startswith("+") and not existing.startswith("+"):
+                seen_digits[key] = p
+
+    return list(seen_digits.values())
+
+
+def build_phone_source_map(raw_documents: list) -> dict:
+    """
+    Returns {canonical_phone: [filename, ...]} mapping each confirmed phone
+    number to the document(s) it was extracted from.
+    Used for per-source attribution in §14 of the PDF report.
+    """
+    raw_map: dict = {}   # phone -> set of filenames (before dedup)
+
+    for doc in safe_list(raw_documents):
+        fname = safe_str(doc.get("filename", "")) or "unknown file"
+
+        # Entities list
+        entities = safe_list(doc.get("entities", {}).get("phones", [])) if isinstance(doc.get("entities"), dict) else []
+        for p in entities:
+            val = p.get("value", "") if isinstance(p, dict) else str(p)
+            clean = safe_phone(safe_str(val))
+            if clean:
+                raw_map.setdefault(clean, set()).add(fname)
+
+        # Structured rows
+        for row in safe_list(doc.get("structured_rows", [])):
+            if not isinstance(row, dict):
+                continue
+            for val in row.values():
+                for m in PHONE_REGEX.findall(safe_str(val)):
+                    clean = safe_phone(m)
+                    if clean:
+                        raw_map.setdefault(clean, set()).add(fname)
+
+        # Raw text
+        text = safe_str(doc.get("full_text", "") or doc.get("raw_text", ""))
+        for m in PHONE_REGEX.findall(text):
+            clean = safe_phone(m)
+            if clean:
+                raw_map.setdefault(clean, set()).add(fname)
+
+    # Normalise keys to last-10-digit canonical form (same dedup as extract_all_phones)
+    seen_digits: dict = {}   # last-10-digit -> (canonical_phone, set_of_sources)
+    for phone, sources in raw_map.items():
+        digits = re.sub(r"\D", "", phone)
+        key = digits[-10:] if len(digits) >= 10 else digits
+        existing = seen_digits.get(key)
+        if existing is None:
+            seen_digits[key] = (phone, sources)
+        else:
+            canon, existing_sources = existing
+            existing_sources.update(sources)
+            # Prefer + prefix canonical form
+            if phone.startswith("+") and not canon.startswith("+"):
+                seen_digits[key] = (phone, existing_sources)
+            else:
+                seen_digits[key] = (canon, existing_sources)
+
+    return {phone: sorted(sources) for phone, sources in seen_digits.values()}
+
+
+def _local_resolve_from_rows(subject_name: str, structured_rows: list, filename: str,
+                              document_flags: list = None, doc_locations: list = None) -> dict:
+    """Build minimal person dict from structured rows when all AI calls fail."""
+    person = _new_person()
+    # Strip newline artifacts from text extraction (e.g. "Zafar Ahmed Khan\nCase")
+    clean_subject = (subject_name or "").replace("\n", " ").replace("\r", " ").strip()
+    person["confirmed_name"]   = clean_subject or "Unknown"
+    person["data_sources"]     = [filename] if filename else []
+    person["confidence_score"] = 30 if subject_name else 5
+
+    phones_seen: set = set()
+    locs_seen: set   = set()
+    for row in structured_rows[:500]:
+        for k, v in row.items():
+            v = str(v).strip()
+            if not v:
+                continue
+            kl = k.lower()
+            if any(x in kl for x in ("phone", "number", "contact")):
+                if re.match(r"[\d\+][\d\s\-]{6,}", v):
+                    phones_seen.add(v)
+            if any(x in kl for x in ("location", "city", "place", "area")):
+                if len(v) > 2 and v not in ("nan", "None"):
+                    locs_seen.add(v)
+
+    person["phones_found"]    = list(phones_seen)[:20]
+    person["location_stated"] = list(locs_seen)[:10]
+
+    # Merge locations from PDF text extraction
+    if doc_locations:
+        existing = set(person["location_stated"])
+        for loc in doc_locations:
+            if loc not in existing:
+                person["location_stated"].append(loc)
+                existing.add(loc)
+        person["location_stated"] = person["location_stated"][:20]
+
+    # Collect document flags as anomaly_flags
+    if document_flags:
+        person["anomaly_flags"] = [
+            {"flag": f.get("flag", str(f)), "source": f.get("source", ""), "severity": "MEDIUM"}
+            if isinstance(f, dict) else {"flag": str(f), "source": "", "severity": "MEDIUM"}
+            for f in document_flags
+        ]
+
+    # Gap detection only — confidence scoring happens in the caller after
+    # AI overlay and multi-doc raw_documents are available (line 763-764).
+    # Calling calculate_confidence here (no raw_documents) always caps at 5
+    # and is immediately overwritten — skip to avoid confusing log noise.
+    person["data_gaps"] = detect_data_gaps(person)
+
+    return person
+
+
+@defensive(fallback=(
+    {
+        "confirmed_name": "Unknown Subject", "confidence_score": 0,
+        "data_gaps": ["Resolution failed"], "phones_found": [],
+        "emails_found": [], "location_stated": [], "platforms_confirmed": [],
+        "data_sources": [], "anomaly_flags": [], "conflicts": [],
+    },
+    "error_fallback",
+))
+def resolve_entity_from_multiple_docs(raw_documents: list) -> tuple[dict, str]:
+    """
+    Resolve primary subject from a list of ingest result dicts.
+    Uses primary_subject from each doc first, then frequency analysis.
+    Collects anomaly_flags and locations from all docs.
+    Returns (person_dict, method_used).
+    """
+    from collections import Counter
+
+    # PRIORITY 1 — Use primary_subject from any document
+    primary_name = None
+    for doc in (raw_documents or []):
+        ps = doc.get("primary_subject", "").replace("\n", " ").replace("\r", " ").strip()
+        if ps and ps.lower() not in _ENTITY_SKIP and len(ps) > 4 \
+                and not is_bad_subject_name(ps, raw_documents):
+            primary_name = ps
+            print("[RESOLVE] Using primary_subject:", primary_name)
+            break
+
+    # PRIORITY 2 — Frequency analysis across all name lists
+    if not primary_name:
+        all_names = []
+        for doc in (raw_documents or []):
+            ents = doc.get("entities", {})
+            for n in ents.get("names", []):
+                val = n.get("value", "") if isinstance(n, dict) else str(n)
+                val = val.replace("\n", " ").replace("\r", " ").strip()
+                # Strip trailing suffix words so "Zafar Ahmed Khan Case" → "Zafar Ahmed Khan"
+                parts = val.split()
+                while parts and parts[-1].lower() in _NAME_SUFFIX_WORDS:
+                    parts = parts[:-1]
+                val = " ".join(parts)
+                if val:
+                    all_names.append(val)
+        if all_names:
+            from collections import Counter
+            for name, _ in Counter(all_names).most_common():
+                if not any(s in name.lower() for s in _ENTITY_SKIP) and len(name) > 5 \
+                        and not is_bad_subject_name(name, raw_documents):
+                    primary_name = name
+                    break
+
+    # FINAL GUARD — even if something slipped through, kill filename/test artifacts
+    if primary_name and is_bad_subject_name(primary_name, raw_documents):
+        print(f"[RESOLVE] Rejecting filename-as-subject: '{primary_name}'")
+        primary_name = None
+
+    if not primary_name:
+        primary_name = "Unknown Subject"
+
+    print("[RESOLVE] Final subject:", primary_name)
+
+    # Collect all structured_rows, flags, and locations across docs
+    all_rows = []
+    all_flags = []
+    all_locs = []
+    all_sources = []
+    for doc in (raw_documents or []):
+        all_rows.extend(doc.get("structured_rows", []))
+        all_flags.extend(doc.get("document_flags", []))
+        all_locs.extend(doc.get("locations", []))
+        fname = doc.get("filename", doc.get("name", ""))
+        if fname:
+            all_sources.append(fname)
+
+    # ── Try AI engines in priority order: Bedrock → Grok → Gemini ──────────
+    ai_person = None
+    ai_method = None
+    if primary_name != "Unknown Subject":
+        sample_rows = all_rows[:200] if all_rows else []
+        data_payload = {
+            "subject_hint": primary_name,
+            "source_file":  ", ".join(all_sources),
+            "rows":         sample_rows,
+        }
+        prompt = FUSION_PROMPT.format(
+            data_json=json.dumps(data_payload, indent=2, ensure_ascii=False)
+        )
+
+        print("[RESOLVE] Trying Bedrock (Claude Sonnet 4 · ap-south-1)...")
+        raw = _call_bedrock_for_fusion(prompt)
+        print(f"[RESOLVE] Bedrock returned {len(raw) if raw else 0} chars")
+        if raw:
+            parsed = _extract_json(raw)
+            if parsed and parsed.get("confirmed_name"):
+                ai_person, ai_method = parsed, "claude-sonnet-4-bedrock"
+
+        if not ai_person:
+            print("[RESOLVE] Bedrock empty/parse-failed -> trying Grok 4")
+            if config.GROK_API_KEY and config.GROK_API_KEY not in ("", "your_grok_key_here"):
+                raw = _call_grok_for_fusion(prompt)
+                print(f"[RESOLVE] Grok returned {len(raw) if raw else 0} chars")
+                if raw:
+                    parsed = _extract_json(raw)
+                    if parsed and parsed.get("confirmed_name"):
+                        ai_person, ai_method = parsed, "grok-4"
+
+        if not ai_person:
+            print("[RESOLVE] Grok empty/failed -> trying Gemini")
+            gk = config.GEMINI_API_KEY
+            if gk and gk not in ("", "your_gemini_key_here"):
+                raw = _call_gemini(prompt)
+                print(f"[RESOLVE] Gemini returned {len(raw) if raw else 0} chars")
+                if raw:
+                    parsed = _extract_json(raw)
+                    if parsed and parsed.get("confirmed_name"):
+                        ai_person, ai_method = parsed, "gemini"
+
+    # ── Build base person from rows, then overlay AI result if we got one ───
+    person = _local_resolve_from_rows(
+        primary_name, all_rows,
+        ", ".join(all_sources) if all_sources else "",
+        document_flags=all_flags,
+        doc_locations=all_locs,
+    )
+    person["data_sources"] = all_sources
+
+    method_used = "local-multidoc"
+    if ai_person:
+        # Overlay AI-extracted fields (but keep row-derived safety fields)
+        for key, default in EMPTY_PERSON.items():
+            if key in ai_person and ai_person[key]:
+                person[key] = ai_person[key]
+        cn = ai_person.get("confirmed_name", "").replace("\n", " ").replace("\r", " ").strip()
+        if cn and not is_bad_subject_name(cn, raw_documents):
+            person["confirmed_name"] = cn
+        person["data_sources"] = all_sources
+        method_used = ai_method
+        print(f"[RESOLVE] AI engine accepted: {method_used}")
+
+    # Permanent: comprehensive phone extraction across all sources
+    all_phones = extract_all_phones(raw_documents)
+    if all_phones:
+        person["phones_found"] = all_phones
+    # Per-file source attribution for §14 report rendering
+    person["phone_sources"] = build_phone_source_map(raw_documents)
+
+    # Permanent: conflict detection across all sources
+    if primary_name != "Unknown Subject":
+        detect_all_conflicts(raw_documents, primary_name, person)
+
+    person["data_gaps"] = detect_data_gaps(person, raw_documents)
+
+    # Primary confidence score — rule-based ceiling applied over any AI score
+    ai_score   = int(person.get("confidence_score") or 0) if ai_person else 0
+    rule_score = calculate_confidence(person, raw_documents)
+    person["confidence_score"] = min(ai_score, rule_score) if ai_person else rule_score
+
+    # Evidence-based breakdown for the report PDF (§02)
+    num_timeline = len(safe_list(person.get("timeline_events", [])))
+    conf_result  = calculate_stable_confidence(
+        num_files       = len(raw_documents),
+        num_phones      = len(safe_list(person.get("phones_found", []))),
+        num_timeline    = num_timeline,
+        num_graph_nodes = 0,   # graph not built yet at this stage; updated in app.py
+        num_gaps        = len(safe_list(person.get("data_gaps", []))),
+    )
+    person["confidence_breakdown"]  = conf_result["breakdown"]
+    person["confidence_explanation"] = conf_result["breakdown"]
+    print(f"[CONFIDENCE] Breakdown: {conf_result['breakdown']}")
+
+    return person, method_used
+
+
+def calculate_confidence(person_object: dict, raw_documents: list = None) -> int:
+    """
+    Evidence-chain confidence scorer. Every point added has a logged reason.
+    Every cap has a logged reason. Fully debuggable.
+    """
+    raw_documents    = safe_list(raw_documents)
+    score            = 0
+    evidence_chain   = []
+
+    def add(points: int, reason: str):
+        nonlocal score
+        score += points
+        evidence_chain.append(f"+{points}: {reason}")
+
+    def cap(max_score: int, reason: str):
+        nonlocal score
+        if score > max_score:
+            old   = score
+            score = max_score
+            evidence_chain.append(f"CAP {old}->{max_score}: {reason}")
+
+    name = safe_str(person_object.get("confirmed_name", ""))
+    if name and name not in ("Unknown Subject", "Unknown", "", "None"):
+        add(20, "Name confirmed")
+
+    phones = safe_list(person_object.get("phones_found", []))
+    if len(phones) >= 5:
+        add(20, f"{len(phones)} phones")
+    elif len(phones) >= 3:
+        add(15, f"{len(phones)} phones")
+    elif len(phones) >= 1:
+        add(10, f"{len(phones)} phone")
+
+    emails = safe_list(person_object.get("emails_found", []))
+    if emails:
+        add(10, f"{len(emails)} emails")
+
+    locs = safe_list(person_object.get("location_stated", []))
+    if locs:
+        add(8, f"{len(locs)} locations")
+
+    platforms = safe_list(person_object.get("platforms_confirmed", []))
+    if len(platforms) >= 3:
+        add(15, "3+ platforms")
+    elif len(platforms) >= 1:
+        add(8, f"{len(platforms)} platform")
+
+    doc_count = len(raw_documents)
+    if doc_count >= 6:
+        add(15, f"{doc_count} files")
+    elif doc_count >= 4:
+        add(12, f"{doc_count} files")
+    elif doc_count >= 3:
+        add(8, f"{doc_count} files")
+    elif doc_count >= 2:
+        add(5, f"{doc_count} files")
+
+    assoc = safe_list(person_object.get("data_sources", []))
+    if len(assoc) >= 4:
+        add(10, "rich associations")
+    elif len(assoc) >= 2:
+        add(5, "some associations")
+
+    gaps    = safe_list(person_object.get("data_gaps", []))
+    penalty = min(len(gaps) * 2, 15)
+    if penalty:
+        score -= penalty
+        evidence_chain.append(f"-{penalty}: {len(gaps)} gaps")
+
+    # Hard caps — each with documented reason
+    has_contact = bool(phones or emails or platforms)
+    if not has_contact:
+        cap(40, "no contact data confirmed")
+
+    if doc_count == 1:
+        cap(40, "single source only")
+    if doc_count == 0:
+        cap(5, "no documents")
+
+    # Multi-source documents (≥3 files) count as a confirmed data type —
+    # CDR/document-only investigations have no social platforms by design.
+    confirmed_types = sum([
+        1 if phones else 0,
+        1 if emails else 0,
+        1 if locs else 0,
+        1 if platforms else 0,
+        1 if doc_count >= 3 else 0,   # rich document corpus = evidence type
+    ])
+    if confirmed_types == 0:
+        cap(20, "no data types")
+    elif confirmed_types < 2:
+        cap(40, f"only {confirmed_types} data type(s)")
+
+    # Relax the platform cap for document-rich investigations
+    if not platforms and doc_count < 3:
+        cap(55, "no confirmed platforms and sparse docs")
+    if doc_count <= 2:
+        cap(60, f"only {doc_count} document(s)")
+
+    final = max(safe_int(score), 0)
+
+    # Store evidence chain in person object for debugging
+    person_object["confidence_evidence"] = evidence_chain
+    print(f"[CONFIDENCE] {final}/100 — {evidence_chain}")
+
+    return final
+
+
+def calculate_stable_confidence(
+    num_files: int,
+    num_phones: int,
+    num_timeline: int,
+    num_graph_nodes: int,
+    num_gaps: int,
+) -> dict:
+    """
+    Stable, evidence-based confidence engine.
+    Base 42. Safety rails: max(42, min(82)). Rounded to nearest 2.
+
+    Gap penalty is intentionally light (3 pts each, max 12): many expected
+    fields (GitHub, join dates, news appearances) are irrelevant for CDR or
+    financial investigations and should not collapse the score to the floor.
+    Returns {"confidence": int, "breakdown": str}.
+    """
+    base           = 42
+    file_bonus     = min(num_files * 8, 48)
+    phone_bonus    = min(num_phones * 2, 14)
+    # timeline_bonus: ~1 pt per 5 events, capped at 14
+    timeline_bonus = min(num_timeline // 5, 14)
+    graph_bonus    = min(num_graph_nodes // 2, 12)
+    # Light penalty: 3 pts per gap, max 12 — prevents CDR investigations from
+    # being dragged to the floor by irrelevant missing fields (GitHub, LinkedIn…)
+    gap_penalty    = min(num_gaps * 3, 12)
+
+    raw_score   = base + file_bonus + phone_bonus + timeline_bonus + graph_bonus - gap_penalty
+    final_score = max(42, min(82, raw_score))
+    final_score = round(final_score / 2) * 2
+
+    breakdown = (
+        f"{num_files} source file(s) [+{file_bonus}], "
+        f"{num_phones} phone(s) [+{phone_bonus}], "
+        f"{num_timeline} timeline event(s) [+{timeline_bonus}], "
+        f"{num_graph_nodes} graph node(s) [+{graph_bonus}], "
+        f"{num_gaps} data gap(s) [-{gap_penalty}]"
+    )
+
+    return {"confidence": final_score, "breakdown": breakdown}
+
+
+def calculate_evidence_based_confidence(
+    num_files: int,
+    num_entities: int = 0,
+    num_phones: int = 0,
+    num_timeline_events: int = 0,
+    num_gaps: int = 0,
+    contradiction_count: int = 0,
+    graph_node_count: int = 0,
+) -> dict:
+    """
+    Backward-compatibility shim — delegates to calculate_stable_confidence.
+    Old callers reading 'identity_confidence' or 'explanation' still work.
+    """
+    result = calculate_stable_confidence(
+        num_files       = num_files,
+        num_phones      = num_phones,
+        num_timeline    = num_timeline_events,
+        num_graph_nodes = graph_node_count,
+        num_gaps        = num_gaps,
+    )
+    score = result["confidence"]
+    return {
+        "identity_confidence": score,
+        "confidence":          score,
+        "breakdown":           result["breakdown"],
+        "explanation":         result["breakdown"],
+    }
+
+
+def detect_data_gaps(person_object: dict, raw_documents: list = None) -> list:
+    """
+    Comprehensive data gap detection: checks all expected fields AND
+    extracts explicitly stated gaps from document text.
+    """
+    import re as _re
+    raw_documents = raw_documents or []
+    gaps = []
+    seen = set()
+
+    def _add_gap(g: str):
+        g = g.strip()
+        if g and 3 < len(g) < 80 and g.lower() not in seen:
+            seen.add(g.lower())
+            gaps.append(g)
+
+    EXPECTED_FIELDS = [
+        ("phones_found",              "No verified phone number on record"),
+        ("emails_found",              "No email address identified in documents"),
+        ("platforms_confirmed",       "Social media presence unconfirmed — manual platform check recommended"),
+        ("location_stated",           "No confirmed residential or operational address"),
+        ("confirmed_linked_profiles", "Online identity unverified — cross-platform search pending"),
+        ("join_dates",                "Platform account creation dates unknown"),
+        ("github_data",               "Technical/developer profile (GitHub) not investigated"),
+        ("news_appearances",          "No news or media appearances found — expand search to media databases"),
+    ]
+    for field, label in EXPECTED_FIELDS:
+        val = person_object.get(field)
+        if not val or val == [] or val == {} or val == "":
+            _add_gap(label)
+
+    # NOTE: Free-text extraction from document body is intentionally NOT done here.
+    # Document body contains arbitrary content (surveillance logs, CDR rows, financial data)
+    # that would inject raw fragments like "tenant" or "m Dubai Large cabin bag" as gap labels.
+    # Gaps are derived ONLY from structured field presence checks above.
+
+    return gaps if gaps else ["No specific gaps identified"]
+
+
+# ── Permanent conflict detector ───────────────────────────────────────────────
+
+_MAJOR_CITIES = {
+    "mumbai", "delhi", "pune", "bengaluru", "hyderabad", "chandigarh",
+    "kolkata", "chennai", "gurugram", "noida", "ahmedabad", "surat",
+    "lucknow", "jaipur",
+}
+
+_DOB_CONTEXT_RE = re.compile(
+    r"(?:dob|date.of.birth|born)[:\s]+([^\n,;]{5,30})",
+    re.IGNORECASE,
+)
+
+
+def detect_all_conflicts(
+    raw_documents: list,
+    primary_name: str,
+    person_object: dict,
+) -> list:
+    """
+    Permanent pipeline step — runs on every fusion job.
+    Detects name variants, location conflicts, and DOB conflicts across sources.
+    Injects findings directly into person_object["anomaly_flags"] and ["conflicts"].
+    """
+    conflicts: list = []
+
+    # ── NAME CONFLICTS ────────────────────────────────────────────────────────
+    primary_parts = set(safe_str(primary_name).lower().split())
+    names_by_source: dict = {}
+    for doc in safe_list(raw_documents):
+        fname = safe_str(doc.get("filename", ""))
+        ents  = doc.get("entities", {})
+        names = safe_list(ents.get("names", [])) if isinstance(ents, dict) else []
+        parsed = [
+            safe_str(n.get("value", n) if isinstance(n, dict) else n)
+            for n in names
+        ]
+        if parsed:
+            names_by_source[fname] = parsed
+
+    seen_variants: set = set()
+    for source, names in names_by_source.items():
+        for name in names:
+            if name == primary_name or name in seen_variants:
+                continue
+            name_parts = set(name.lower().split())
+            overlap    = primary_parts & name_parts
+            # Minimum overlap threshold: a single shared surname (e.g., "Khan")
+            # is not enough to declare a NAME_CONFLICT when the primary has
+            # 2+ tokens.  Require ≥2 shared tokens for multi-word primaries so
+            # that "Khan Ali" does not conflict with "Zafar Ahmed Khan".
+            min_overlap = 2 if len(primary_parts) >= 2 else 1
+            if overlap and len(overlap) >= min_overlap and len(name) > 4:
+                # Suppress if variant is just primary name + descriptor suffix
+                if _is_name_with_suffix(primary_name, name):
+                    continue
+                seen_variants.add(name)
+                conflicts.append({
+                    "type":     "NAME_CONFLICT",
+                    "flag":     (
+                        f"NAME CONFLICT: Primary='{primary_name}' vs Variant='{name}'"
+                        f" — shared tokens: {overlap} — Source: {source}"
+                    ),
+                    "severity": "HIGH",
+                })
+
+    # ── LOCATION CONFLICTS ────────────────────────────────────────────────────
+    cities_found: dict = {}
+    for doc in safe_list(raw_documents):
+        fname = safe_str(doc.get("filename", ""))
+        locs  = safe_list(doc.get("locations", []))
+        for loc in locs:
+            loc_lower = safe_str(loc).lower()
+            for city in _MAJOR_CITIES:
+                if city in loc_lower:
+                    cities_found.setdefault(city, []).append(fname)
+
+    if len(cities_found) > 1:
+        city_list = list(cities_found.keys())
+        conflicts.append({
+            "type":     "LOCATION_CONFLICT",
+            "flag":     (
+                f"LOCATION CONFLICT: Subject linked to multiple cities: "
+                f"{', '.join(city_list)} -- verify current residence"
+            ),
+            "severity": "MEDIUM",
+        })
+
+    # ── DOB CONFLICTS ─────────────────────────────────────────────────────────
+    dobs_by_source: dict = {}
+    for doc in safe_list(raw_documents):
+        fname   = safe_str(doc.get("filename", ""))
+        text    = safe_str(doc.get("raw_text", "") or doc.get("full_text", ""))
+        matches = _DOB_CONTEXT_RE.findall(text)
+        if matches:
+            dobs_by_source[fname] = matches
+
+    if len(dobs_by_source) > 1:
+        all_dobs = [
+            f"{d.strip()} ({src})"
+            for src, dobs in dobs_by_source.items()
+            for d in dobs
+        ]
+        unique_dob_values = set(d.split(" (")[0].strip() for d in all_dobs)
+        if len(unique_dob_values) > 1:
+            conflicts.append({
+                "type":     "DOB_CONFLICT",
+                "flag":     (
+                    f"DOB CONFLICT: Multiple dates of birth found: "
+                    f"{'; '.join(all_dobs)}"
+                ),
+                "severity": "HIGH",
+            })
+
+    # Inject into person object
+    person_object["conflicts"] = conflicts
+    existing = safe_list(person_object.get("anomaly_flags", []))
+    for c in conflicts:
+        existing.append(c.get("flag", ""))
+    person_object["anomaly_flags"] = existing
+
+    if conflicts:
+        print(f"[CONFLICTS] {len(conflicts)} found: {[c['type'] for c in conflicts]}")
+
+    return conflicts
+
+
+def resolve_entity_from_documents(
+    subject_name: str,
+    structured_rows: list,
+    filename: str = "",
+) -> tuple:
+    """
+    Build a Person Object from structured document rows (CSV/Excel).
+    Tries Gemini first, then Grok 4, then local rule-based fallback.
+    Returns (person_dict, method_used).
+    """
+    # Shared prompt builder
+    sample = structured_rows[:200] if structured_rows else []
+    data_payload = {
+        "subject_hint": subject_name,
+        "source_file":  filename,
+        "rows":         sample,
+    }
+    prompt = FUSION_PROMPT.format(
+        data_json=json.dumps(data_payload, indent=2, ensure_ascii=False)
+    )
+
+    def _parse_ai_response(raw_text: str, model_name: str):
+        if not raw_text:
+            return None, None
+        parsed = _extract_json(raw_text)
+        if not parsed:
+            return None, None
+        # Ensure confirmed_name is populated — only fall back to subject_name
+        # if it is a real person name (not a legal category, filename, etc.)
+        if not parsed.get("confirmed_name") or parsed["confirmed_name"] in ("", "Not found"):
+            if subject_name and not is_bad_subject_name(subject_name):
+                parsed["confirmed_name"] = subject_name
+            else:
+                parsed["confirmed_name"] = "Unknown Subject"
+        for key, default in EMPTY_PERSON.items():
+            if key not in parsed:
+                parsed[key] = json.loads(json.dumps(default))
+        if not isinstance(parsed.get("confidence_score"), (int, float)):
+            parsed["confidence_score"] = 0
+
+        # ── Set data_sources BEFORE confidence scoring so +10 bonus applies ──
+        parsed["data_sources"] = parsed.get("data_sources") or ([filename] if filename else [])
+
+        # ── Merge phones from structured_rows BEFORE confidence scoring ───────
+        # AI may return sparse phones; structured_rows has every raw number.
+        _doc_stub = [{"filename": filename, "structured_rows": structured_rows}] if structured_rows else (
+            [{"filename": filename}] if filename else []
+        )
+        if structured_rows:
+            row_phones = extract_all_phones(_doc_stub)
+            if row_phones:
+                existing_phones = set(safe_list(parsed.get("phones_found", [])))
+                for p in row_phones:
+                    if p not in existing_phones:
+                        existing_phones.add(p)
+                parsed["phones_found"] = list(existing_phones)
+
+        # ── Apply hard caps — AI often inflates scores on sparse data ─────────
+        ai_score = max(0, min(100, int(parsed["confidence_score"])))
+        capped   = calculate_confidence(parsed, _doc_stub)
+        parsed["confidence_score"] = min(ai_score, capped)
+
+        # Ensure comprehensive gap detection
+        if not parsed.get("data_gaps"):
+            parsed["data_gaps"] = detect_data_gaps(parsed)
+        return parsed, model_name
+
+    # ── Try Bedrock (Claude Opus 4 · ap-south-1 · India) — PRIMARY ──────────
+    if getattr(config, "bedrock_client", None) is not None:
+        raw = _call_bedrock_for_fusion(prompt)
+        person, method = _parse_ai_response(raw, "claude-sonnet-4-bedrock")
+        if person:
+            return person, method
+
+    # ── Try Grok 4 ────────────────────────────────────────────────────────────
+    if config.GROK_API_KEY and config.GROK_API_KEY not in ("", "your_grok_key_here"):
+        raw = _call_grok_for_fusion(prompt)
+        person, method = _parse_ai_response(raw, "grok-4")
+        if person:
+            return person, method
+
+    # ── Try Gemini ────────────────────────────────────────────────────────────
+    gemini_key = config.GEMINI_API_KEY
+    if gemini_key and gemini_key not in ("", "your_gemini_key_here"):
+        raw = _call_gemini(prompt)
+        person, method = _parse_ai_response(raw, "gemini")
+        if person:
+            return person, method
+
+    # ── Local rule-based fallback ─────────────────────────────────────────────
+    return _local_resolve_from_rows(subject_name, structured_rows, filename), "local-fallback"
+
+
+# ── Main resolution entry point ────────────────────────────────────────────────
+
+def resolve_entity(query: str, search_results: dict) -> dict:
+    """
+    Build a Person Object from raw search results.
+    Uses Gemini if API key is available; falls back to local rule-based resolver.
+    Returns (person_dict, method_used).
+    """
+    gemini_key = config.GEMINI_API_KEY
+    use_gemini = gemini_key and gemini_key != "your_gemini_key_here"
+
+    if use_gemini:
+        prompt   = _build_prompt(query, search_results)
+        raw_text = _call_gemini(prompt)
+        if raw_text:
+            parsed = _extract_json(raw_text)
+            if parsed:
+                # Ensure all required keys are present (backfill with defaults)
+                for key, default in EMPTY_PERSON.items():
+                    if key not in parsed:
+                        parsed[key] = json.loads(json.dumps(default))
+                # Enforce types
+                if not isinstance(parsed.get("confidence_score"), (int, float)):
+                    parsed["confidence_score"] = 0
+                parsed["confidence_score"] = max(0, min(100, int(parsed["confidence_score"])))
+                return parsed, "gemini"
+
+    # Fallback
+    person = _local_resolve(query, search_results)
+    return person, "local"
+
+
+# ── Convenience wrapper ────────────────────────────────────────────────────────
+
+def build_person_profile(query: str, search_results: dict) -> tuple[dict, str]:
+    """
+    Public API: build and return (person_object, resolution_method).
+    After initial resolution, automatically runs cross-platform discovery:
+      - find_linked_profiles()          -> confirmed + potential linked accounts
+      - extract_linkedin_intelligence() -> emails, phones, social links from LinkedIn
+    All results are merged into the Person Object.
+    """
+    person, method = resolve_entity(query, search_results)
+
+    # ── Cross-platform discovery ───────────────────────────────────────────────
+    try:
+        from modules.search import find_linked_profiles, extract_linkedin_intelligence
+
+        linked = find_linked_profiles(person)
+        person["confirmed_linked_profiles"] = linked.get("confirmed_linked", [])
+        person["potential_linked_profiles"] = linked.get("potential_linked", [])
+
+        disc = linked.get("discovery_summary", {})
+        person["cross_platform_summary"] = {
+            "total_confirmed":   len(person["confirmed_linked_profiles"]),
+            "total_potential":   len(person["potential_linked_profiles"]),
+            "platforms_present": list(
+                set(person.get("platforms_confirmed", []))
+                | {c["platform"] for c in person["confirmed_linked_profiles"]}
+            ),
+            "discovery_method": [
+                m for m in ["username_propagation", "name_search", "bio_crossref"]
+                if disc.get("platforms_checked") or disc.get("platforms_confirmed")
+            ],
+        }
+
+        # ── LinkedIn intelligence ──────────────────────────────────────────────
+        li_url  = person.get("profile_urls", {}).get("LinkedIn", "")
+        li_user = person.get("usernames", {}).get("LinkedIn", "")
+        if not li_url and li_user:
+            li_url = f"https://www.linkedin.com/in/{li_user}/"
+
+        if li_url:
+            m = __import__("re").search(r"linkedin\.com/in/([^/?#\s]+)", li_url)
+            if m:
+                li_intel = extract_linkedin_intelligence(m.group(1).rstrip("/"))
+                person["linkedin_intelligence"] = li_intel
+                # Merge emails, phones, websites
+                for email in li_intel.get("emails_found", []):
+                    if email not in person["emails_found"]:
+                        person["emails_found"].append(email)
+                for phone in li_intel.get("phones_found", []):
+                    if phone not in person["phones_found"]:
+                        person["phones_found"].append(phone)
+                if li_intel.get("website_found"):
+                    w = li_intel["website_found"]
+                    if w not in person["websites_found"]:
+                        person["websites_found"].append(w)
+
+    except Exception:
+        pass  # Discovery is non-fatal — profile is still valid without it
+
+    # ── Account timeline analysis ──────────────────────────────────────────────
+    try:
+        from modules.account_timeline import build_account_timeline
+        timeline_result = build_account_timeline(person)
+        person["account_timeline"]       = timeline_result.get("timeline", [])
+        person["oldest_account"]         = timeline_result.get("oldest_account", {})
+        person["newest_account"]         = timeline_result.get("newest_account", {})
+        person["account_creation_flags"] = timeline_result.get("flags", [])
+        person["digital_age_years"]      = timeline_result.get("digital_age_years", 0)
+    except Exception:
+        pass  # Timeline is non-fatal
+
+    return person, method

@@ -1,0 +1,36 @@
+* {
+  font-style: italic;
+}
+
+body {
+  background-color: #000000;
+  color: #F0EAD6;
+}
+
+.stApp {
+  background-color: #000000;
+}
+
+.accent {
+  color: #7B2FBE;
+}
+
+.secondary {
+  color: #9D4EDD;
+}
+
+input, textarea, select {
+  background-color: #0a0a0a !important;
+  color: #F0EAD6 !important;
+  border: 1px solid #7B2FBE !important;
+}
+
+button {
+  background-color: #000000 !important;
+  color: #F0EAD6 !important;
+  border: 1px solid #7B2FBE !important;
+}
+
+button:hover {
+  background-color: #7B2FBE !important;
+}

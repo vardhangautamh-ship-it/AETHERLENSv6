@@ -1,0 +1,38 @@
+# Secrets & local config
+.env
+*.license
+aetherlens.license
+config_local.py
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+
+# Virtual environments
+venv/
+env/
+.venv/
+
+# Streamlit cache
+.streamlit/secrets.toml
+
+# Database & exports (runtime data)
+database/*.db
+exports/
+logs/
+streamlit.log
+
+# Test artefacts
+run_shot6_tests.py
+tests_shot5.py
+tests_shot6.py
+test_hardening.py
+t6.py
+
+# OS artefacts
+.DS_Store
+Thumbs.db
+desktop.ini
