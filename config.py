@@ -5,6 +5,8 @@ import logging
 from dotenv import load_dotenv
 from pathlib import Path
 
+_ON_LINUX = os.path.exists("/tmp")
+
 def safe_print(*args, **kwargs):
     """
     Print that never crashes on Windows cp1252 stdout.
@@ -32,10 +34,11 @@ BASE_DIR = Path(__file__).parent.resolve()
 load_dotenv(BASE_DIR / ".env")
 
 # ── Centralised logging ────────────────────────────────────────────────────────
-Path("logs").mkdir(exist_ok=True)
+_LOG_DIR = Path("/tmp/logs") if _ON_LINUX else Path("logs")
+_LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 _log_formatter  = logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
-_file_handler   = logging.FileHandler("logs/aetherlens.log", encoding="utf-8")
+_file_handler   = logging.FileHandler(str(_LOG_DIR / "aetherlens.log"), encoding="utf-8")
 _file_handler.setFormatter(_log_formatter)
 _stream_handler = logging.StreamHandler()
 _stream_handler.setFormatter(_log_formatter)
@@ -174,8 +177,12 @@ def test_gemini_connection():
 
 
 # ── Database ──────────────────────────────────────────────────────────────────
-DATABASE_DIR  = BASE_DIR / "database"
-DATABASE_PATH = DATABASE_DIR / "aetherlens.db"
+if _ON_LINUX:
+    DATABASE_DIR  = Path("/tmp")
+    DATABASE_PATH = Path("/tmp/aetherlens.db")
+else:
+    DATABASE_DIR  = BASE_DIR / "database"
+    DATABASE_PATH = DATABASE_DIR / "aetherlens.db"
 DATABASE_URL  = f"sqlite:///{DATABASE_PATH}"
 
 # ── JWT ───────────────────────────────────────────────────────────────────────
@@ -184,7 +191,7 @@ JWT_ALGORITHM  = "HS256"
 JWT_EXPIRY_MIN = 30  # minutes
 
 # ── Admin Defaults ────────────────────────────────────────────────────────────
-ADMIN_PIN      = os.getenv("ADMIN_PIN", "000000")
+ADMIN_PIN      = os.getenv("ADMIN_PIN", "747291")
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin")
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "AetherLens@2024")
 
@@ -205,12 +212,18 @@ APP_VERSION = "2.0.0"
 APP_TAGLINE = "Intelligence Operating System"
 
 # ── Exports ───────────────────────────────────────────────────────────────────
-EXPORTS_DIR = BASE_DIR / "exports"
+EXPORTS_DIR = Path("/tmp/exports") if _ON_LINUX else BASE_DIR / "exports"
 
 # ── Assets ────────────────────────────────────────────────────────────────────
 ASSETS_DIR = BASE_DIR / "assets"
 CSS_PATH   = ASSETS_DIR / "styles.css"
 
 # ── Ensure directories exist ──────────────────────────────────────────────────
-DATABASE_DIR.mkdir(parents=True, exist_ok=True)
-EXPORTS_DIR.mkdir(parents=True, exist_ok=True)
+try:
+    DATABASE_DIR.mkdir(parents=True, exist_ok=True)
+except Exception:
+    pass
+try:
+    EXPORTS_DIR.mkdir(parents=True, exist_ok=True)
+except Exception:
+    pass
