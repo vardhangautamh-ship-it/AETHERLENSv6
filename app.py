@@ -3425,7 +3425,16 @@ def screen_admin():
         grok_status = '<span class="status-ok">ONLINE</span>' if grok_live else ('<span class="status-warn">KEY LOADED</span>' if grok_key else '<span class="status-err">NO KEY</span>')
         db_status     = '<span class="status-ok">CONNECTED</span>' if stats.get("db_ok") else '<span class="status-err">ERROR</span>'
 
-        # ── Bedrock (Claude Opus 4 · Mumbai ap-south-1) — PRIMARY ENGINE ─────
+        # ── Bedrock (Claude Sonnet 4 · Mumbai ap-south-1) — PRIMARY ENGINE ──
+        # Lazy init: secrets may not have been available at import time.
+        if config.bedrock_client is None:
+            try:
+                _bc, _bm = config.get_bedrock_client()
+                if _bc:
+                    config.bedrock_client   = _bc
+                    config.BEDROCK_MODEL_ID = _bm
+            except Exception:
+                pass
         try:
             bedrock_ok, bedrock_reason = config.test_bedrock_connection()
         except Exception as _e:
