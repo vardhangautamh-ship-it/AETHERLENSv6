@@ -1800,6 +1800,42 @@ def _generate_report_inner(
     # corrected name.  Only overrides when entity resolution did not
     # already produce a confirmed non-unknown name.
     person = dict(person or {})   # local shallow copy — don't mutate caller's dict
+
+    # ── Inject keyword-derived flags from raw document text ───────────────────
+    # Ensures risk agent and next-step agent always see critical flags even when
+    # structured anomaly_flags are sparse (e.g. first-run before AI has run).
+    _KEYWORD_FLAGS_INJECT = [
+        (("CERT-IN", "CERT-In", "CERTIN", "COMPUTER EMERGENCY RESPONSE"),
+         "CERT-In inquiry confirmed"),
+        (("IT ACT", "INFORMATION TECHNOLOGY ACT", "SECTION 43", "SECTION 66", "SECTION 69"),
+         "IT Act violation flagged"),
+        (("DPDP", "DATA PROTECTION"),
+         "DPDP Act breach suspected"),
+        (("DELETED", "DELETION", "REPO_DELETE", "POST_DELETE", "MODEL_DELETE"),
+         "Evidence deletion confirmed"),
+        (("UNAUTHORISED", "UNAUTHORIZED"),
+         "Unauthorised access flagged"),
+        (("SCRAPING", "SCRAPED", "DATA SCRAPE"),
+         "Unauthorised data scraping flagged"),
+        (("DEPLOYED", "DEPLOYMENT", "MALWARE", "EXPLOIT"),
+         "Malicious deployment / exploit activity flagged"),
+        (("FEMA", "FOREIGN EXCHANGE", "USD", "INTERNATIONAL TRANSFER"),
+         "International financial transfer — FEMA 1999 may apply"),
+    ]
+    _existing_flag_text = " ".join(
+        (f.get("flag", str(f)) if isinstance(f, dict) else str(f)).upper()
+        for f in person.get("anomaly_flags", [])
+    )
+    _injected_flags = list(person.get("anomaly_flags", []))
+    for doc in (raw_documents or []):
+        _doc_text = str(doc.get("full_text", "") or doc.get("raw_text", "")).upper()
+        for _kws, _label in _KEYWORD_FLAGS_INJECT:
+            if _label.upper() not in _existing_flag_text:
+                if any(kw.upper() in _doc_text for kw in _kws):
+                    _injected_flags.append(_label)
+                    _existing_flag_text += " " + _label.upper()
+    person["anomaly_flags"] = _injected_flags
+
     try:
         _raw_graph    = (graph_data or {}).get("graph")
         _all_entities = (graph_data or {}).get("entities", [])

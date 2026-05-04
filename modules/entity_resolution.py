@@ -537,6 +537,38 @@ PHONE_REGEX = re.compile(
 )
 
 
+def extract_all_emails(raw_documents: list) -> list:
+    """
+    Extract unique email addresses from structured rows and raw text.
+    Skips service/billing domains so only the subject's own emails are returned.
+    """
+    EMAIL_RE = re.compile(
+        r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}",
+        re.IGNORECASE,
+    )
+    SKIP_DOMAINS = {
+        "openai.com", "anthropic.com", "x.ai", "google.com",
+        "billing.anthropic.com", "console.x.ai", "cloud.google.com",
+        "noreply", "example.com", "mailer.com", "no-reply",
+        "amazonaws.com", "sendgrid.net", "mailchimp.com",
+    }
+    found: set = set()
+    for doc in (raw_documents or []):
+        # Structured rows
+        for row in doc.get("structured_rows", []):
+            for val in row.values():
+                for m in EMAIL_RE.findall(str(val)):
+                    domain = m.split("@")[-1].lower()
+                    if not any(sd in domain for sd in SKIP_DOMAINS):
+                        found.add(m.lower())
+        # Raw text
+        for m in EMAIL_RE.findall(str(doc.get("raw_text", ""))):
+            domain = m.split("@")[-1].lower()
+            if not any(sd in domain for sd in SKIP_DOMAINS):
+                found.add(m.lower())
+    return list(found)
+
+
 def extract_all_phones(raw_documents: list) -> list:
     """
     Permanent comprehensive phone extractor.
@@ -575,73 +607,88 @@ def extract_all_phones(raw_documents: list) -> list:
     # ── Post-extraction validation ────────────────────────────────────────────
     def is_valid_phone(p: str) -> bool:
         """
-        Rejects CDR fragments, monetary values, and short numbers that
-        slipped past the regex (e.g. '4451 2023-10-20 22', '9921 2023-04-12 23').
-        Rules:
-          - Strip everything except digits → must be 7–15 digits
-          - Must not be a year (4 digits)
-          - Must not look like a date string (YYYY-MM-DD prefix)
-          - Must not start with a 4-digit run that looks like a year (19xx/20xx)
-            unless the full string is a valid intl format
+        Rejects order IDs, CDR fragments, IP addresses, and non-phone numbers.
+        Accepts real Indian mobile / international numbers only.
         """
-        cleaned = p.strip()
-        digits  = re.sub(r"\D", "", cleaned)
+        if not p:
+            return False
+        cleaned = str(p).strip()
 
-        # Reject IP addresses — e.g. "122.177.43.21"
+        # Reject leading small-number + space fragments (ISP data columns)
+        # e.g. "1 1221774321", "128 9876543210", "1240 1221774321"
+        if re.match(r"^\d{1,4}\s+\d+$", cleaned):
+            return False
+
+        # Reject IP addresses
         if re.match(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$", cleaned):
             return False
 
-        # Reject ISP data fragments: small prefix number + space + long number
-        # e.g. "1 1221774321", "128 9876543210", "1240 1221774321"
-        # Pattern: 1–4 leading digits, whitespace, then 7+ digits
-        if re.match(r"^\d{1,4}\s+\d{7,}$", cleaned):
+        # Reject order / invoice / receipt IDs
+        # e.g. "RCP-ANT-231122-8821", "INV-OAI-2310-447821"
+        if re.match(r"^[A-Z]{2,}-[A-Z]{2,}-", cleaned):
+            return False
+        # e.g. "INV-2310", "RCP-8821"
+        if re.match(r"^[A-Z]{2,}-\d+", cleaned):
+            return False
+        # e.g. "2311-447822" (YYMM-XXXXXX order ref)
+        if re.match(r"^\d{4}-\d{6}$", cleaned):
+            return False
+        # e.g. "TXN231016HDFC8821"
+        if re.match(r"^TXN\d+", cleaned):
             return False
 
-        # Must be 7–15 actual digits
-        if not (7 <= len(digits) <= 15):
-            return False
-        # Reject year-like 4-digit match
-        if len(digits) == 4:
-            return False
-        # Reject date-format false positive (YYYY-MM-DD)
+        # Reject date-format false positives (YYYY-MM-DD)
         if re.match(r"^\d{4}[-/]\d{2}[-/]\d{2}", cleaned):
             return False
-        # Reject CDR fragments: strings where there are multiple whitespace-separated
-        # tokens that mix digits and date-like parts (e.g. "4451 2023-10-20 22")
+
+        # Reject CDR row fragments with date tokens
         tokens = cleaned.split()
         if len(tokens) >= 2:
-            # If any token looks like a date (YYYY-MM-DD) it's a CDR row fragment
             if any(re.match(r"\d{4}-\d{2}-\d{2}", t) for t in tokens):
                 return False
-        # Reject bare 4-digit codes (e.g. "4451", "9921")
-        if re.fullmatch(r"\d{4}", digits):
-            return False
-        # Reject CDR row fragments: phone + fixed-width padding + call duration
-        # e.g. "+91-98201-44109              320"  or "+971-50-4412831              840"
-        # Signature: 2+ consecutive spaces followed by 1–4 digits at end of string
+
+        # Reject CDR row fragments with trailing call-duration padding
+        # e.g. "+91-98201-44109              320"
         if re.search(r"\s{2,}\d{1,4}\s*$", cleaned):
             return False
-        # Reject numbers shorter than 10 digits without an explicit country-code prefix
-        # "128 1221774321" and "3 18522010145" are ISP data volumes (128 MB, 3 GB)
-        if len(digits) < 10 and not cleaned.startswith("+"):
+
+        # Reject ISP account-ID patterns  e.g. "1234/JIO/2022/00123"
+        if re.match(r"^\d{4}/\w+/\d{4}/\d+$", cleaned):
             return False
-        # Reject numbers whose digit string starts with a known data-volume or
-        # ISP-account-ID prefix (128 MB, 256 MB, 512 MB, 1024/2048/4096 KB, etc.)
+        # Reject enrollment formats  e.g. "ALG/LLB/2022/001"
+        if re.match(r"^[A-Za-z]+/[A-Za-z]+/\d{4}/", cleaned):
+            return False
+
+        # Strip to digits only for length and prefix checks
+        digits = re.sub(r"[^\d]", "", cleaned)
+
+        # Must be 7–15 digits
+        if not (7 <= len(digits) <= 15):
+            return False
+
+        # Reject known ISP data-volume prefixes
         _DATA_PREFIXES = ("128", "256", "512", "1024", "2048", "4096", "3185", "1852")
         for _pfx in _DATA_PREFIXES:
             if digits.startswith(_pfx) and len(digits) > 8:
                 return False
-        # Reject ISP account-ID patterns  e.g. "1234/JIO/2022/00123"
-        if re.match(r"^\d{4}/\w+/\d{4}/\d+$", cleaned):
-            return False
-        # Reject enrollment-number formats  e.g. "ALG/LLB/2022/001"
-        if re.match(r"^[A-Za-z]+/[A-Za-z]+/\d{4}/", cleaned):
-            return False
-        # Indian mobile — last 10 digits must start with 6-9
-        if "+91" in cleaned or cleaned.startswith("91"):
+
+        # Domestic number validation (no + or 00 prefix)
+        if not cleaned.startswith("+") and not cleaned.startswith("00"):
+            if len(digits) == 10:
+                if digits[0] not in "6789":
+                    return False
+            elif len(digits) == 12 and digits[:2] == "91":
+                if digits[2] not in "6789":
+                    return False
+            elif len(digits) < 10:
+                return False
+
+        # International +91 double-check
+        if "+91" in cleaned:
             local = digits[-10:]
             if len(local) == 10 and local[0] not in "6789":
                 return False
+
         return True
 
     # Filter 1: use is_valid_phone validator
@@ -919,6 +966,15 @@ def resolve_entity_from_multiple_docs(raw_documents: list) -> tuple[dict, str]:
         person["phones_found"] = all_phones
     # Per-file source attribution for §14 report rendering
     person["phone_sources"] = build_phone_source_map(raw_documents)
+
+    # Permanent: email extraction across all sources
+    all_emails = extract_all_emails(raw_documents)
+    if all_emails:
+        existing = set(safe_list(person.get("emails_found", [])))
+        for e in all_emails:
+            if e not in existing:
+                existing.add(e)
+        person["emails_found"] = list(existing)
 
     # Permanent: conflict detection across all sources
     if primary_name != "Unknown Subject":

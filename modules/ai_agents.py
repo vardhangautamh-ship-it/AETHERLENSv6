@@ -706,6 +706,7 @@ def run_next_step_agent(report: dict, user_id: str = "system") -> dict:
 
     # Build context fields for the prompt
     subject_name   = person.get("confirmed_name", "Unknown Subject")
+    institution    = person.get("employer", person.get("occupation", "Unknown"))
     locations      = ", ".join(person.get("location_stated", [])[:4]) or "Unknown"
     platforms      = ", ".join(person.get("platforms_confirmed", [])
                                or person.get("platforms", []))[:200] or "None confirmed"
@@ -716,34 +717,63 @@ def run_next_step_agent(report: dict, user_id: str = "system") -> dict:
     anomaly_text   = "\n".join(f"- {a}" for a in anomalies[:25]) or "None recorded."
     legal_text     = "\n".join(f"- {f}" for f in legal_flags[:10]) or "None detected."
 
+    # Detect financial / FEMA context from raw documents
+    raw_documents  = report.get("raw_documents", []) if isinstance(report, dict) else []
+    financial_note = ""
+    for _doc in (raw_documents or []):
+        _src = str(_doc.get("filename", "")).lower()
+        _txt = str(_doc.get("raw_text", "") or _doc.get("full_text", "")).upper()
+        if any(k in _src for k in ("bank", "email", "receipt", "payment", "invoice")):
+            financial_note = (
+                "Financial evidence present: review for international payments "
+                "to foreign entities (OpenAI, Anthropic, xAI, etc.). "
+                "FEMA 1999 Section 3 may apply to USD transactions."
+            )
+            break
+        if any(k in _txt for k in ("USD", "FOREIGN EXCHANGE", "FEMA", "INTERNATIONAL TRANSFER",
+                                    "OPENAI", "ANTHROPIC", "STRIPE", "PAYPAL")):
+            financial_note = (
+                "International USD transactions detected in documents. "
+                "FEMA 1999 Section 3 may apply."
+            )
+            break
+
+    cert_active = "Yes — CERT-In case active" if any(
+        "cert" in str(a).lower() for a in anomalies
+    ) else "Not confirmed"
+
     # ── AI PATH ────────────────────────────────────────────────────────────────
     prompt = f"""You are a senior legal analyst generating investigative next steps for an official intelligence report.
 
 Subject: {subject_name}
+Institution / Employer: {institution}
 Location(s): {locations}
 Platforms found: {platforms}
+Active government inquiry: {cert_active}
 
-All anomaly and crime indicators:
+CONFIRMED ANOMALIES AND CRIME INDICATORS:
 {anomaly_text}
 
-Confirmed legal proceedings / high-severity flags:
+CONFIRMED LEGAL PROCEEDINGS / HIGH-SEVERITY FLAGS:
 {legal_text}
 
-Generate exactly 5 specific, lawful investigative next steps for THIS specific case.
+FINANCIAL CONTEXT:
+{financial_note or "No international financial evidence detected."}
+
+Generate exactly 5 specific, lawful investigative next steps tailored to THIS case.
 
 Rules:
-- Each step must be specific to the evidence listed above — no generic steps
-- Each step must cite the exact Indian law section (IT Act, BNSS, PMLA, DPDP, etc.)
+- Each step must address a SPECIFIC anomaly listed above — no generic steps
+- Each step must cite the exact Indian law section (IT Act, BNSS, PMLA, DPDP, FEMA, etc.)
 - Each step must state the authorisation required (court order, CERT-In, MLAT, etc.)
 - Each step must state what evidence gap it fills
-- If evidence shows IT Act violations → cite IT Act Section 43/66/69
-- If evidence shows DPDP violations → cite DPDP Act 2023
-- If evidence shows platform metadata → cite platform legal process
-- If evidence shows device activity → cite BNSS search warrant
-- If evidence shows encrypted comms → cite IT Act Section 69
-- If evidence shows CERT-In inquiry → reference the existing case number
-- DO NOT suggest electoral rolls or MCA21 filings unless business crime is indicated
-- DO NOT suggest steps that duplicate evidence already confirmed above
+- If CERT-In inquiry exists → reference existing case and request server log preservation
+- If IT Act / DPDP violations → cite exact section (43/66/69 for IT Act; §4-9 for DPDP 2023)
+- If repository / content deletions → include platform legal process for recovery
+- If encrypted comms (Telegram/Signal) → cite IT Act Section 69 for interception order
+- If international financial transfers → cite FEMA 1999 Section 3; suggest RBI/ED referral
+- DO NOT suggest electoral rolls or MCA21 unless business crime is explicitly indicated
+- DO NOT duplicate evidence already confirmed above
 
 Return ONLY valid JSON. No markdown. No explanation outside JSON.
 
