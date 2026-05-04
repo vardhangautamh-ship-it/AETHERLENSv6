@@ -3463,6 +3463,36 @@ def screen_admin():
         _status_card(stat_cols[2], "GEMINI 2.5 FLASH",          gemini_status,  "Fallback · Entity resolution")
         _status_card(stat_cols[3], "DATABASE",                  db_status,      str(config.DATABASE_PATH).split("\\")[-1])
 
+        # ── Bedrock diagnostics expander ──────────────────────────────────────
+        with st.expander("🔧 Bedrock Diagnostics", expanded=not bedrock_ok):
+            import os as _os
+            diag_lines = []
+            # 1. env vars
+            _key_env = _os.getenv("AWS_ACCESS_KEY_ID", "")
+            _sec_env = _os.getenv("AWS_SECRET_ACCESS_KEY", "")
+            _reg_env = _os.getenv("AWS_REGION", "")
+            diag_lines.append(f"**ENV AWS_ACCESS_KEY_ID**: `{'SET (' + _key_env[:4] + '...)' if _key_env else 'NOT SET'}`")
+            diag_lines.append(f"**ENV AWS_SECRET_ACCESS_KEY**: `{'SET' if _sec_env else 'NOT SET'}`")
+            diag_lines.append(f"**ENV AWS_REGION**: `{_reg_env or 'NOT SET'}`")
+            # 2. st.secrets
+            try:
+                _skeys = list(st.secrets.keys())
+                _key_s = st.secrets.get("AWS_ACCESS_KEY_ID", "")
+                _sec_s = st.secrets.get("AWS_SECRET_ACCESS_KEY", "")
+                _reg_s = st.secrets.get("AWS_REGION", "")
+                diag_lines.append(f"**st.secrets keys**: `{_skeys}`")
+                diag_lines.append(f"**secrets AWS_ACCESS_KEY_ID**: `{'SET (' + str(_key_s)[:4] + '...)' if _key_s else 'NOT SET'}`")
+                diag_lines.append(f"**secrets AWS_SECRET_ACCESS_KEY**: `{'SET' if _sec_s else 'NOT SET'}`")
+                diag_lines.append(f"**secrets AWS_REGION**: `{_reg_s or 'NOT SET'}`")
+            except Exception as _se:
+                diag_lines.append(f"**st.secrets error**: `{_se}`")
+            # 3. client state
+            diag_lines.append(f"**config.bedrock_client**: `{type(config.bedrock_client).__name__}`")
+            diag_lines.append(f"**config.BEDROCK_MODEL_ID**: `{config.BEDROCK_MODEL_ID}`")
+            diag_lines.append(f"**bedrock_reason**: `{bedrock_reason}`")
+            for _l in diag_lines:
+                st.markdown(_l)
+
         st.markdown("<br>", unsafe_allow_html=True)
         num_cols = st.columns(4)
         from modules.ui_components import stat_card as _sc
