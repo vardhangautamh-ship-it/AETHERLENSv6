@@ -1369,6 +1369,7 @@ def _run_pipeline_auto(target: dict, query: str, search_results: dict):
                 behavioral_data = st.session_state.behavioral_data,
                 user_id         = uid,
                 mode            = "OSINT",
+                raw_documents   = st.session_state.get("raw_documents") or None,
             )
             print(f"[OSINT 7] Report result: {rd is not None} [gemini={rd.get('gemini_used') if rd else 'N/A'}]")
             print("[OSINT 8] Storing to session state...")
@@ -1420,6 +1421,7 @@ def _run_pipeline_auto(target: dict, query: str, search_results: dict):
                     user_id         = uid,
                     mode            = "OSINT",
                     agent_results   = agent_results,
+                    raw_documents   = st.session_state.get("raw_documents") or None,
                 )
                 if rd2 and not rd2.get("error"):
                     st.session_state.report_data = rd2
