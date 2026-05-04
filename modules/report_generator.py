@@ -287,7 +287,6 @@ def generate_pdf(
     user_id:      str,
     mode:         str,
     gemini_used:  bool = False,
-    grok_used:    bool = False,
     bedrock_used: bool = False,
 ) -> bytes:
     """
@@ -326,8 +325,6 @@ def generate_pdf(
     engines = []
     if bedrock_used:
         engines.append("Claude Sonnet 4 · Bedrock Mumbai")
-    if grok_used:
-        engines.append("Grok 4")
     if gemini_used:
         engines.append("Gemini 2.5 Flash")
     if not engines:
@@ -1158,8 +1155,6 @@ def _build_account_timeline_section(person: dict) -> dict:
 _ENGINE_DISPLAY_MAP = {
     "claude-sonnet-4-bedrock": "Claude Sonnet 4 via AWS Bedrock ap-south-1 Mumbai — Data stays in India",
     "claude-opus-4-bedrock":   "Claude Opus 4 via AWS Bedrock ap-south-1 Mumbai — Data stays in India",
-    "grok-4":                  "Grok 4 via xAI API",
-    "grok4":                   "Grok 4 via xAI API",
     "gemini":                  "Gemini 2.5 Flash via Google API",
     "gemini-fallback":         "Gemini 2.5 Flash via Google API",
     "local-fallback":          "Local rule-based analysis — AI engines unavailable",
@@ -1192,9 +1187,6 @@ def _build_engine_notes(engines_used: dict = None) -> dict:
     if any("bedrock" in v for v in all_vals):
         overall     = "claude-sonnet-4-bedrock"
         overall_str = "Claude Sonnet 4 via AWS Bedrock ap-south-1 Mumbai"
-    elif any("grok" in v for v in all_vals):
-        overall     = "grok-4"
-        overall_str = "Grok 4 via xAI API"
     elif any("gemini" in v for v in all_vals):
         overall     = "gemini"
         overall_str = "Gemini 2.5 Flash via Google API"
@@ -1740,7 +1732,6 @@ def _log_report(user_id: str, subject: str, pdf_path: str, gemini_used: bool):
     "pdf_path": "",
     "pdf_filename": "",
     "gemini_used": False,
-    "grok_used": False,
 })
 def generate_report(
     person:          dict,
@@ -1758,7 +1749,7 @@ def generate_report(
     """
     Build a full intelligence report.
     Returns dict with: sections, pdf_bytes, pdf_path, pdf_filename,
-                       generated_at, gemini_used, grok_used, subject, mode, user_id.
+                       generated_at, gemini_used, bedrock_used, subject, mode, user_id.
     """
     import traceback as _tb
     generated_at = datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
@@ -1790,7 +1781,6 @@ def generate_report(
             "pdf_filename": "",
             "generated_at": generated_at,
             "gemini_used": False,
-            "grok_used": False,
             "subject": subject,
             "mode": mode,
             "user_id": user_id,
@@ -1831,7 +1821,6 @@ def _generate_report_inner(
 
     subject      = (person or {}).get("confirmed_name", "Unknown")
     gemini_ok    = bool(config.GEMINI_API_KEY and config.GEMINI_API_KEY != "your_gemini_key_here")
-    grok_ok      = bool(config.GROK_API_KEY   and config.GROK_API_KEY   != "your_grok_key_here")
     bedrock_ok   = bool(getattr(config, "bedrock_client", None) is not None)
 
     # Build payload for Gemini.
@@ -2066,7 +2055,6 @@ def _generate_report_inner(
     # Determine which engines were actually used
     all_engine_vals = list(engines_used.values())
     bedrock_used = any("bedrock" in v for v in all_engine_vals) or bedrock_ok
-    grok_used    = any("grok"    in v for v in all_engine_vals)
 
     # Generate PDF — background drawn first, content on top
     pdf_bytes = generate_pdf(
@@ -2075,7 +2063,6 @@ def _generate_report_inner(
         user_id      = user_id,
         mode         = mode,
         gemini_used  = gemini_used,
-        grok_used    = grok_used,
         bedrock_used = bedrock_used,
     )
 
@@ -2102,7 +2089,6 @@ def _generate_report_inner(
         "pdf_filename": filename,
         "generated_at": generated_at,
         "gemini_used":  gemini_used,
-        "grok_used":    grok_used,
         "bedrock_used": bedrock_used,
         "subject":      subject,
         "mode":         mode,

@@ -1,6 +1,6 @@
 """
 AetherLens — Behavioral Analysis Module
-Grok 4 powered intelligence assessment of structured subject data.
+Bedrock/Gemini powered intelligence assessment of structured subject data.
 """
 
 import json
@@ -87,43 +87,6 @@ SUBJECT DATA:
 
 Return the JSON assessment now:"""
 
-
-def _call_grok(prompt: str) -> str:
-    """POST to Grok 4 API and return raw text response."""
-    api_key = config.GROK_API_KEY
-    if not api_key or api_key == "your_grok_key_here":
-        return ""
-
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type":  "application/json",
-    }
-    payload = {
-        "model": config.GROK_MODEL,
-        "messages": [
-            {
-                "role":    "user",
-                "content": prompt,
-            }
-        ],
-        "temperature": 0.1,
-        "max_tokens":  2048,
-    }
-    try:
-        resp = requests.post(
-            config.GROK_ENDPOINT,
-            headers=headers,
-            json=payload,
-            timeout=45,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        choices = data.get("choices", [])
-        if choices:
-            return choices[0].get("message", {}).get("content", "")
-    except Exception:
-        pass
-    return ""
 
 
 def _extract_json(text: str) -> dict | None:
@@ -432,7 +395,7 @@ def analyze(subject_data: dict, structured_rows: list = None) -> tuple[dict, str
     subject_data should contain 'person' (Person Object) and 'search_results'.
     structured_rows: optional list of dicts from CSV/Excel for rule-based anomaly detection.
     Returns (assessment_dict, method_used).
-    method_used is 'grok4' or 'local'.
+    method_used is 'bedrock', 'gemini-fallback', or 'local'.
     """
     try:
         return _analyze_inner(subject_data, structured_rows)
@@ -530,7 +493,7 @@ def _analyze_inner(subject_data: dict, structured_rows: list = None) -> tuple[di
     except Exception as be:
         print(f"[BEHAVIORAL] Bedrock fusion path error: {be}")
 
-    # If Bedrock didn't answer, try the _call_ai chain (Grok → Gemini)
+    # If Bedrock didn't answer, try the _call_ai chain (Gemini fallback)
     if not raw:
         from modules.ai_agents import _call_ai, LAST_ENGINE_USED
         raw = _call_ai(prompt, max_tokens=4000)

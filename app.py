@@ -994,11 +994,8 @@ def _build_engine_pills() -> str:
 
 def engine_status_bar():
     gemini_ok = bool(config.GEMINI_API_KEY and config.GEMINI_API_KEY != "your_gemini_key_here")
-    grok_key  = bool(config.GROK_API_KEY   and config.GROK_API_KEY   != "your_grok_key_here")
     g_dot   = "dot-blue"  if gemini_ok else "dot-gray"
     g_lbl   = "GEMINI 2.5" if gemini_ok else "GEMINI ✗"
-    gr_dot  = "dot-green" if grok_key  else "dot-gray"
-    gr_lbl  = "GROK 4"    if grok_key  else "GROK 4 ✗"
 
     session_start = st.session_state.get("session_start")
     if session_start:
@@ -1017,7 +1014,6 @@ def engine_status_bar():
         f'color:#4B5563;margin-bottom:8px;padding:4px 0;">'
         f'<span>'
         f'<span class="engine-dot {g_dot}"></span>{g_lbl}'
-        f'&nbsp;&nbsp;&nbsp;<span class="engine-dot {gr_dot}"></span>{gr_lbl}'
         f'</span>'
         f'<span style="color:{timer_color};border:1px solid {timer_color};'
         f'padding:2px 8px;letter-spacing:2px;">SESSION {timer_str}</span>'
@@ -2631,8 +2627,8 @@ def _run_behavioral():
 def _render_behavioral(data: dict):
     bd     = data["assessment"]
     method = data["method"]
-    ml     = "Grok 4" if method=="grok4" else "Local analysis"
-    mc     = "#16A34A" if method=="grok4" else "#9D4EDD"
+    ml     = "Bedrock" if "bedrock" in (method or "") else ("Gemini" if "gemini" in (method or "") else "Local analysis")
+    mc     = "#16A34A" if "bedrock" in (method or "") else "#9D4EDD"
     from modules.ui_components import panel_hdr as _phdr2
     st.markdown('<hr class="divider">', unsafe_allow_html=True)
     st.markdown(_phdr2("B·01","BEHAVIORAL ASSESSMENT", f"[{ml}]"), unsafe_allow_html=True)
@@ -2737,7 +2733,6 @@ def _generate_and_store(mode: str):
             "pdf_filename": "",
             "generated_at": datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC"),
             "gemini_used": False,
-            "grok_used": False,
             "subject": person.get("confirmed_name", "Unknown"),
             "mode": mode,
             "user_id": uid,
@@ -3228,7 +3223,6 @@ def screen_reports():
                         user_id     = rd.get("user_id", st.session_state.get("current_user", "unknown")),
                         mode        = rd.get("mode", "OSINT"),
                         gemini_used = rd.get("gemini_used", False),
-                        grok_used   = rd.get("grok_used", False),
                     )
                     filepath = save_pdf_to_exports(
                         fresh_pdf,
@@ -3397,8 +3391,6 @@ def screen_admin():
         stats = get_system_stats()
         import requests as _req
         gemini_ok = bool(config.GEMINI_API_KEY and config.GEMINI_API_KEY != "your_gemini_key_here")
-        grok_key  = bool(config.GROK_API_KEY   and config.GROK_API_KEY   != "your_grok_key_here")
-
         # Test Gemini live
         gemini_live = False
         if gemini_ok:
@@ -3410,19 +3402,6 @@ def screen_admin():
 
         gemini_status = '<span class="status-ok">ONLINE</span>' if gemini_live else ('<span class="status-warn">KEY LOADED</span>' if gemini_ok else '<span class="status-err">NO KEY</span>')
 
-        # Test Grok live
-        grok_live = False
-        if grok_key and config.grok_client:
-            try:
-                _gr = config.grok_client.chat.completions.create(
-                    model=config.GROK_MODEL,
-                    max_tokens=5,
-                    messages=[{"role": "user", "content": "ping"}],
-                )
-                grok_live = bool(_gr.choices)
-            except Exception:
-                pass
-        grok_status = '<span class="status-ok">ONLINE</span>' if grok_live else ('<span class="status-warn">KEY LOADED</span>' if grok_key else '<span class="status-err">NO KEY</span>')
         db_status     = '<span class="status-ok">CONNECTED</span>' if stats.get("db_ok") else '<span class="status-err">ERROR</span>'
 
         # ── Bedrock (Claude Sonnet 4 · Mumbai ap-south-1) — PRIMARY ENGINE ──
@@ -3446,7 +3425,7 @@ def screen_admin():
         else:
             bedrock_status = '<span class="status-err">NOT CONFIGURED</span>'
 
-        stat_cols = st.columns(4)
+        stat_cols = st.columns(3)
         def _status_card(col, title, status_html, detail=""):
             col.markdown(
                 f'<div style="background:linear-gradient(180deg,rgba(16,0,32,0.88),rgba(10,0,21,0.90));'
@@ -3459,49 +3438,8 @@ def screen_admin():
                 unsafe_allow_html=True,
             )
         _status_card(stat_cols[0], "BEDROCK · CLAUDE SONNET 4", bedrock_status, f"Mumbai {config.AWS_REGION}")
-        _status_card(stat_cols[1], "GROK 4",                    grok_status,    "Fallback · Behavioral")
-        _status_card(stat_cols[2], "GEMINI 2.5 FLASH",          gemini_status,  "Fallback · Entity resolution")
-        _status_card(stat_cols[3], "DATABASE",                  db_status,      str(config.DATABASE_PATH).split("\\")[-1])
-
-        # ── Bedrock diagnostics expander ──────────────────────────────────────
-        with st.expander("🔧 Bedrock Diagnostics", expanded=not bedrock_ok):
-            import os as _os
-            diag_lines = []
-            # 1. env vars
-            _key_env = _os.getenv("AWS_ACCESS_KEY_ID", "")
-            _sec_env = _os.getenv("AWS_SECRET_ACCESS_KEY", "")
-            _reg_env = _os.getenv("AWS_REGION", "")
-            diag_lines.append(f"**ENV AWS_ACCESS_KEY_ID**: `{'SET (' + _key_env[:4] + '...)' if _key_env else 'NOT SET'}`")
-            diag_lines.append(f"**ENV AWS_SECRET_ACCESS_KEY**: `{'SET' if _sec_env else 'NOT SET'}`")
-            diag_lines.append(f"**ENV AWS_REGION**: `{_reg_env or 'NOT SET'}`")
-            # 2. st.secrets
-            try:
-                _skeys = list(st.secrets.keys())
-                diag_lines.append(f"**st.secrets top-level keys**: `{_skeys}`")
-                # Check top-level and nested
-                def _diag_secret(name):
-                    v = st.secrets.get(name, "")
-                    if v:
-                        return f"SET ({str(v)[:4]}...)"
-                    for sv in st.secrets.values():
-                        try:
-                            nd = dict(sv)
-                            if name in nd and nd[name]:
-                                return f"SET in nested section ({str(nd[name])[:4]}...)"
-                        except Exception:
-                            pass
-                    return "NOT SET"
-                diag_lines.append(f"**AWS_ACCESS_KEY_ID**: `{_diag_secret('AWS_ACCESS_KEY_ID')}`")
-                diag_lines.append(f"**AWS_SECRET_ACCESS_KEY**: `{'SET' if st.secrets.get('AWS_SECRET_ACCESS_KEY') or any('AWS_SECRET_ACCESS_KEY' in dict(sv) for sv in st.secrets.values() if hasattr(sv, '__iter__')) else 'NOT SET'}`")
-                diag_lines.append(f"**AWS_REGION**: `{_diag_secret('AWS_REGION')}`")
-            except Exception as _se:
-                diag_lines.append(f"**st.secrets error**: `{_se}`")
-            # 3. client state
-            diag_lines.append(f"**config.bedrock_client**: `{type(config.bedrock_client).__name__}`")
-            diag_lines.append(f"**config.BEDROCK_MODEL_ID**: `{config.BEDROCK_MODEL_ID}`")
-            diag_lines.append(f"**bedrock_reason**: `{bedrock_reason}`")
-            for _l in diag_lines:
-                st.markdown(_l)
+        _status_card(stat_cols[1], "GEMINI 2.5 FLASH",          gemini_status,  "Fallback · Entity resolution")
+        _status_card(stat_cols[2], "DATABASE",                  db_status,      str(config.DATABASE_PATH).split("\\")[-1])
 
         st.markdown("<br>", unsafe_allow_html=True)
         num_cols = st.columns(4)

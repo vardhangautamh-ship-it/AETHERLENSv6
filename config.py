@@ -79,42 +79,9 @@ if not logger.handlers:
 
 # ── API Keys ──────────────────────────────────────────────────────────────────
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
-GROK_API_KEY   = os.getenv("GROK_API_KEY", "")
 
 # ── API Endpoints ─────────────────────────────────────────────────────────────
 GEMINI_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
-GROK_ENDPOINT   = "https://api.x.ai/v1/chat/completions"
-GROK_API_BASE   = "https://api.x.ai/v1"
-GROK_MODEL      = "grok-4"
-GROK_MAX_TOKENS = 8000
-GROK_TEMPERATURE = 0.1
-
-# ── Grok 4 OpenAI-compatible client ───────────────────────────────────────────
-try:
-    from openai import OpenAI as _OpenAI
-    grok_client = _OpenAI(
-        api_key=GROK_API_KEY or "placeholder",
-        base_url=GROK_API_BASE,
-    )
-except Exception:
-    grok_client = None
-
-def test_grok_connection():
-    """Test Grok 4 connectivity. Returns (success: bool, message: str)."""
-    if not GROK_API_KEY or GROK_API_KEY in ("", "your_grok_key_here"):
-        return False, "GROK_API_KEY not set"
-    if grok_client is None:
-        return False, "openai package not installed"
-    try:
-        response = grok_client.chat.completions.create(
-            model=GROK_MODEL,
-            max_tokens=10,
-            messages=[{"role": "user", "content": "Respond exactly: GROK4 ONLINE"}],
-        )
-        msg = response.choices[0].message.content
-        return True, msg
-    except Exception as e:
-        return False, str(e)
 
 # ── BEDROCK CLIENT (Claude Sonnet 4 · ap-south-1 · data stays in India) ──────
 

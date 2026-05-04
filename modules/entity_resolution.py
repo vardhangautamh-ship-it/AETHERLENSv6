@@ -351,20 +351,6 @@ def _call_bedrock_for_fusion(prompt: str) -> str:
         return ""
 
 
-def _call_grok_for_fusion(prompt: str) -> str:
-    """Call Grok 4 for fusion entity resolution (fallback when Gemini unavailable)."""
-    try:
-        if not config.grok_client:
-            return ""
-        resp = config.grok_client.chat.completions.create(
-            model=config.GROK_MODEL,
-            max_tokens=2048,
-            temperature=0.1,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        return resp.choices[0].message.content if resp.choices else ""
-    except Exception:
-        return ""
 
 
 # ── Filename / document-artifact detection ───────────────────────────────────
@@ -871,7 +857,7 @@ def resolve_entity_from_multiple_docs(raw_documents: list) -> tuple[dict, str]:
         if fname:
             all_sources.append(fname)
 
-    # ── Try AI engines in priority order: Bedrock → Grok → Gemini ──────────
+    # ── Try AI engines in priority order: Bedrock → Gemini ──────────────────
     ai_person = None
     ai_method = None
     if primary_name != "Unknown Subject":
@@ -894,17 +880,7 @@ def resolve_entity_from_multiple_docs(raw_documents: list) -> tuple[dict, str]:
                 ai_person, ai_method = parsed, "claude-sonnet-4-bedrock"
 
         if not ai_person:
-            print("[RESOLVE] Bedrock empty/parse-failed -> trying Grok 4")
-            if config.GROK_API_KEY and config.GROK_API_KEY not in ("", "your_grok_key_here"):
-                raw = _call_grok_for_fusion(prompt)
-                print(f"[RESOLVE] Grok returned {len(raw) if raw else 0} chars")
-                if raw:
-                    parsed = _extract_json(raw)
-                    if parsed and parsed.get("confirmed_name"):
-                        ai_person, ai_method = parsed, "grok-4"
-
-        if not ai_person:
-            print("[RESOLVE] Grok empty/failed -> trying Gemini")
+            print("[RESOLVE] Bedrock empty/parse-failed -> trying Gemini")
             gk = config.GEMINI_API_KEY
             if gk and gk not in ("", "your_gemini_key_here"):
                 raw = _call_gemini(prompt)
@@ -1321,7 +1297,7 @@ def resolve_entity_from_documents(
 ) -> tuple:
     """
     Build a Person Object from structured document rows (CSV/Excel).
-    Tries Gemini first, then Grok 4, then local rule-based fallback.
+    Tries Bedrock first, then Gemini, then local rule-based fallback.
     Returns (person_dict, method_used).
     """
     # Shared prompt builder
@@ -1381,17 +1357,10 @@ def resolve_entity_from_documents(
             parsed["data_gaps"] = detect_data_gaps(parsed)
         return parsed, model_name
 
-    # ── Try Bedrock (Claude Opus 4 · ap-south-1 · India) — PRIMARY ──────────
+    # ── Try Bedrock (Claude Sonnet 4 · ap-south-1 · India) — PRIMARY ─────────
     if getattr(config, "bedrock_client", None) is not None:
         raw = _call_bedrock_for_fusion(prompt)
         person, method = _parse_ai_response(raw, "claude-sonnet-4-bedrock")
-        if person:
-            return person, method
-
-    # ── Try Grok 4 ────────────────────────────────────────────────────────────
-    if config.GROK_API_KEY and config.GROK_API_KEY not in ("", "your_grok_key_here"):
-        raw = _call_grok_for_fusion(prompt)
-        person, method = _parse_ai_response(raw, "grok-4")
         if person:
             return person, method
 

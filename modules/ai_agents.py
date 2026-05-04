@@ -1,6 +1,6 @@
 """
 AetherLens — AI Agent Orchestration Layer
-Four intelligence agents (Gemini + Grok 4 fallback):
+Four intelligence agents (Bedrock primary / Gemini fallback):
   RiskAgent       — comprehensive risk assessment
   PatternAgent    — hidden pattern & connection detection
   NextStepAgent   — lawful investigative guidance
@@ -97,27 +97,6 @@ def _call_gemini(prompt: str, max_tokens: int = 4096) -> str:
         return ""
 
 
-def _call_grok(prompt: str, max_tokens: int = 4096) -> str:
-    if not config.grok_client:
-        return ""
-    if not config.GROK_API_KEY or config.GROK_API_KEY in ("", "your_grok_key_here"):
-        return ""
-    try:
-        response = config.grok_client.chat.completions.create(
-            model=config.GROK_MODEL,
-            max_tokens=max_tokens,
-            temperature=config.GROK_TEMPERATURE,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        return response.choices[0].message.content or ""
-    except Exception as e:
-        try:
-            print(f"[GROK] call failed: {e}")
-        except Exception:
-            pass
-        return ""
-
-
 # Tracks which engine served the most recent _call_ai() request.
 # Read by UI/report code that wants to display the source.
 LAST_ENGINE_USED = "local-fallback"
@@ -126,37 +105,19 @@ LAST_ENGINE_USED = "local-fallback"
 def _call_ai(prompt: str, max_tokens: int = 4096) -> str:
     """
     Engine priority:
-      1. Claude Opus 4 on AWS Bedrock (ap-south-1, India)    — primary
-      2. Grok 4 (xAI)                                         — fallback
-      3. Gemini 2.5 Flash (Google)                            — last resort
+      1. Claude Sonnet 4 on AWS Bedrock (ap-south-1, India)  — primary
+      2. Gemini 2.5 Flash (Google)                            — fallback
     """
     global LAST_ENGINE_USED
 
     raw = _call_bedrock(prompt, max_tokens)
     if raw:
         LAST_ENGINE_USED = "claude-sonnet-4-bedrock"
-        try:
-            print(f"[AGENTS] Engine: {LAST_ENGINE_USED}")
-        except Exception:
-            pass
-        return raw
-
-    raw = _call_grok(prompt, max_tokens)
-    if raw:
-        LAST_ENGINE_USED = "grok-4"
-        try:
-            print(f"[AGENTS] Engine: {LAST_ENGINE_USED}")
-        except Exception:
-            pass
         return raw
 
     raw = _call_gemini(prompt, max_tokens)
     if raw:
         LAST_ENGINE_USED = "gemini-fallback"
-        try:
-            print(f"[AGENTS] Engine: {LAST_ENGINE_USED}")
-        except Exception:
-            pass
         return raw
 
     LAST_ENGINE_USED = "local-fallback"
