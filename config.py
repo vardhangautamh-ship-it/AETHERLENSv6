@@ -111,7 +111,8 @@ def get_bedrock_client():
     Returns (client, model_id). Called at module load and can be
     re-called if credentials arrive late (e.g. Streamlit secrets).
     """
-    load_cloud_secrets()           # ensure cloud secrets are in os.environ
+    load_cloud_secrets()           # attempt env injection from st.secrets
+
     key    = os.getenv("AWS_ACCESS_KEY_ID",     "")
     secret = os.getenv("AWS_SECRET_ACCESS_KEY", "")
     region = os.getenv("AWS_REGION",            "ap-south-1")
@@ -119,6 +120,19 @@ def get_bedrock_client():
         "BEDROCK_MODEL_ID",
         "apac.anthropic.claude-sonnet-4-20250514-v1:0",
     )
+
+    # Direct st.secrets fallback — works at runtime even if the import-time
+    # load_cloud_secrets() call above failed (Streamlit context not yet ready).
+    if not key or not secret:
+        try:
+            import streamlit as st
+            key    = str(st.secrets.get("AWS_ACCESS_KEY_ID",     key    or ""))
+            secret = str(st.secrets.get("AWS_SECRET_ACCESS_KEY", secret or ""))
+            region = str(st.secrets.get("AWS_REGION",            region))
+            model  = str(st.secrets.get("BEDROCK_MODEL_ID",      model))
+        except Exception:
+            pass
+
     if not key or not secret:
         return None, model
     try:
@@ -140,7 +154,12 @@ AWS_REGION = os.getenv("AWS_REGION", "ap-south-1")
 
 def test_bedrock_connection():
     """Test Bedrock connectivity. Returns (success: bool, message: str)."""
-    if bedrock_client is None:
+    # Use module-level vars (may have been refreshed by lazy re-init in app.py)
+    import sys
+    _mod = sys.modules[__name__]
+    _client = getattr(_mod, "bedrock_client", None)
+    _model  = getattr(_mod, "BEDROCK_MODEL_ID", BEDROCK_MODEL_ID)
+    if _client is None:
         return False, "not_initialized"
     try:
         import json as _json
@@ -149,8 +168,8 @@ def test_bedrock_connection():
             "max_tokens": 10,
             "messages": [{"role": "user", "content": "Say: ONLINE"}],
         })
-        response = bedrock_client.invoke_model(
-            modelId     = BEDROCK_MODEL_ID,
+        response = _client.invoke_model(
+            modelId     = _model,
             body        = body,
             contentType = "application/json",
             accept      = "application/json",
