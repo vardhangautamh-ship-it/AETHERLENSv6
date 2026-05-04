@@ -1369,6 +1369,9 @@ def detect_all_conflicts(
                     continue
                 if _is_platform_suffix(primary_name, name):
                     continue
+                _doubled = primary_name.lower().strip() + " " + primary_name.lower().strip()
+                if name.lower().strip() == _doubled:
+                    continue
                 seen_variants.add(name)
                 conflicts.append({
                     "type":     "NAME_CONFLICT",
