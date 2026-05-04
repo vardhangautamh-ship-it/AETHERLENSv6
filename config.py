@@ -33,6 +33,21 @@ def safe_print(*args, **kwargs):
 BASE_DIR = Path(__file__).parent.resolve()
 load_dotenv(BASE_DIR / ".env")
 
+# ── Streamlit Cloud secrets → os.environ ─────────────────────────────────────
+# Must run before any os.getenv() calls so cloud secrets win over stale values.
+def load_cloud_secrets():
+    try:
+        import streamlit as st
+        secrets = dict(st.secrets)
+        for k, v in secrets.items():
+            if isinstance(v, str):
+                os.environ[k] = v   # direct assignment — always overwrites
+        print("[CONFIG] Streamlit secrets loaded successfully")
+    except Exception as e:
+        print(f"[CONFIG] No Streamlit secrets: {e}")
+
+load_cloud_secrets()
+
 # ── Centralised logging ────────────────────────────────────────────────────────
 _LOG_DIR = Path("/tmp/logs") if _ON_LINUX else Path("logs")
 _LOG_DIR.mkdir(parents=True, exist_ok=True)
@@ -89,38 +104,41 @@ def test_grok_connection():
     except Exception as e:
         return False, str(e)
 
-# ── BEDROCK CLIENT (Claude Opus 4 · ap-south-1 · data stays in India) ────────
-bedrock_client    = None
-BEDROCK_MODEL_ID  = os.getenv("BEDROCK_MODEL_ID", "apac.anthropic.claude-sonnet-4-20250514-v1:0")
-AWS_REGION        = os.getenv("AWS_REGION", "ap-south-1")
+# ── BEDROCK CLIENT (Claude Sonnet 4 · ap-south-1 · data stays in India) ──────
 
-try:
-    import boto3
-    from botocore.exceptions import ClientError, NoCredentialsError
-    _aws_key    = os.getenv("AWS_ACCESS_KEY_ID", "")
-    _aws_secret = os.getenv("AWS_SECRET_ACCESS_KEY", "")
-    if _aws_key and _aws_secret:
-        bedrock_client = boto3.client(
-            service_name          = "bedrock-runtime",
-            region_name           = AWS_REGION,
-            aws_access_key_id     = _aws_key,
-            aws_secret_access_key = _aws_secret,
-        )
-        try:
-            print(f"[BEDROCK] Client initialized — region: {AWS_REGION}")
-        except Exception:
-            pass
-    else:
-        try:
-            print("[BEDROCK] AWS credentials not set in .env — skipping init")
-        except Exception:
-            pass
-except Exception as e:
+def get_bedrock_client():
+    """
+    Load secrets, then initialise the Bedrock runtime client.
+    Returns (client, model_id). Called at module load and can be
+    re-called if credentials arrive late (e.g. Streamlit secrets).
+    """
+    load_cloud_secrets()           # ensure cloud secrets are in os.environ
+    key    = os.getenv("AWS_ACCESS_KEY_ID",     "")
+    secret = os.getenv("AWS_SECRET_ACCESS_KEY", "")
+    region = os.getenv("AWS_REGION",            "ap-south-1")
+    model  = os.getenv(
+        "BEDROCK_MODEL_ID",
+        "apac.anthropic.claude-sonnet-4-20250514-v1:0",
+    )
+    if not key or not secret:
+        print("[BEDROCK] No credentials found in environment")
+        return None, model
     try:
+        import boto3
+        client = boto3.client(
+            service_name          = "bedrock-runtime",
+            region_name           = region,
+            aws_access_key_id     = key,
+            aws_secret_access_key = secret,
+        )
+        print(f"[BEDROCK] Client ready — region: {region}")
+        return client, model
+    except Exception as e:
         print(f"[BEDROCK] Init failed: {e}")
-    except Exception:
-        pass
-    bedrock_client = None
+        return None, model
+
+bedrock_client, BEDROCK_MODEL_ID = get_bedrock_client()
+AWS_REGION = os.getenv("AWS_REGION", "ap-south-1")
 
 
 def test_bedrock_connection():
