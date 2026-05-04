@@ -38,13 +38,14 @@ load_dotenv(BASE_DIR / ".env")
 def load_cloud_secrets():
     try:
         import streamlit as st
+        print("[DEBUG] st.secrets keys:", list(st.secrets.keys()))
         secrets = dict(st.secrets)
         for k, v in secrets.items():
             if isinstance(v, str):
-                os.environ[k] = v   # direct assignment — always overwrites
-        print("[CONFIG] Streamlit secrets loaded successfully")
+                os.environ[k] = v
+                print(f"[DEBUG] Set {k} = {v[:4]}...")
     except Exception as e:
-        print(f"[CONFIG] No Streamlit secrets: {e}")
+        print(f"[CONFIG] Secrets error: {e}")
 
 load_cloud_secrets()
 
@@ -125,6 +126,8 @@ def get_bedrock_client():
         return None, model
     try:
         import boto3
+        print("[BEDROCK] KEY:", os.getenv("AWS_ACCESS_KEY_ID", "NOT FOUND")[:8])
+        print("[BEDROCK] REGION:", os.getenv("AWS_REGION", "NOT FOUND"))
         client = boto3.client(
             service_name          = "bedrock-runtime",
             region_name           = region,
