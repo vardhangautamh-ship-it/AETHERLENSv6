@@ -84,76 +84,89 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 GEMINI_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
 
 # ── BEDROCK CLIENT (Claude Sonnet 4 · ap-south-1 · data stays in India) ──────
+# Lazy-init: credentials from st.secrets are unavailable at module import time
+# on Streamlit Cloud. The client is created on first call to get_bedrock_client().
 
-def get_bedrock_client():
-    """
-    Load secrets, then initialise the Bedrock runtime client.
-    Returns (client, model_id). Called at module load and can be
-    re-called if credentials arrive late (e.g. Streamlit secrets).
-    """
-    load_cloud_secrets()           # attempt env injection from st.secrets
+_bedrock_client: object = None
+_bedrock_model: str = ""
 
+BEDROCK_MODEL_ID = os.getenv(
+    "BEDROCK_MODEL_ID",
+    "apac.anthropic.claude-sonnet-4-20250514-v1:0",
+)
+AWS_REGION = os.getenv("AWS_REGION", "ap-south-1")
+
+
+def _read_bedrock_secrets():
+    """Read AWS credentials from env + st.secrets (handles nested TOML)."""
     key    = os.getenv("AWS_ACCESS_KEY_ID",     "")
     secret = os.getenv("AWS_SECRET_ACCESS_KEY", "")
     region = os.getenv("AWS_REGION",            "ap-south-1")
-    model  = os.getenv(
-        "BEDROCK_MODEL_ID",
-        "apac.anthropic.claude-sonnet-4-20250514-v1:0",
-    )
+    model  = os.getenv("BEDROCK_MODEL_ID",      BEDROCK_MODEL_ID)
 
-    # Direct st.secrets fallback — works at runtime even if the import-time
-    # load_cloud_secrets() call above failed (Streamlit context not yet ready).
-    # Also handles nested TOML sections, e.g. [secrets] / AWS_ACCESS_KEY_ID = "..."
     if not key or not secret:
         try:
             import streamlit as st
-            def _get_secret(name, default=""):
-                # Try top-level first
+            def _gs(name, default=""):
                 val = st.secrets.get(name, "")
                 if val:
                     return str(val)
-                # Try one level of nesting
-                for section_val in st.secrets.values():
+                for sv in st.secrets.values():
                     try:
-                        nested = dict(section_val)
+                        nested = dict(sv)
                         if name in nested and nested[name]:
                             return str(nested[name])
                     except Exception:
                         pass
                 return default
-            key    = _get_secret("AWS_ACCESS_KEY_ID",     key    or "")
-            secret = _get_secret("AWS_SECRET_ACCESS_KEY", secret or "")
-            region = _get_secret("AWS_REGION",            region)
-            model  = _get_secret("BEDROCK_MODEL_ID",      model)
+            key    = _gs("AWS_ACCESS_KEY_ID",     key)
+            secret = _gs("AWS_SECRET_ACCESS_KEY", secret)
+            region = _gs("AWS_REGION",            region)
+            model  = _gs("BEDROCK_MODEL_ID",      model)
         except Exception:
             pass
+    return key, secret, region, model
+
+
+def get_bedrock_client(force_reinit: bool = False):
+    """
+    Return (client, model_id). Cached after first successful init.
+    Pass force_reinit=True to retry when credentials arrive late.
+    """
+    global _bedrock_client, _bedrock_model
+
+    if _bedrock_client is not None and not force_reinit:
+        return _bedrock_client, _bedrock_model
+
+    key, secret, region, model = _read_bedrock_secrets()
+    _bedrock_model = model
 
     if not key or not secret:
         return None, model
+
     try:
         import boto3
-        client = boto3.client(
+        _bedrock_client = boto3.client(
             service_name          = "bedrock-runtime",
             region_name           = region,
             aws_access_key_id     = key,
             aws_secret_access_key = secret,
         )
-        return client, model
+        return _bedrock_client, _bedrock_model
     except Exception as e:
         logger.warning(f"[BEDROCK] Init failed: {e}")
+        _bedrock_client = None
         return None, model
 
-bedrock_client, BEDROCK_MODEL_ID = get_bedrock_client()
-AWS_REGION = os.getenv("AWS_REGION", "ap-south-1")
+
+# Expose a module-level alias that other modules can import directly.
+# This is None until the first get_bedrock_client() call succeeds.
+bedrock_client = None
 
 
 def test_bedrock_connection():
     """Test Bedrock connectivity. Returns (success: bool, message: str)."""
-    # Use module-level vars (may have been refreshed by lazy re-init in app.py)
-    import sys
-    _mod = sys.modules[__name__]
-    _client = getattr(_mod, "bedrock_client", None)
-    _model  = getattr(_mod, "BEDROCK_MODEL_ID", BEDROCK_MODEL_ID)
+    _client, _model = get_bedrock_client()
     if _client is None:
         return False, "not_initialized"
     try:

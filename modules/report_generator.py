@@ -1977,12 +1977,16 @@ def _generate_report_inner(
         _gaps        = person.get("data_gaps", [])
         _graph_nodes = (graph_data or {}).get("summary", {}).get("nodes", 0)
 
+        _emails    = person.get("emails_found", [])
+        _locations = person.get("locations_mentioned", [])
         confidence_result = calculate_stable_confidence(
             num_files       = len(_source_log),
             num_phones      = len(_phones),
             num_timeline    = len(_tl_events),
             num_graph_nodes = _graph_nodes,
             num_gaps        = len(_gaps),
+            num_emails      = len(_emails),
+            num_locations   = len(_locations),
         )
 
         overall_confidence   = confidence_result["confidence"]

@@ -630,8 +630,11 @@ def extract_all_phones(raw_documents: list) -> list:
         # e.g. "INV-2310", "RCP-8821"
         if re.match(r"^[A-Z]{2,}-\d+", cleaned):
             return False
-        # e.g. "2311-447822" (YYMM-XXXXXX order ref)
-        if re.match(r"^\d{4}-\d{6}$", cleaned):
+        # e.g. "2311-447822" (YYMM-XXXXXX order ref), "23-44782" (short order)
+        if re.match(r"^\d{2,4}-\d{5,7}$", cleaned):
+            return False
+        # e.g. "447822-2311" (reversed order ref)
+        if re.match(r"^\d{6}-\d{4}$", cleaned):
             return False
         # e.g. "TXN231016HDFC8821"
         if re.match(r"^TXN\d+", cleaned):
@@ -995,6 +998,8 @@ def resolve_entity_from_multiple_docs(raw_documents: list) -> tuple[dict, str]:
         num_timeline    = num_timeline,
         num_graph_nodes = 0,   # graph not built yet at this stage; updated in app.py
         num_gaps        = len(safe_list(person.get("data_gaps", []))),
+        num_emails      = len(safe_list(person.get("emails_found", []))),
+        num_locations   = len(safe_list(person.get("locations_mentioned", []))),
     )
     person["confidence_breakdown"]  = conf_result["breakdown"]
     person["confidence_explanation"] = conf_result["breakdown"]
@@ -1117,33 +1122,87 @@ def calculate_stable_confidence(
     num_timeline: int,
     num_graph_nodes: int,
     num_gaps: int,
+    num_emails: int = 0,
+    num_locations: int = 0,
 ) -> dict:
     """
-    Stable, evidence-based confidence engine.
-    Base 42. Safety rails: max(42, min(82)). Rounded to nearest 2.
-
-    Gap penalty is intentionally light (3 pts each, max 12): many expected
-    fields (GitHub, join dates, news appearances) are irrelevant for CDR or
-    financial investigations and should not collapse the score to the floor.
+    Dynamic evidence-based confidence engine. Starts at 0, builds from evidence.
+    Capped at 95. Rounded to nearest 2.
     Returns {"confidence": int, "breakdown": str}.
     """
-    base           = 42
-    file_bonus     = min(num_files * 8, 48)
-    phone_bonus    = min(num_phones * 2, 14)
-    # timeline_bonus: ~1 pt per 5 events, capped at 14
-    timeline_bonus = min(num_timeline // 5, 14)
-    graph_bonus    = min(num_graph_nodes // 2, 12)
-    # Light penalty: 3 pts per gap, max 12 — prevents CDR investigations from
-    # being dragged to the floor by irrelevant missing fields (GitHub, LinkedIn…)
-    gap_penalty    = min(num_gaps * 3, 12)
+    score = 0
 
-    raw_score   = base + file_bonus + phone_bonus + timeline_bonus + graph_bonus - gap_penalty
-    final_score = max(42, min(82, raw_score))
+    # Sources bonus (tiered)
+    if num_files >= 5:
+        src_bonus = 48
+    elif num_files >= 3:
+        src_bonus = 35
+    elif num_files >= 2:
+        src_bonus = 20
+    elif num_files >= 1:
+        src_bonus = 10
+    else:
+        src_bonus = 0
+    score += src_bonus
+
+    # Phone bonus (tiered)
+    if num_phones >= 3:
+        phone_bonus = 14
+    elif num_phones >= 2:
+        phone_bonus = 10
+    elif num_phones >= 1:
+        phone_bonus = 5
+    else:
+        phone_bonus = 0
+    score += phone_bonus
+
+    # Email bonus
+    email_bonus = 8 if num_emails >= 1 else 0
+    score += email_bonus
+
+    # Location bonus (tiered)
+    if num_locations >= 3:
+        loc_bonus = 8
+    elif num_locations >= 1:
+        loc_bonus = 4
+    else:
+        loc_bonus = 0
+    score += loc_bonus
+
+    # Timeline bonus (tiered)
+    if num_timeline >= 20:
+        timeline_bonus = 14
+    elif num_timeline >= 10:
+        timeline_bonus = 8
+    elif num_timeline >= 1:
+        timeline_bonus = 4
+    else:
+        timeline_bonus = 0
+    score += timeline_bonus
+
+    # Graph bonus (tiered)
+    if num_graph_nodes >= 10:
+        graph_bonus = 10
+    elif num_graph_nodes >= 5:
+        graph_bonus = 6
+    elif num_graph_nodes >= 1:
+        graph_bonus = 3
+    else:
+        graph_bonus = 0
+    score += graph_bonus
+
+    # Gap penalty: 2 pts each, max 15
+    gap_penalty = min(num_gaps * 2, 15)
+    score -= gap_penalty
+
+    final_score = max(0, min(95, score))
     final_score = round(final_score / 2) * 2
 
     breakdown = (
-        f"{num_files} source file(s) [+{file_bonus}], "
+        f"{num_files} source file(s) [+{src_bonus}], "
         f"{num_phones} phone(s) [+{phone_bonus}], "
+        f"{num_emails} email(s) [+{email_bonus}], "
+        f"{num_locations} location(s) [+{loc_bonus}], "
         f"{num_timeline} timeline event(s) [+{timeline_bonus}], "
         f"{num_graph_nodes} graph node(s) [+{graph_bonus}], "
         f"{num_gaps} data gap(s) [-{gap_penalty}]"

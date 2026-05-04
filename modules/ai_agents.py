@@ -26,18 +26,8 @@ def _call_bedrock(prompt: str, max_tokens: int = 4096) -> str:
     Primary engine — data stays in India for DPDP compliance.
     Returns raw text on success, empty string on failure.
     """
-    # Lazy init: config.bedrock_client is None when config was imported
-    # before Streamlit finished loading (st.secrets not yet available).
-    # Re-call get_bedrock_client() now that the app is fully running.
-    if getattr(config, "bedrock_client", None) is None:
-        try:
-            _client, _model = config.get_bedrock_client()
-            if _client:
-                config.bedrock_client   = _client
-                config.BEDROCK_MODEL_ID = _model
-        except Exception:
-            pass
-    if getattr(config, "bedrock_client", None) is None:
+    _client, _model = config.get_bedrock_client()
+    if _client is None:
         return ""
     try:
         body = json.dumps({
@@ -45,8 +35,8 @@ def _call_bedrock(prompt: str, max_tokens: int = 4096) -> str:
             "max_tokens": max_tokens,
             "messages": [{"role": "user", "content": prompt}],
         })
-        response = config.bedrock_client.invoke_model(
-            modelId     = config.BEDROCK_MODEL_ID,
+        response = _client.invoke_model(
+            modelId     = _model,
             body        = body,
             contentType = "application/json",
             accept      = "application/json",
