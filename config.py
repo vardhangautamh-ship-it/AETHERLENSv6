@@ -36,12 +36,25 @@ load_dotenv(BASE_DIR / ".env")
 # ── Streamlit Cloud secrets → os.environ ─────────────────────────────────────
 # Must run before any os.getenv() calls so cloud secrets win over stale values.
 def load_cloud_secrets():
+    """
+    Inject Streamlit secrets into os.environ.
+    Handles both flat  (AWS_ACCESS_KEY_ID = "...")
+    and nested         ([secrets] / AWS_ACCESS_KEY_ID = "...") TOML layouts.
+    """
     try:
         import streamlit as st
         secrets = dict(st.secrets)
         for k, v in secrets.items():
             if isinstance(v, str):
                 os.environ[k] = v
+            else:
+                # Nested section — flatten one level deep
+                try:
+                    for nk, nv in dict(v).items():
+                        if isinstance(nv, str):
+                            os.environ[nk] = nv
+                except Exception:
+                    pass
     except Exception:
         pass
 
@@ -123,13 +136,28 @@ def get_bedrock_client():
 
     # Direct st.secrets fallback — works at runtime even if the import-time
     # load_cloud_secrets() call above failed (Streamlit context not yet ready).
+    # Also handles nested TOML sections, e.g. [secrets] / AWS_ACCESS_KEY_ID = "..."
     if not key or not secret:
         try:
             import streamlit as st
-            key    = str(st.secrets.get("AWS_ACCESS_KEY_ID",     key    or ""))
-            secret = str(st.secrets.get("AWS_SECRET_ACCESS_KEY", secret or ""))
-            region = str(st.secrets.get("AWS_REGION",            region))
-            model  = str(st.secrets.get("BEDROCK_MODEL_ID",      model))
+            def _get_secret(name, default=""):
+                # Try top-level first
+                val = st.secrets.get(name, "")
+                if val:
+                    return str(val)
+                # Try one level of nesting
+                for section_val in st.secrets.values():
+                    try:
+                        nested = dict(section_val)
+                        if name in nested and nested[name]:
+                            return str(nested[name])
+                    except Exception:
+                        pass
+                return default
+            key    = _get_secret("AWS_ACCESS_KEY_ID",     key    or "")
+            secret = _get_secret("AWS_SECRET_ACCESS_KEY", secret or "")
+            region = _get_secret("AWS_REGION",            region)
+            model  = _get_secret("BEDROCK_MODEL_ID",      model)
         except Exception:
             pass
 

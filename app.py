@@ -3477,13 +3477,23 @@ def screen_admin():
             # 2. st.secrets
             try:
                 _skeys = list(st.secrets.keys())
-                _key_s = st.secrets.get("AWS_ACCESS_KEY_ID", "")
-                _sec_s = st.secrets.get("AWS_SECRET_ACCESS_KEY", "")
-                _reg_s = st.secrets.get("AWS_REGION", "")
-                diag_lines.append(f"**st.secrets keys**: `{_skeys}`")
-                diag_lines.append(f"**secrets AWS_ACCESS_KEY_ID**: `{'SET (' + str(_key_s)[:4] + '...)' if _key_s else 'NOT SET'}`")
-                diag_lines.append(f"**secrets AWS_SECRET_ACCESS_KEY**: `{'SET' if _sec_s else 'NOT SET'}`")
-                diag_lines.append(f"**secrets AWS_REGION**: `{_reg_s or 'NOT SET'}`")
+                diag_lines.append(f"**st.secrets top-level keys**: `{_skeys}`")
+                # Check top-level and nested
+                def _diag_secret(name):
+                    v = st.secrets.get(name, "")
+                    if v:
+                        return f"SET ({str(v)[:4]}...)"
+                    for sv in st.secrets.values():
+                        try:
+                            nd = dict(sv)
+                            if name in nd and nd[name]:
+                                return f"SET in nested section ({str(nd[name])[:4]}...)"
+                        except Exception:
+                            pass
+                    return "NOT SET"
+                diag_lines.append(f"**AWS_ACCESS_KEY_ID**: `{_diag_secret('AWS_ACCESS_KEY_ID')}`")
+                diag_lines.append(f"**AWS_SECRET_ACCESS_KEY**: `{'SET' if st.secrets.get('AWS_SECRET_ACCESS_KEY') or any('AWS_SECRET_ACCESS_KEY' in dict(sv) for sv in st.secrets.values() if hasattr(sv, '__iter__')) else 'NOT SET'}`")
+                diag_lines.append(f"**AWS_REGION**: `{_diag_secret('AWS_REGION')}`")
             except Exception as _se:
                 diag_lines.append(f"**st.secrets error**: `{_se}`")
             # 3. client state
