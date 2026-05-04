@@ -591,9 +591,10 @@ def extract_all_phones(raw_documents: list) -> list:
         if re.match(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$", cleaned):
             return False
 
-        # Reject IP fragments with leading single digit + space
-        # e.g. "1 1221774321", "4 18522010145" (ISP data columns)
-        if re.match(r"^\d\s+\d{8,}$", cleaned):
+        # Reject ISP data fragments: small prefix number + space + long number
+        # e.g. "1 1221774321", "128 9876543210", "1240 1221774321"
+        # Pattern: 1–4 leading digits, whitespace, then 7+ digits
+        if re.match(r"^\d{1,4}\s+\d{7,}$", cleaned):
             return False
 
         # Must be 7–15 actual digits
@@ -1177,6 +1178,38 @@ _DOB_CONTEXT_RE = re.compile(
 )
 
 
+def _is_platform_suffix(primary: str, variant: str) -> bool:
+    """
+    Returns True when the variant is just the primary name concatenated with
+    a social-platform word (or vice-versa), or when the variant is the
+    primary name repeated twice.  These are NER artefacts, not real conflicts.
+    Examples that must be suppressed:
+        primary="Harshvardhan"  variant="Harshvardhan Instagram"  → True
+        primary="Harshvardhan"  variant="Harshvardhan Harshvardhan" → True
+    """
+    p = primary.lower().strip()
+    v = variant.lower().strip()
+
+    PLATFORM_WORDS = [
+        "instagram", "telegram", "twitter", "github",
+        "hugging face", "huggingface", "linkedin",
+        "facebook", "youtube", "reddit", "discord",
+        "whatsapp", "signal", "snapchat", "tiktok",
+        "x.com", "threads", "account", "user",
+        "profile", "handle", "subject",
+    ]
+
+    for platform in PLATFORM_WORDS:
+        if v == f"{p} {platform}" or v == f"{platform} {p}":
+            return True
+
+    # e.g. "Harshvardhan Harshvardhan"
+    if v == f"{p} {p}":
+        return True
+
+    return False
+
+
 def detect_all_conflicts(
     raw_documents: list,
     primary_name: str,
@@ -1216,8 +1249,10 @@ def detect_all_conflicts(
             # that "Khan Ali" does not conflict with "Zafar Ahmed Khan".
             min_overlap = 2 if len(primary_parts) >= 2 else 1
             if overlap and len(overlap) >= min_overlap and len(name) > 4:
-                # Suppress if variant is just primary name + descriptor suffix
+                # Suppress platform-name artefacts and double-name artefacts
                 if _is_name_with_suffix(primary_name, name):
+                    continue
+                if _is_platform_suffix(primary_name, name):
                     continue
                 seen_variants.add(name)
                 conflicts.append({

@@ -314,7 +314,15 @@ def calculate_risk_score(person: dict, anomalies: list, graph=None) -> dict:
     phones    = p.get("phones_found",         [])
     locations = p.get("location_stated",      [])
     platforms = p.get("platforms_confirmed",  [])
-    flags     = [str(a) for a in (anomalies or []) if str(a).strip()]
+    # Normalise anomaly flags — extract "flag" key from dicts so evidence_text
+    # contains plain readable strings, not raw Python dict reprs.
+    flags = []
+    for a in (anomalies or []):
+        if isinstance(a, dict):
+            flags.append(str(a.get("flag") or a.get("detail") or a.get("type") or a))
+        else:
+            flags.append(str(a))
+    flags = [f for f in flags if f.strip()]
 
     # ── BUILD EVIDENCE SUMMARY ──────────────────────────────────────────────
     evidence_lines = []
@@ -415,7 +423,12 @@ Every factor must have a weight proportional to its severity."""
     # Generic severity-weighted keywords that span all crime types.
     score   = 30
     factors = []
-    flag_text = " ".join(str(f).upper() for f in flags)
+    # Build search text: uppercase of both original and str() representations
+    # so both "CERT-In inquiry confirmed" and dict-wrapped flags are matched.
+    flag_text = (
+        " ".join(str(f).upper() for f in flags) + " " +
+        " ".join(str(f) for f in flags).upper()
+    ).strip()
 
     HIGH_SEVERITY = [
         # Financial / narcotics
@@ -424,14 +437,21 @@ Every factor must have a weight proportional to its severity."""
         # Cyber / IT Act — multiple alias forms for robustness
         ("IT ACT",                20), ("INFORMATION TECHNOLOGY", 18),
         ("SECTION 43",            18), ("SECTION 66",       18), ("SECTION 69",     18),
-        ("DPDP",                  15),
+        ("VIOLATION FLAGGED",     20), ("DPDP",             15),
+        ("BREACH SUSPECTED",      15), ("DATA PROTECTION",  12),
         # CERT-In / government inquiry — all alias forms
-        ("CERT-IN",               20), ("CERT-In",          20), ("CERTIN",         20),
-        ("CERT ",                 18), ("COMPUTER EMERGENCY", 18),
+        ("CERT-IN",               20), ("CERTIN",           20),
+        ("COMPUTER EMERGENCY",    18), ("INQUIRY CONFIRMED",20),
         ("CYBER CELL",            15), ("FORMAL INQUIRY",   15),
         # Evidence actions
-        ("DELETION",              18), ("DELETED",          18), ("REPO_DELETE",    18),
-        ("POST_DELETE",           18), ("MODEL_DELETE",     18), ("EVIDENCE",       12),
+        ("EVIDENCE DELETION",     18), ("DELETION CONFIRMED",18),
+        ("DELETION",              18), ("DELETED",          18),
+        ("REPO_DELETE",           18), ("POST_DELETE",      18),
+        ("MODEL_DELETE",          18), ("EVIDENCE",         12),
+        # Malicious activity
+        ("MALICIOUS DEPLOYMENT",  15), ("MALICIOUS",        15),
+        ("EXPLOIT",               15), ("UNAUTHORISED",     12),
+        ("UNAUTHORIZED",          12),
         # Legal status
         ("LOOKOUT",               15), ("CHARGESHEET",      15), ("ARREST",         12),
         ("SEIZED",                12), ("DEPLOYED",         15), ("DEPLOYMENT",     15),
@@ -440,12 +460,15 @@ Every factor must have a weight proportional to its severity."""
         ("TELEGRAM",      8),  ("ENCRYPTED",    8),  ("PROTONMAIL",    8),
         ("SIGNAL",        8),  ("BURNER",       10), ("DUBAI",          8),
         ("UAE",           8),  ("+971",          8),  ("SCRAPING",      8),
-        ("UNAUTHORISED",  10), ("VPN",           6),  ("NIGHT",         5),
+        ("VPN",           6),  ("NIGHT",         5),
         ("2AM",           6),  ("1AM",           6),
     ]
 
+    seen_keywords: set = set()
     for keyword, weight in HIGH_SEVERITY + MEDIUM_SEVERITY:
-        if keyword in flag_text:
+        kw_upper = keyword.upper()
+        if kw_upper in flag_text and kw_upper not in seen_keywords:
+            seen_keywords.add(kw_upper)
             score += weight
             factors.append({
                 "factor":   keyword.title() + " indicator",
