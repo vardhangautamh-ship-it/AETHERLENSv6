@@ -74,7 +74,7 @@ def init_db():
             raw_pin = str(config.ADMIN_PIN).zfill(6)[:6]
             pin_hash = bcrypt.hashpw(raw_pin.encode(), bcrypt.gensalt(rounds=config.BCRYPT_ROUNDS)).decode()
             cur.execute(
-                "INSERT INTO pin_config (id, pin_hash, failed_attempts) VALUES (1, ?, 0)",
+                "INSERT OR IGNORE INTO pin_config (id, pin_hash, failed_attempts) VALUES (1, ?, 0)",
                 (pin_hash,)
             )
 

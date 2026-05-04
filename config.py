@@ -38,14 +38,12 @@ load_dotenv(BASE_DIR / ".env")
 def load_cloud_secrets():
     try:
         import streamlit as st
-        print("[DEBUG] st.secrets keys:", list(st.secrets.keys()))
         secrets = dict(st.secrets)
         for k, v in secrets.items():
             if isinstance(v, str):
                 os.environ[k] = v
-                print(f"[DEBUG] Set {k} = {v[:4]}...")
-    except Exception as e:
-        print(f"[CONFIG] Secrets error: {e}")
+    except Exception:
+        pass
 
 load_cloud_secrets()
 
@@ -122,22 +120,18 @@ def get_bedrock_client():
         "apac.anthropic.claude-sonnet-4-20250514-v1:0",
     )
     if not key or not secret:
-        print("[BEDROCK] No credentials found in environment")
         return None, model
     try:
         import boto3
-        print("[BEDROCK] KEY:", os.getenv("AWS_ACCESS_KEY_ID", "NOT FOUND")[:8])
-        print("[BEDROCK] REGION:", os.getenv("AWS_REGION", "NOT FOUND"))
         client = boto3.client(
             service_name          = "bedrock-runtime",
             region_name           = region,
             aws_access_key_id     = key,
             aws_secret_access_key = secret,
         )
-        print(f"[BEDROCK] Client ready — region: {region}")
         return client, model
     except Exception as e:
-        print(f"[BEDROCK] Init failed: {e}")
+        logger.warning(f"[BEDROCK] Init failed: {e}")
         return None, model
 
 bedrock_client, BEDROCK_MODEL_ID = get_bedrock_client()
@@ -163,10 +157,6 @@ def test_bedrock_connection():
         )
         result = _json.loads(response["body"].read())
         text   = result["content"][0]["text"]
-        try:
-            print(f"[BEDROCK] Test response: {text}")
-        except Exception:
-            pass
         return True, text
     except Exception as e:
         try:
