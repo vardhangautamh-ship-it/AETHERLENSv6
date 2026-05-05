@@ -42,12 +42,22 @@ def load_cloud_secrets():
         for k in secret_keys:
             v = st.secrets[k]
             if isinstance(v, str):
+                # Flat key: AWS_ACCESS_KEY_ID = "..."
                 os.environ[k] = v
                 loaded.append(k)
+            else:
+                # Nested section: [secrets] / AWS_ACCESS_KEY_ID = "..."
+                try:
+                    for nk, nv in dict(v).items():
+                        if isinstance(nv, str):
+                            os.environ[nk] = nv
+                            loaded.append(nk)
+                except Exception:
+                    pass
         if loaded:
             print(f"[SECRETS] Loaded {len(loaded)} keys: {loaded}")
         else:
-            print("[SECRETS] No string secrets found")
+            print("[SECRETS] No string secrets found at top level or nested")
     except Exception as e:
         print(f"[SECRETS] Failed: {e}")
     return loaded
