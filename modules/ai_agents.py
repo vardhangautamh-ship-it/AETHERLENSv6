@@ -711,92 +711,109 @@ def run_next_step_agent(report: dict, user_id: str = "system") -> dict:
     anomaly_text   = "\n".join(f"- {a}" for a in anomalies[:25]) or "None recorded."
     legal_text     = "\n".join(f"- {f}" for f in legal_flags[:10]) or "None detected."
 
-    # Build case summary for agent
-    raw_documents = report.get("raw_documents", []) if isinstance(report, dict) else []
+    # ── AI PATH ────────────────────────────────────────────────────────────────
+    person_name = person.get("confirmed_name", "Unknown") if person else "Unknown"
+
+    locations = ", ".join(
+        person.get("location_stated", []) or []
+    ) if person else ""
+
+    platforms = ", ".join(
+        person.get("platforms_confirmed", []) or []
+    ) if person else ""
+
+    flag_list = [
+        str(f).strip()
+        for f in (anomalies or [])
+        if str(f).strip() and len(str(f).strip()) > 10
+    ]
 
     flag_text = "\n".join([
-        f"- {str(f)[:100]}"
-        for f in (anomalies or [])[:12]
-        if str(f).strip()
-    ])
+        f"- {f[:120]}"
+        for f in flag_list[:12]
+    ]) or "No specific flags"
 
-    financial_context = ""
-    for doc in (raw_documents or []):
-        fname = str(doc.get("filename", "")).lower()
-        _txt  = str(doc.get("raw_text", "") or doc.get("full_text", "") or doc.get("content", "")).upper()
-        if any(k in fname for k in ("bank", "email", "receipt", "payment", "invoice")):
-            financial_context = (
-                "Financial evidence present:"
-                " international USD payments"
-                " to OpenAI, Anthropic, xAI."
-                " FEMA 1999 assessment required."
-            )
-            break
-        if any(k in _txt for k in ("USD", "FOREIGN EXCHANGE", "FEMA", "INTERNATIONAL TRANSFER",
-                                    "OPENAI", "ANTHROPIC", "STRIPE", "PAYPAL")):
-            financial_context = (
-                "Financial evidence present:"
-                " international USD payments"
-                " to OpenAI, Anthropic, xAI."
-                " FEMA 1999 assessment required."
-            )
-            break
+    # Detect financial evidence
+    has_financial = any(
+        any(x in str(f).upper() for x in
+            ["FEMA", "USD", "INTERNATIONAL", "BANK", "DEBIT", "OPENAI", "ANTHROPIC"])
+        for f in flag_list
+    )
 
-    cert_context = ""
-    for f in (anomalies or []):
-        if "cert" in str(f).lower():
-            cert_context = (
-                "Active CERT-In inquiry:"
-                " Ref CERT-In/2024/INC/GGN/0091"
-            )
-            break
+    # Detect CERT-In
+    has_certin = any("CERT" in str(f).upper() for f in flag_list)
 
-    location_str = locations
+    # Detect deletion
+    has_deletion = any(
+        any(x in str(f).upper() for x in ["DELETION", "DELETED", "REPO_DELETE"])
+        for f in flag_list
+    )
 
-    # ── AI PATH ────────────────────────────────────────────────────────────────
-    prompt = f"""
-You are a senior legal analyst.
-Generate 5 specific investigative next steps for this case.
+    # Detect IT Act
+    has_it_act = any(
+        "IT ACT" in str(f).upper()
+        or "SECTION 4" in str(f).upper()
+        or "SECTION 6" in str(f).upper()
+        for f in flag_list
+    )
 
-Subject: {subject_name}
-Location: {location_str}
+    extra_context = []
+    if has_financial:
+        extra_context.append(
+            "Financial evidence: international USD payments confirmed to foreign tech "
+            "companies. FEMA 1999 applies."
+        )
+    if has_certin:
+        extra_context.append(
+            "Active CERT-In inquiry: Ref CERT-In/2024/INC/GGN/0091. Case already open."
+        )
+    if has_deletion:
+        extra_context.append(
+            "Evidence deletion confirmed: repositories and content deleted post-inquiry. "
+            "Forensic preservation urgent."
+        )
+    if has_it_act:
+        extra_context.append(
+            "IT Act violations flagged: Sections 43, 66, 69 applicable."
+        )
 
-CONFIRMED ANOMALIES:
-{flag_text or "None recorded."}
+    context_str = "\n".join(extra_context) or ""
 
-{financial_context}
-{cert_context}
-
-Each step must:
-1. Reference specific evidence above
-2. Cite exact Indian law section
-3. State required authorisation
-4. State what evidence it recovers
-
-Include steps for:
-- Device seizure if deletion detected
-- Bank records if financial evidence
-- FEMA if USD transactions present
-- Platform records if social media
-- CERT-In case if inquiry active
-
-Return JSON only:
-{{
-  "steps": [
-    {{
-      "step_number": 1,
-      "action": "specific action",
-      "legal_basis": "exact law",
-      "authorization": "what needed",
-      "priority": "HIGH",
-      "fills_gap": "what this gets"
-    }}
-  ]
-}}
-"""
+    prompt = (
+        f"You are a senior legal analyst generating investigative next steps for an intelligence report."
+        f"\n\nSubject: {person_name}"
+        f"\nLocations: {locations}"
+        f"\nPlatforms: {platforms}"
+        f"\n\nCONFIRMED ANOMALY FLAGS:"
+        f"\n{flag_text}"
+        f"\n\nADDITIONAL CONTEXT:"
+        f"\n{context_str}"
+        f"\n\nGenerate exactly 5 specific lawful investigative next steps tailored to THIS case."
+        f"\n\nRules:"
+        f"\n- Each step must address a specific flag listed above"
+        f"\n- Cite exact Indian law section"
+        f"\n- State required authorisation"
+        f"\n- If FEMA present: include bank records subpoena step"
+        f"\n- If CERT-In present: reference existing case number"
+        f"\n- If deletion present: include device seizure step"
+        f"\n- If IT Act present: cite specific section numbers"
+        f"\n\nReturn JSON only. No markdown."
+        f"\n{{"
+        f"\n  \"steps\": ["
+        f"\n    {{"
+        f"\n      \"step_number\": 1,"
+        f"\n      \"action\": \"specific action\","
+        f"\n      \"legal_basis\": \"exact law\","
+        f"\n      \"authorization\": \"required\","
+        f"\n      \"priority\": \"HIGH\","
+        f"\n      \"fills_gap\": \"what recovered\""
+        f"\n    }}"
+        f"\n  ]"
+        f"\n}}"
+    )
 
     try:
-        result_text = _call_ai(prompt, max_tokens=1200)
+        result_text = _call_ai(prompt, max_tokens=1500)
         clean = re.sub(r"```(?:json)?|```", "", result_text).strip()
         m = re.search(r"\{.*\}", clean, re.DOTALL)
         if m:
