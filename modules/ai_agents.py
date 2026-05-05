@@ -22,12 +22,16 @@ import config
 
 def _call_bedrock(prompt: str, max_tokens: int = 4096) -> str:
     """
-    Claude Opus 4 on AWS Bedrock (ap-south-1 / Mumbai).
+    Claude Sonnet 4 on AWS Bedrock (ap-south-1 / Mumbai).
     Primary engine — data stays in India for DPDP compliance.
     Returns raw text on success, empty string on failure.
     """
-    _client, _model = config.get_bedrock_client()
-    if _client is None:
+    # Reimport fresh on every call — forces credential reload on each invocation
+    from config import get_bedrock_client
+    client, model_id = get_bedrock_client()
+
+    if not client:
+        print("[BEDROCK CALL] No client — skipping")
         return ""
     try:
         body = json.dumps({
@@ -35,8 +39,8 @@ def _call_bedrock(prompt: str, max_tokens: int = 4096) -> str:
             "max_tokens": max_tokens,
             "messages": [{"role": "user", "content": prompt}],
         })
-        response = _client.invoke_model(
-            modelId     = _model,
+        response = client.invoke_model(
+            modelId     = model_id,
             body        = body,
             contentType = "application/json",
             accept      = "application/json",
