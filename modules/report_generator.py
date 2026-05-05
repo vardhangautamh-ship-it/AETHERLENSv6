@@ -690,59 +690,58 @@ def build_source_log(raw_documents: list, search_results: dict = None) -> list:
 def _build_risk_section(person: dict, agent_results: dict = None, raw_documents: list = None) -> dict:
     """
     Build section 16 — Risk Assessment.
-    Priority: agent_results["risk"] -> run RiskAgent inline -> ontology inline calc.
+    Always builds the full enriched anomaly list from person dict + raw document
+    keyword scan, then runs RiskAgent with it — guarantees flags are never empty
+    regardless of when anomaly_flags was populated upstream.
     NEVER returns empty — always has risk_score and risk_level.
     """
-    # Try agent results first
-    risk_data = None
-    if agent_results:
-        risk_data = agent_results.get("risk") or agent_results.get("risk_assessment")
+    # ── Always build complete flag list from all sources ──────────────────────
+    try:
+        from modules.ai_agents import run_risk_agent
 
-    # If agent result missing or incomplete, run RiskAgent inline now
-    if not risk_data or risk_data.get("risk_score") is None:
-        try:
-            from modules.ai_agents import run_risk_agent
-            # Build anomaly strings from person dict
-            _anomalies = []
-            for _f in (person or {}).get("anomaly_flags", []) or []:
-                _anomalies.append(_f.get("flag", str(_f)) if isinstance(_f, dict) else str(_f))
-            for _c in (person or {}).get("conflicts", []) or []:
-                _anomalies.append(_c.get("flag", str(_c)) if isinstance(_c, dict) else str(_c))
-            for _b in (person or {}).get("behavioral_flags", []) or []:
-                _anomalies.append(str(_b))
+        # 1. Structured flags from person dict
+        _anomalies = []
+        for _f in (person or {}).get("anomaly_flags", []) or []:
+            _anomalies.append(_f.get("flag", str(_f)) if isinstance(_f, dict) else str(_f))
+        for _c in (person or {}).get("conflicts", []) or []:
+            _anomalies.append(_c.get("flag", str(_c)) if isinstance(_c, dict) else str(_c))
+        for _b in (person or {}).get("behavioral_flags", []) or []:
+            _anomalies.append(str(_b))
 
-            # Scan raw document text for crime-type keywords that may not have
-            # surfaced as structured anomaly_flags yet (CERT-In, IT Act, DPDP, etc.)
-            _extra: list = []
-            _seen_extra: set = set()
-            _KEYWORD_FLAGS = [
-                (("CERT-IN", "CERT-In", "CERTIN", "COMPUTER EMERGENCY RESPONSE"),
-                 "CERT-In inquiry confirmed"),
-                (("IT ACT", "INFORMATION TECHNOLOGY ACT", "SECTION 43", "SECTION 66", "SECTION 69"),
-                 "IT Act violation flagged"),
-                (("DPDP", "DATA PROTECTION"),
-                 "DPDP Act breach suspected"),
-                (("DELETED", "DELETION", "REPO_DELETE", "POST_DELETE", "MODEL_DELETE"),
-                 "Evidence deletion confirmed"),
-                (("UNAUTHORISED", "UNAUTHORIZED"),
-                 "Unauthorised access flagged"),
-                (("SCRAPING", "SCRAPED", "DATA SCRAPE"),
-                 "Unauthorised data scraping flagged"),
-                (("DEPLOYED", "DEPLOYMENT", "MALWARE", "EXPLOIT"),
-                 "Malicious deployment / exploit activity flagged"),
-            ]
-            for doc in (raw_documents or []):
-                doc_text = str(doc.get("full_text", "") or doc.get("raw_text", "")).upper()
-                for keywords, flag_label in _KEYWORD_FLAGS:
-                    if flag_label not in _seen_extra:
-                        if any(kw in doc_text for kw in keywords):
-                            _extra.append(flag_label)
-                            _seen_extra.add(flag_label)
+        # 2. Keyword scan across raw document text — catches flags not yet in
+        #    anomaly_flags (CERT-In, IT Act, DPDP, evidence deletion, FEMA, etc.)
+        _seen: set = set(_anomalies)
+        _KEYWORD_FLAGS = [
+            (("CERT-IN", "CERT-In", "CERTIN", "COMPUTER EMERGENCY RESPONSE"),
+             "CERT-In inquiry confirmed"),
+            (("IT ACT", "INFORMATION TECHNOLOGY ACT", "SECTION 43", "SECTION 66", "SECTION 69"),
+             "IT Act violation flagged"),
+            (("DPDP", "DATA PROTECTION"),
+             "DPDP Act breach suspected"),
+            (("DELETED", "DELETION", "REPO_DELETE", "POST_DELETE", "MODEL_DELETE"),
+             "Evidence deletion confirmed"),
+            (("FEMA", "INTERNATIONAL_DEBIT", "USD", "FOREIGN EXCHANGE"),
+             "International financial transfer — FEMA 1999 may apply"),
+            (("UNAUTHORISED", "UNAUTHORIZED"),
+             "Unauthorised access flagged"),
+            (("SCRAPING", "SCRAPED", "DATA SCRAPE"),
+             "Unauthorised data scraping flagged"),
+            (("DEPLOYED", "DEPLOYMENT", "MALWARE", "EXPLOIT", "MALICIOUS"),
+             "Malicious deployment / exploit activity flagged"),
+        ]
+        for doc in (raw_documents or []):
+            doc_text = str(
+                doc.get("full_text", "") or doc.get("raw_text", "") or doc.get("content", "")
+            ).upper()
+            for keywords, flag_label in _KEYWORD_FLAGS:
+                if flag_label not in _seen and any(kw in doc_text for kw in keywords):
+                    _anomalies.append(flag_label)
+                    _seen.add(flag_label)
 
-            _all_anomalies = _anomalies + _extra
-            risk_data = run_risk_agent(person, _all_anomalies)
-        except Exception:
-            risk_data = None
+        # 3. Run RiskAgent with enriched flag list — always fresh, never stale
+        risk_data = run_risk_agent(person, _anomalies)
+    except Exception:
+        risk_data = None
 
     if risk_data and risk_data.get("risk_score") is not None:
         score  = risk_data.get("risk_score", 0)

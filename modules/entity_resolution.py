@@ -1369,9 +1369,30 @@ def detect_all_conflicts(
                     continue
                 if _is_platform_suffix(primary_name, name):
                     continue
-                _doubled = primary_name.lower().strip() + " " + primary_name.lower().strip()
-                if name.lower().strip() == _doubled:
+
+                # Explicit inline guards — belt-and-suspenders on top of helpers
+                _primary_lower = primary_name.lower().strip()
+                _variant_lower = name.lower().strip()
+                _PLATFORM_NAMES = [
+                    "instagram", "telegram", "twitter", "github",
+                    "hugging face", "linkedin", "facebook", "youtube",
+                    "reddit", "discord", "whatsapp", "signal",
+                    "tiktok", "x.com",
+                ]
+                _skip = False
+                for _p in _PLATFORM_NAMES:
+                    if _variant_lower == _primary_lower + " " + _p:
+                        _skip = True
+                        break
+                    if _variant_lower == _p + " " + _primary_lower:
+                        _skip = True
+                        break
+                # Guard: doubled name e.g. "Harshvardhan Harshvardhan"
+                if _variant_lower == _primary_lower + " " + _primary_lower:
+                    _skip = True
+                if _skip:
                     continue
+
                 seen_variants.add(name)
                 conflicts.append({
                     "type":     "NAME_CONFLICT",
