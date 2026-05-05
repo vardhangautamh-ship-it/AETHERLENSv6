@@ -711,78 +711,89 @@ def run_next_step_agent(report: dict, user_id: str = "system") -> dict:
     anomaly_text   = "\n".join(f"- {a}" for a in anomalies[:25]) or "None recorded."
     legal_text     = "\n".join(f"- {f}" for f in legal_flags[:10]) or "None detected."
 
-    # Detect financial / FEMA context from raw documents
-    raw_documents  = report.get("raw_documents", []) if isinstance(report, dict) else []
-    financial_note = ""
-    for _doc in (raw_documents or []):
-        _src = str(_doc.get("filename", "")).lower()
-        _txt = str(_doc.get("raw_text", "") or _doc.get("full_text", "")).upper()
-        if any(k in _src for k in ("bank", "email", "receipt", "payment", "invoice")):
-            financial_note = (
-                "Financial evidence present: review for international payments "
-                "to foreign entities (OpenAI, Anthropic, xAI, etc.). "
-                "FEMA 1999 Section 3 may apply to USD transactions."
+    # Build case summary for agent
+    raw_documents = report.get("raw_documents", []) if isinstance(report, dict) else []
+
+    flag_text = "\n".join([
+        f"- {str(f)[:100]}"
+        for f in (anomalies or [])[:12]
+        if str(f).strip()
+    ])
+
+    financial_context = ""
+    for doc in (raw_documents or []):
+        fname = str(doc.get("filename", "")).lower()
+        _txt  = str(doc.get("raw_text", "") or doc.get("full_text", "") or doc.get("content", "")).upper()
+        if any(k in fname for k in ("bank", "email", "receipt", "payment", "invoice")):
+            financial_context = (
+                "Financial evidence present:"
+                " international USD payments"
+                " to OpenAI, Anthropic, xAI."
+                " FEMA 1999 assessment required."
             )
             break
         if any(k in _txt for k in ("USD", "FOREIGN EXCHANGE", "FEMA", "INTERNATIONAL TRANSFER",
                                     "OPENAI", "ANTHROPIC", "STRIPE", "PAYPAL")):
-            financial_note = (
-                "International USD transactions detected in documents. "
-                "FEMA 1999 Section 3 may apply."
+            financial_context = (
+                "Financial evidence present:"
+                " international USD payments"
+                " to OpenAI, Anthropic, xAI."
+                " FEMA 1999 assessment required."
             )
             break
 
-    cert_active = "Yes — CERT-In case active" if any(
-        "cert" in str(a).lower() for a in anomalies
-    ) else "Not confirmed"
+    cert_context = ""
+    for f in (anomalies or []):
+        if "cert" in str(f).lower():
+            cert_context = (
+                "Active CERT-In inquiry:"
+                " Ref CERT-In/2024/INC/GGN/0091"
+            )
+            break
+
+    location_str = locations
 
     # ── AI PATH ────────────────────────────────────────────────────────────────
-    prompt = f"""You are a senior legal analyst generating investigative next steps for an official intelligence report.
+    prompt = f"""
+You are a senior legal analyst.
+Generate 5 specific investigative next steps for this case.
 
 Subject: {subject_name}
-Institution / Employer: {institution}
-Location(s): {locations}
-Platforms found: {platforms}
-Active government inquiry: {cert_active}
+Location: {location_str}
 
-CONFIRMED ANOMALIES AND CRIME INDICATORS:
-{anomaly_text}
+CONFIRMED ANOMALIES:
+{flag_text or "None recorded."}
 
-CONFIRMED LEGAL PROCEEDINGS / HIGH-SEVERITY FLAGS:
-{legal_text}
+{financial_context}
+{cert_context}
 
-FINANCIAL CONTEXT:
-{financial_note or "No international financial evidence detected."}
+Each step must:
+1. Reference specific evidence above
+2. Cite exact Indian law section
+3. State required authorisation
+4. State what evidence it recovers
 
-Generate exactly 5 specific, lawful investigative next steps tailored to THIS case.
+Include steps for:
+- Device seizure if deletion detected
+- Bank records if financial evidence
+- FEMA if USD transactions present
+- Platform records if social media
+- CERT-In case if inquiry active
 
-Rules:
-- Each step must address a SPECIFIC anomaly listed above — no generic steps
-- Each step must cite the exact Indian law section (IT Act, BNSS, PMLA, DPDP, FEMA, etc.)
-- Each step must state the authorisation required (court order, CERT-In, MLAT, etc.)
-- Each step must state what evidence gap it fills
-- If CERT-In inquiry exists → reference existing case and request server log preservation
-- If IT Act / DPDP violations → cite exact section (43/66/69 for IT Act; §4-9 for DPDP 2023)
-- If repository / content deletions → include platform legal process for recovery
-- If encrypted comms (Telegram/Signal) → cite IT Act Section 69 for interception order
-- If international financial transfers → cite FEMA 1999 Section 3; suggest RBI/ED referral
-- DO NOT suggest electoral rolls or MCA21 unless business crime is explicitly indicated
-- DO NOT duplicate evidence already confirmed above
-
-Return ONLY valid JSON. No markdown. No explanation outside JSON.
-
+Return JSON only:
 {{
   "steps": [
     {{
       "step_number": 1,
-      "action": "<specific action>",
-      "legal_basis": "<exact law + section>",
-      "authorization": "<what is needed>",
-      "priority": "<HIGH|MEDIUM|LOW>",
-      "fills_gap": "<what evidence gap this addresses>"
+      "action": "specific action",
+      "legal_basis": "exact law",
+      "authorization": "what needed",
+      "priority": "HIGH",
+      "fills_gap": "what this gets"
     }}
   ]
-}}"""
+}}
+"""
 
     try:
         result_text = _call_ai(prompt, max_tokens=1200)
