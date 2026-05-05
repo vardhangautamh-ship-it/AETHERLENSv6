@@ -712,15 +712,8 @@ def run_next_step_agent(report: dict, user_id: str = "system") -> dict:
     legal_text     = "\n".join(f"- {f}" for f in legal_flags[:10]) or "None detected."
 
     # ── AI PATH ────────────────────────────────────────────────────────────────
-    person_name = person.get("confirmed_name", "Unknown") if person else "Unknown"
-
-    locations = ", ".join(
-        person.get("location_stated", []) or []
-    ) if person else ""
-
-    platforms = ", ".join(
-        person.get("platforms_confirmed", []) or []
-    ) if person else ""
+    person_name = (person or {}).get("confirmed_name", "Unknown")
+    locations   = ", ".join((person or {}).get("location_stated", []) or [])
 
     flag_list = [
         str(f).strip()
@@ -733,83 +726,63 @@ def run_next_step_agent(report: dict, user_id: str = "system") -> dict:
         for f in flag_list[:12]
     ]) or "No specific flags"
 
-    # Detect financial evidence
     has_financial = any(
         any(x in str(f).upper() for x in
-            ["FEMA", "USD", "INTERNATIONAL", "BANK", "DEBIT", "OPENAI", "ANTHROPIC"])
+            ["FEMA", "USD", "INTERNATIONAL", "DEBIT", "OPENAI", "ANTHROPIC"])
         for f in flag_list
     )
-
-    # Detect CERT-In
-    has_certin = any("CERT" in str(f).upper() for f in flag_list)
-
-    # Detect deletion
+    has_certin   = any("CERT" in str(f).upper() for f in flag_list)
     has_deletion = any(
         any(x in str(f).upper() for x in ["DELETION", "DELETED", "REPO_DELETE"])
         for f in flag_list
     )
 
-    # Detect IT Act
-    has_it_act = any(
-        "IT ACT" in str(f).upper()
-        or "SECTION 4" in str(f).upper()
-        or "SECTION 6" in str(f).upper()
-        for f in flag_list
-    )
+    print(f"[NEXTSTEP] flags received: {len(flag_list)} has_financial={has_financial} has_certin={has_certin}")
 
-    extra_context = []
+    extra = []
     if has_financial:
-        extra_context.append(
-            "Financial evidence: international USD payments confirmed to foreign tech "
-            "companies. FEMA 1999 applies."
+        extra.append(
+            "International USD payments confirmed to foreign tech companies. "
+            "FEMA 1999 applies. Include bank records subpoena."
         )
     if has_certin:
-        extra_context.append(
-            "Active CERT-In inquiry: Ref CERT-In/2024/INC/GGN/0091. Case already open."
+        extra.append(
+            "Active CERT-In inquiry open. Reference case in steps. "
+            "Include server log preservation."
         )
     if has_deletion:
-        extra_context.append(
-            "Evidence deletion confirmed: repositories and content deleted post-inquiry. "
-            "Forensic preservation urgent."
-        )
-    if has_it_act:
-        extra_context.append(
-            "IT Act violations flagged: Sections 43, 66, 69 applicable."
+        extra.append(
+            "Evidence deletion confirmed. Device seizure urgent. "
+            "Include forensic preservation."
         )
 
-    context_str = "\n".join(extra_context) or ""
+    extra_str = "\n".join(extra)
 
     prompt = (
-        f"You are a senior legal analyst generating investigative next steps for an intelligence report."
-        f"\n\nSubject: {person_name}"
-        f"\nLocations: {locations}"
-        f"\nPlatforms: {platforms}"
-        f"\n\nCONFIRMED ANOMALY FLAGS:"
-        f"\n{flag_text}"
-        f"\n\nADDITIONAL CONTEXT:"
-        f"\n{context_str}"
-        f"\n\nGenerate exactly 5 specific lawful investigative next steps tailored to THIS case."
-        f"\n\nRules:"
-        f"\n- Each step must address a specific flag listed above"
-        f"\n- Cite exact Indian law section"
-        f"\n- State required authorisation"
-        f"\n- If FEMA present: include bank records subpoena step"
-        f"\n- If CERT-In present: reference existing case number"
-        f"\n- If deletion present: include device seizure step"
-        f"\n- If IT Act present: cite specific section numbers"
-        f"\n\nReturn JSON only. No markdown."
-        f"\n{{"
-        f"\n  \"steps\": ["
-        f"\n    {{"
-        f"\n      \"step_number\": 1,"
-        f"\n      \"action\": \"specific action\","
-        f"\n      \"legal_basis\": \"exact law\","
-        f"\n      \"authorization\": \"required\","
-        f"\n      \"priority\": \"HIGH\","
-        f"\n      \"fills_gap\": \"what recovered\""
-        f"\n    }}"
-        f"\n  ]"
-        f"\n}}"
+        "You are a senior legal analyst."
+        " Generate exactly 5 specific investigative next steps for this case.\n\n"
+        f"Subject: {person_name}\n"
+        f"Locations: {locations}\n\n"
+        "CONFIRMED FLAGS:\n"
+        f"{flag_text}\n\n"
+        "IMPORTANT CONTEXT:\n"
+        f"{extra_str}\n\n"
+        "Rules:\n"
+        "- Each step must address a specific flag above\n"
+        "- Cite exact Indian law section\n"
+        "- State required authorisation\n"
+        "- If FEMA: include bank subpoena\n"
+        "- If CERT-In: reference case\n"
+        "- If deletion: device seizure\n\n"
+        "Return JSON only:\n"
+        '{"steps": [{'
+        '"step_number": 1,'
+        '"action": "...",'
+        '"legal_basis": "...",'
+        '"authorization": "...",'
+        '"priority": "HIGH",'
+        '"fills_gap": "..."'
+        "}]}"
     )
 
     try:
