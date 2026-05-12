@@ -278,6 +278,178 @@ def _hr(color=DUST_PURPLE, thickness=0.5):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# SECTION 18 — TACTICAL OPERATION PLAN RENDERER
+# ══════════════════════════════════════════════════════════════════════════════
+
+_PRIORITY_ICON = {
+    "CRITICAL": "🔴",
+    "HIGH":     "🟠",
+    "MEDIUM":   "🟡",
+    "LOW":      "🟢",
+}
+
+_PRIORITY_COLOR = {
+    "CRITICAL": colors.HexColor('#FF4B4B'),
+    "HIGH":     colors.HexColor('#FF8C00'),
+    "MEDIUM":   DUST_PURPLE,
+    "LOW":      DIM,
+}
+
+
+def render_tactical_plan(tactical_plan: dict) -> list:
+    """
+    Render Section 18 — Tactical Operation Plan.
+    Self-contained: includes section header, case summary, warning, and all 6 actions.
+    Called from generate_pdf() when report_data["tactical_plan"] has actions.
+    """
+    if not tactical_plan or not tactical_plan.get("actions"):
+        return [
+            Paragraph("18. TACTICAL OPERATION PLAN", _STYLES["section_header"]),
+            _hr(PURPLE, 1.0),
+            Paragraph("No Tactical Operation Plan available.", _STYLES["verified"]),
+            Spacer(1, 4 * mm),
+        ]
+
+    block = []
+
+    # ── Section header ────────────────────────────────────────────────────────
+    block.append(Paragraph("18. TACTICAL OPERATION PLAN", _STYLES["section_header"]))
+    block.append(_hr(PURPLE, 1.0))
+
+    # Method badge
+    method = tactical_plan.get("method", "")
+    badge  = "[AI ANALYSIS]" if "ai" in method.lower() else "[RULE-BASED]"
+    block.append(Paragraph(f"{badge} TacticalPlanAgent", _STYLES["label"]))
+
+    # Case summary
+    case_summary = tactical_plan.get("case_summary", "")
+    if case_summary:
+        block.append(Paragraph(
+            _safe(f"CASE ASSESSMENT: {case_summary}"), _STYLES["body"]
+        ))
+
+    # Critical sequencing warning
+    critical_warning = tactical_plan.get("critical_warning", "")
+    if critical_warning:
+        block.append(Paragraph(
+            _safe(f"⚠ CRITICAL SEQUENCING WARNING: {critical_warning}"),
+            _STYLES["flag"],
+        ))
+
+    block.append(Spacer(1, 3 * mm))
+
+    # ── Actions ───────────────────────────────────────────────────────────────
+    for act in tactical_plan.get("actions", []):
+        if not isinstance(act, dict):
+            continue
+
+        act_id       = act.get("id", "?")
+        act_title    = act.get("title", "")
+        act_priority = str(act.get("priority", "MEDIUM")).upper()
+        act_ts       = str(act.get("time_sensitivity", "MEDIUM")).upper()
+        act_tw       = act.get("time_window", "")
+        act_desc     = act.get("description", "")
+        act_legal    = act.get("legal_basis", "")
+        act_agency   = act.get("agency", "")
+        act_auth     = act.get("authority_required", "")
+        act_dep      = act.get("depends_on", [])
+        act_blk      = act.get("blocks", [])
+        act_par      = act.get("parallel_with", [])
+        act_rdel     = act.get("risk_if_delayed", "")
+        act_rrev     = act.get("risk_if_reversed", "")
+        act_reward   = act.get("reward", "")
+
+        icon    = _PRIORITY_ICON.get(act_priority, "•")
+        p_col   = _PRIORITY_COLOR.get(act_priority, DUST_PURPLE)
+
+        # Action title line: 🔴 ACTION 1 [CRITICAL] — TITLE | 0-24 hours
+        title_txt = f"{icon} ACTION {act_id} [{act_priority}] — {act_title.upper()} | {act_tw}"
+        title_style = _STYLES["flag"] if act_priority == "CRITICAL" else _STYLES["section_header"]
+        block.append(Paragraph(_safe(title_txt), title_style))
+
+        # Compact metadata table: PRIORITY | TIME SENSITIVITY | TIME WINDOW
+        hdr_data = [[
+            f"PRIORITY: {act_priority}",
+            f"SENSITIVITY: {act_ts}",
+            f"⏱ {act_tw}",
+        ]]
+        hdr_tbl = Table(hdr_data, colWidths=[55 * mm, 60 * mm, 45 * mm])
+        hdr_tbl.setStyle(TableStyle([
+            ("BACKGROUND",    (0, 0), (-1, -1), DARKER),
+            ("TEXTCOLOR",     (0, 0), (0,  0),  p_col),
+            ("TEXTCOLOR",     (1, 0), (1,  0),  p_col),
+            ("TEXTCOLOR",     (2, 0), (2,  0),  OFF_WHITE),
+            ("FONTNAME",      (0, 0), (-1, -1), "Helvetica-BoldOblique"),
+            ("FONTSIZE",      (0, 0), (-1, -1), 8),
+            ("GRID",          (0, 0), (-1, -1), 0.3, PURPLE),
+            ("TOPPADDING",    (0, 0), (-1, -1), 3),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+            ("LEFTPADDING",   (0, 0), (-1, -1), 5),
+            ("RIGHTPADDING",  (0, 0), (-1, -1), 5),
+        ]))
+        block.append(hdr_tbl)
+        block.append(Spacer(1, 1 * mm))
+
+        # What
+        if act_desc:
+            block.append(Paragraph(_safe(f"  What: {act_desc}"), _STYLES["verified"]))
+
+        # Legal basis
+        if act_legal:
+            block.append(Paragraph(
+                _safe(f"  ⚖ Legal Basis: {act_legal}"), _STYLES["label"]
+            ))
+
+        # Authority + Agency
+        if act_agency or act_auth:
+            block.append(Paragraph(
+                _safe(f"  Authority: {act_auth}  |  Agency: {act_agency}"),
+                _STYLES["verified"],
+            ))
+
+        # Dependencies / blocks / parallel
+        seq_parts = []
+        if act_dep:
+            seq_parts.append(f"Depends on: Action(s) {', '.join(str(i) for i in act_dep)}")
+        else:
+            seq_parts.append("Depends on: —")
+        if act_blk:
+            seq_parts.append(f"Blocks: Action(s) {', '.join(str(i) for i in act_blk)}")
+        if act_par:
+            seq_parts.append(f"Parallel with: Action(s) {', '.join(str(i) for i in act_par)}")
+        block.append(Paragraph(_safe("  → " + "  |  ".join(seq_parts)), _STYLES["gap"]))
+
+        # ⚠ DO NOT execute before depends_on complete
+        if act_dep:
+            block.append(Paragraph(
+                _safe(f"  ⚠ DO NOT execute before Action(s) {', '.join(str(i) for i in act_dep)} are complete."),
+                _STYLES["flag"],
+            ))
+
+        # Risk lines
+        if act_rdel or act_rrev:
+            risk_txt = f"  Risk if delayed: {act_rdel}  |  Risk if reversed: {act_rrev}"
+            risk_style = (
+                _STYLES["flag"]
+                if act_rdel in ("HIGH", "CRITICAL") or act_rrev in ("HIGH", "CRITICAL")
+                else _STYLES["gap"]
+            )
+            block.append(Paragraph(_safe(risk_txt), risk_style))
+
+        # Evidence secured / reward
+        if act_reward:
+            block.append(Paragraph(
+                _safe(f"  ★ Evidence secured: {act_reward}"), _STYLES["ai_analysis"]
+            ))
+
+        block.append(Spacer(1, 3 * mm))
+        block.append(_hr(DIM, 0.3))
+
+    block.append(Spacer(1, 4 * mm))
+    return block
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # PDF BUILDER
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -388,11 +560,18 @@ def generate_pdf(
         ("16. RISK ASSESSMENT",            "risk_assessment"),
         ("17. INVESTIGATIVE NEXT STEPS",   "next_steps"),
     ]
-    # Section 18 only when operational strategy exists
-    if report_data.get("operational_strategy"):
-        section_defs.append(("18. OPERATIONAL STRATEGY", "operational_strategy"))
+    # Section 18 — Tactical Operation Plan (present whenever tactical_plan with actions exists)
+    _tp = report_data.get("tactical_plan")
+    if isinstance(_tp, dict) and _tp.get("actions"):
+        section_defs.append(("18. TACTICAL OPERATION PLAN", "tactical_plan"))
 
     for title, key in section_defs:
+        # ── Section 18 — Tactical Operation Plan: standalone renderer ──────────
+        if key == "tactical_plan":
+            content = report_data.get(key)
+            story.append(KeepTogether(render_tactical_plan(content)))
+            continue
+
         block = []
         block.append(Paragraph(_safe(title), _STYLES["section_header"]))
         block.append(_hr())
@@ -1657,16 +1836,13 @@ def _sections_to_pdf_data(sections: dict) -> dict:
     s15 = sections.get("account_timeline",        {})
     s16 = sections.get("risk_assessment",         {})
     s17 = sections.get("next_steps",              {})
-    s18 = sections.get("operational_strategy",    {})
+    s18 = sections.get("tactical_plan",           {})
 
     # Section 16 — Risk Assessment
     risk_lines = _flatten(s16, "items") if s16 else ["Risk assessment not available."]
 
     # Section 17 — Next Steps
     ns_lines = _flatten(s17, "items") if s17 else ["Investigative next steps not available."]
-
-    # Section 18 — Operational Strategy (only when present)
-    strat_lines = _flatten(s18, "phases") if s18 else []
 
     # Section 06B — Timeline Intelligence
     ti_lines = _flatten(s06b, "items") if s06b else [
@@ -1694,8 +1870,9 @@ def _sections_to_pdf_data(sections: dict) -> dict:
         "risk_assessment":        risk_lines,
         "next_steps":             ns_lines,
     }
-    if strat_lines:
-        result["operational_strategy"] = strat_lines
+    # Section 18 — pass full tactical_plan dict through for rich PDF rendering
+    if isinstance(s18, dict) and s18.get("actions"):
+        result["tactical_plan"] = s18
     return result
 
 
@@ -2056,37 +2233,30 @@ def _generate_report_inner(
             "platforms": {p: f"{v.get('url','Not found')} | @{v.get('username','?')}" for p, v in plat_map.items()},
         }
 
-    # Section 18 — Operational Strategy (only when assets_data provided)
-    if assets_data:
-        strat_result = agent_results.get("strategy") if agent_results else None
-        if not strat_result:
-            try:
-                from modules.ai_agents import run_strategy_agent
-                report_stub = {"person": person, "subject": subject}
-                strat_result = run_strategy_agent(person, assets_data, report_stub, user_id)
-            except Exception:
-                strat_result = None
-        if strat_result:
-            phases = strat_result.get("operational_phases", [])
-            risk_m = strat_result.get("risk_mitigations", [])
-            mitig  = strat_result.get("estimated_timeline", "")
-            items  = []
-            for ph in phases:
-                items.append(
-                    f"PHASE {ph.get('phase','?')}: {ph.get('name','')} — {ph.get('objective','')}"
-                )
-                for act in ph.get("actions", [])[:3]:
-                    items.append(f"  ▸ {act}")
-                if ph.get("legal_basis"):
-                    items.append(f"  Legal basis: {ph['legal_basis']}")
-                if ph.get("abort_condition"):
-                    items.append(f"  Abort if: {ph['abort_condition']}")
-            if risk_m:
-                items.append("Risk Mitigations:")
-                items.extend([f"  • {r}" for r in risk_m[:4]])
-            if mitig:
-                items.append(f"Estimated Timeline: {mitig}")
-            sections["operational_strategy"] = {"content": f"Operational strategy — {len(phases)} phases", "phases": items}
+    # Section 18 — Tactical Operation Plan (always runs — no assets gate)
+    tactical_plan_result = (agent_results or {}).get("tactical_plan")
+    if not (isinstance(tactical_plan_result, dict) and tactical_plan_result.get("actions")):
+        try:
+            from modules.ai_agents import run_tactical_plan_agent
+            tp_anomalies = []
+            for f in person.get("anomaly_flags", []) or []:
+                tp_anomalies.append(f.get("flag", str(f)) if isinstance(f, dict) else str(f))
+            for c in person.get("conflicts", []) or []:
+                tp_anomalies.append(c.get("flag", str(c)) if isinstance(c, dict) else str(c))
+            for bf in person.get("behavioral_flags", []) or []:
+                tp_anomalies.append(str(bf))
+            anom_sec = sections.get("anomalies_and_flags", {})
+            for fl in (anom_sec.get("flags", []) or []):
+                tp_anomalies.append(str(fl))
+            report_stub = {"person": person, "subject": subject}
+            tactical_plan_result = run_tactical_plan_agent(
+                person, tp_anomalies, assets_data or [], report_stub, user_id
+            )
+        except Exception as _tp_exc:
+            print(f"[TACTICAL_PLAN] _generate_report_inner fallback failed: {_tp_exc}")
+            tactical_plan_result = None
+    if isinstance(tactical_plan_result, dict) and tactical_plan_result.get("actions"):
+        sections["tactical_plan"] = tactical_plan_result
 
     # Convert sections to flat PDF data format
     pdf_data = _sections_to_pdf_data(sections)

@@ -1,11 +1,13 @@
 """
-AetherLens — AI Agent Orchestration Layer
-Four intelligence agents (Bedrock primary / Gemini fallback):
-  RiskAgent       — comprehensive risk assessment
-  PatternAgent    — hidden pattern & connection detection
-  NextStepAgent   — lawful investigative guidance
-  ComplianceAgent — DPDP / IT Act compliance check
-AgentOrchestrator — runs all four, merges outputs.
+AetherLens — AI Agent Orchestration Layer (Hybrid v2)
+Six intelligence agents (Bedrock primary / Gemini fallback):
+  RiskAgent         — hybrid deterministic + LLM risk assessment
+  PatternAgent      — hidden pattern & connection detection
+  NextStepAgent     — lawful investigative guidance
+  ComplianceAgent   — DPDP / IT Act compliance check
+  TacticalPlanAgent — sequenced 6-action Tactical Operation Plan (replaces StrategyAgent)
+  TimelineAgent     — narrative timeline analysis
+AgentOrchestrator   — runs all six, merges outputs.
 """
 
 import json
@@ -13,11 +15,18 @@ import re
 import datetime
 import sqlite3
 import uuid
+from typing import Any, Dict, List
+
+try:
+    import networkx as nx
+    _NX_AVAILABLE = True
+except ImportError:
+    _NX_AVAILABLE = False
 
 import config
 
 # ══════════════════════════════════════════════════════════════════════════════
-# SHARED HELPERS
+# SECTION A — SHARED HELPERS
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _call_bedrock(prompt: str, max_tokens: int = 4096) -> str:
@@ -26,7 +35,6 @@ def _call_bedrock(prompt: str, max_tokens: int = 4096) -> str:
     Primary engine — data stays in India for DPDP compliance.
     Returns raw text on success, empty string on failure.
     """
-    # Reimport fresh on every call — forces credential reload on each invocation
     from config import get_bedrock_client
     client, model_id = get_bedrock_client()
 
@@ -74,7 +82,7 @@ def _call_gemini(prompt: str, max_tokens: int = 4096) -> str:
     try:
         resp = requests.post(url, json=payload, timeout=45)
         resp.raise_for_status()
-        d = resp.json()
+        d          = resp.json()
         candidates = d.get("candidates", [])
         if not candidates:
             return ""
@@ -119,12 +127,13 @@ def _call_ai(prompt: str, max_tokens: int = 4096) -> str:
 
 
 def _extract_json(text: str) -> dict | None:
-    text = re.sub(r"```(?:json)?", "", text).strip()
+    """Robust JSON extractor — strips markdown fences, then tries regex fallback."""
+    text = re.sub(r"```(?:json)?|```", "", text).strip()
     try:
         return json.loads(text)
     except Exception:
         pass
-    m = re.search(r"\{.*\}", text, re.DOTALL)
+    m = re.search(r"\{[\s\S]*\}", text)
     if m:
         try:
             return json.loads(m.group())
@@ -159,7 +168,10 @@ def get_agent_activity_log(limit: int = 100) -> list:
             "ORDER BY run_at DESC LIMIT ?", (limit,)
         ).fetchall()
         conn.close()
-        return [{"id": r[0], "agent": r[1], "result": r[2], "run_at": r[3], "user_id": r[4]} for r in rows]
+        return [
+            {"id": r[0], "agent": r[1], "result": r[2], "run_at": r[3], "user_id": r[4]}
+            for r in rows
+        ]
     except Exception:
         return []
 
@@ -204,10 +216,10 @@ def build_grounding_context(person_object: dict, ontology_data: dict = None) -> 
         lines.append(f"DATA SOURCES: {', '.join(str(s) for s in sources[:5])}")
     if ontology_data:
         entities = ontology_data.get("entities", {})
-        enames = [v.get("name", k) for k, v in list(entities.items())[:10] if isinstance(v, dict)]
+        enames   = [v.get("name", k) for k, v in list(entities.items())[:10] if isinstance(v, dict)]
         if enames:
             lines.append(f"GRAPH ENTITIES: {', '.join(enames)}")
-        rels = ontology_data.get("relationships", [])
+        rels     = ontology_data.get("relationships", [])
         rel_strs = [
             f"{r.get('from','?')} --[{r.get('type','?')}]--> {r.get('to','?')}"
             for r in rels[:5] if isinstance(r, dict)
@@ -260,336 +272,237 @@ def validate_agent_output(agent_output: dict, confirmed_entities: list) -> dict:
                 pat["label"]    = "[UNSUPPORTED]"
                 pat.setdefault("warning", "Pattern does not reference a confirmed entity")
 
-    # operational_phases (StrategyAgent)
-    for phase in agent_output.get("operational_phases", []):
-        if isinstance(phase, dict):
-            probe = phase.get("objective", "") + " " + " ".join(phase.get("actions", []))
+    # actions (TacticalPlanAgent)
+    for action in agent_output.get("actions", []):
+        if isinstance(action, dict):
+            probe = action.get("description", "") + " " + action.get("title", "")
             if _grounded(probe):
-                phase["grounded"] = True
-                phase["label"]    = "[SUPPORTED]"
+                action["grounded"] = True
+                action["label"]    = "[SUPPORTED]"
             else:
-                phase["grounded"] = False
-                phase["label"]    = "[UNSUPPORTED]"
-                phase.setdefault("warning", "Phase does not reference a confirmed entity")
+                action["grounded"] = False
+                action["label"]    = "[UNSUPPORTED]"
+                action.setdefault("warning", "Action does not reference a confirmed entity")
 
     return agent_output
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# AGENT 1 — RISK ASSESSMENT
+# AGENT 1 — RISK ASSESSMENT (Hybrid v2)
+# Deterministic base_score + keyword weights → LLM only for explanation text.
+# Hard-cap applied when data is sparse so we never overstate confidence.
 # ══════════════════════════════════════════════════════════════════════════════
 
-_RISK_PROMPT = (
-    "You are RiskAgent, a risk assessment AI for an OSINT intelligence platform.\n"
-    "Analyze ONLY the provided entity data. Calculate a risk score 0-100.\n"
-    "Justify every point with exact evidence from the data.\n"
-    "Never score a factor without evidence.\n"
-    "Risk levels: 0-25=LOW, 26-50=MEDIUM, 51-75=HIGH, 76-100=CRITICAL\n\n"
-    "Return ONLY this JSON (no markdown, no commentary):\n"
-    '{{\n  "risk_score": 0,\n  "risk_level": "LOW",\n'
-    '  "risk_factors": [{{"factor": "", "evidence": "", "weight": 0, "source": ""}}],\n'
-    '  "mitigation_notes": "",\n  "confidence": 0,\n'
-    '  "agent": "RiskAgent",\n  "generated_at": ""\n}}\n\n'
-    "Entity data:\n{entity_json}"
-)
+# Severity-weighted keywords spanning all Indian crime types
+_RISK_HIGH_SEVERITY: list = [
+    # Financial / PMLA / narcotics
+    ("PMLA",                  18), ("NDPS",              18), ("NCB",             15),
+    ("HAWALA",                15), ("CASH DEPOSIT",      12), ("FEMA",            15),
+    ("ED ",                   12), ("MONEY LAUNDER",     18),
+    # Cyber / IT Act
+    ("IT ACT",                20), ("INFORMATION TECHNOLOGY", 18),
+    ("SECTION 43",            18), ("SECTION 66",        18), ("SECTION 69",      18),
+    ("VIOLATION FLAGGED",     20), ("DPDP",              15),
+    ("BREACH SUSPECTED",      15), ("DATA PROTECTION",   12),
+    # CERT-In / government inquiry
+    ("CERT-IN",               20), ("CERTIN",            20),
+    ("COMPUTER EMERGENCY",    18), ("INQUIRY CONFIRMED", 20),
+    ("CYBER CELL",            15), ("FORMAL INQUIRY",    15),
+    # Evidence destruction
+    ("EVIDENCE DELETION",     18), ("DELETION CONFIRMED", 18),
+    ("DELETION",              18), ("DELETED",           18),
+    ("REPO_DELETE",           18), ("POST_DELETE",       18),
+    ("MODEL_DELETE",          18), ("EVIDENCE",          12),
+    # Malicious / unauthorised
+    ("MALICIOUS DEPLOYMENT",  15), ("MALICIOUS",         15),
+    ("EXPLOIT",               15), ("UNAUTHORISED",      12),
+    ("UNAUTHORIZED",          12),
+    # Legal status
+    ("LOOKOUT",               15), ("CHARGESHEET",       15), ("ARREST",          12),
+    ("SEIZED",                12), ("DEPLOYED",          15), ("DEPLOYMENT",      15),
+]
+
+_RISK_MEDIUM_SEVERITY: list = [
+    ("TELEGRAM",  8), ("ENCRYPTED",   8), ("PROTONMAIL", 8),
+    ("SIGNAL",    8), ("BURNER",     10), ("DUBAI",       8),
+    ("UAE",       8), ("+971",        8), ("SCRAPING",    8),
+    ("VPN",       6), ("NIGHT",       5), ("2AM",         6), ("1AM", 6),
+]
+
+_MITIGATION_BY_LEVEL = {
+    "LOW":      "Continue routine monitoring. No immediate action required.",
+    "MEDIUM":   "Increase monitoring frequency. Cross-reference all sources.",
+    "HIGH":     "Escalate for senior analyst. Investigate all connections.",
+    "CRITICAL": "Immediate escalation required. Multiple confirmed violations. Preserve evidence urgently.",
+}
 
 
-def calculate_risk_score(person: dict, anomalies: list, graph=None) -> dict:
+def run_risk_agent(
+    person:    dict,
+    anomalies  = None,
+    graph      = None,
+    user_id:   str = "system",
+) -> dict:
     """
-    AI-powered risk scoring via Claude Sonnet 4 — Bedrock Mumbai.
-    Works for ANY crime type (financial, cyber, narcotics, terrorism,
-    IT Act, DPDP, fraud, etc.).
-    Falls back to weighted evidence scoring if AI is unavailable.
-    """
-    import datetime, json, re
+    Hybrid risk assessment — deterministic base score + LLM for explanation text.
 
-    p     = person or {}
-    name  = p.get("confirmed_name", "Unknown")
-    phones    = p.get("phones_found",         [])
-    locations = p.get("location_stated",      [])
-    platforms = p.get("platforms_confirmed",  [])
-    # Normalise anomaly flags — extract "flag" key from dicts so evidence_text
-    # contains plain readable strings, not raw Python dict reprs.
+    Backward-compatible:
+      run_risk_agent(entity_data)                   — single dict, auto-extracts anomalies
+      run_risk_agent(entity_data, user_id_string)   — old positional call
+      run_risk_agent(person, anomalies, graph, uid) — new explicit call
+    """
+    # ── Backward-compat: (entity_data, user_id_string) old calling convention ──
+    if isinstance(anomalies, str):
+        user_id   = anomalies
+        anomalies = None
+
+    p = person or {}
+
+    # Build anomalies list when caller didn't supply one
+    if not isinstance(anomalies, list):
+        anomalies = []
+        for f in p.get("anomaly_flags", []) or []:
+            anomalies.append(f.get("flag", str(f)) if isinstance(f, dict) else str(f))
+        for c in p.get("conflicts", []) or []:
+            anomalies.append(c.get("flag", str(c)) if isinstance(c, dict) else str(c))
+        for bf in p.get("behavioral_flags", []) or []:
+            anomalies.append(str(bf))
+
+    # Normalise anomaly strings — extract text from dict wrappers
     flags = []
-    for a in (anomalies or []):
+    for a in anomalies:
         if isinstance(a, dict):
             flags.append(str(a.get("flag") or a.get("detail") or a.get("type") or a))
         else:
             flags.append(str(a))
     flags = [f for f in flags if f.strip()]
 
-    # ── BUILD EVIDENCE SUMMARY ──────────────────────────────────────────────
-    evidence_lines = []
-    if flags:
-        evidence_lines.append(
-            "CONFIRMED FLAGS:\n" + "\n".join(f"- {f}" for f in flags[:20])
-        )
-    if phones:
-        evidence_lines.append(f"PHONES FOUND: {', '.join(phones[:10])}")
-    if locations:
-        evidence_lines.append(f"LOCATIONS: {', '.join(locations[:5])}")
-    if platforms:
-        evidence_lines.append(f"PLATFORMS: {', '.join(platforms[:5])}")
-    for field in ["criminal_history", "legal_proceedings", "occupation",
-                  "employer", "known_associates"]:
-        val = p.get(field)
-        if val:
-            evidence_lines.append(f"{field.upper()}: {str(val)[:200]}")
-    evidence_text = "\n".join(evidence_lines) or "No specific evidence flags."
+    # ── STEP 1: DETERMINISTIC BASE SCORE ──────────────────────────────────────
+    sources     = len(p.get("data_sources", []) or [])
+    n_anomalies = len(flags)
+    has_assets  = bool(p.get("assets_data") or p.get("assets_count", 0))
+    entity_str  = json.dumps(p, ensure_ascii=False, default=str)
+    data_size   = len(entity_str)
 
-    # ── AI SCORING PROMPT ───────────────────────────────────────────────────
-    prompt = f"""You are a senior intelligence analyst scoring subject risk for an official intelligence report.
+    # Base from structural richness (sources×15, anomalies×12, assets+30)
+    base_score = min(100,
+        (sources     * 15) +
+        (n_anomalies * 12) +
+        (30 if has_assets else 0)
+    )
 
-Subject: {name}
-
-Evidence summary:
-{evidence_text}
-
-Score this subject's risk level based on the evidence above.
-Consider ALL crime types — financial, cyber, narcotics, terrorism financing,
-fraud, IT Act violations, DPDP breaches, or any other relevant offence.
-
-Return ONLY valid JSON. No explanation outside JSON. No markdown. No code blocks.
-
-Required format:
-{{
-  "risk_score": <integer 28-92>,
-  "risk_level": "<LOW|MEDIUM|HIGH|CRITICAL>",
-  "risk_factors": [
-    {{
-      "factor": "<what was found>",
-      "weight": <integer>,
-      "evidence": "<specific evidence>"
-    }}
-  ],
-  "mitigation_notes": "<1-2 sentences>",
-  "confidence": <integer 35-92>,
-  "explanation": "<1 sentence summary>"
-}}
-
-Scoring guide:
-28-44: LOW      — minor flags, routine monitoring
-45-64: MEDIUM   — significant flags, increase watch
-65-81: HIGH     — serious violations, escalate
-82-92: CRITICAL — multiple confirmed violations, immediate action required
-
-Risk factors must cite specific evidence from the summary above.
-Minimum 3 factors if evidence exists.
-Every factor must have a weight proportional to its severity."""
-
-    # ── CALL AI (primary path) ──────────────────────────────────────────────
-    try:
-        result_text = _call_ai(prompt, max_tokens=1000)
-
-        clean = re.sub(r"```(?:json)?|```", "", result_text).strip()
-        m = re.search(r"\{.*\}", clean, re.DOTALL)
-        if m:
-            result = json.loads(m.group())
-
-            score      = max(28, min(92, int(result.get("risk_score",  50))))
-            confidence = max(35, min(92, int(result.get("confidence",  55))))
-            factors    = result.get("risk_factors",    [])
-            mitigation = result.get("mitigation_notes", "")
-            explanation = result.get("explanation",    "")
-
-            # Re-derive level from score so it always matches the number
-            if score >= 82:   level = "CRITICAL"
-            elif score >= 65: level = "HIGH"
-            elif score >= 45: level = "MEDIUM"
-            else:             level = "LOW"
-
-            return {
-                "risk_score":       score,
-                "risk_level":       level,
-                "risk_factors":     factors,
-                "mitigation_notes": mitigation,
-                "confidence":       confidence,
-                "explanation":      explanation,
-                "agent":            "RiskAgent",
-                "method":           "ai-bedrock",
-                "generated_at":     datetime.datetime.utcnow().isoformat(),
-            }
-
-    except Exception as e:
-        print(f"[RISK] AI scoring failed: {e} -> weighted fallback")
-
-    # ── WEIGHTED FALLBACK (AI offline) ──────────────────────────────────────
-    # Generic severity-weighted keywords that span all crime types.
-    score   = 30
-    factors = []
-    # Build search text: uppercase of both original and str() representations
-    # so both "CERT-In inquiry confirmed" and dict-wrapped flags are matched.
-    flag_text = (
+    # Keyword severity boosts
+    flag_upper = (
         " ".join(str(f).upper() for f in flags) + " " +
         " ".join(str(f) for f in flags).upper()
     ).strip()
-
-    HIGH_SEVERITY = [
-        # Financial / narcotics
-        ("PMLA",                  18), ("NDPS",             18), ("NCB",            15),
-        ("HAWALA",                15), ("CASH DEPOSIT",     12),
-        # Cyber / IT Act — multiple alias forms for robustness
-        ("IT ACT",                20), ("INFORMATION TECHNOLOGY", 18),
-        ("SECTION 43",            18), ("SECTION 66",       18), ("SECTION 69",     18),
-        ("VIOLATION FLAGGED",     20), ("DPDP",             15),
-        ("BREACH SUSPECTED",      15), ("DATA PROTECTION",  12),
-        # CERT-In / government inquiry — all alias forms
-        ("CERT-IN",               20), ("CERTIN",           20),
-        ("COMPUTER EMERGENCY",    18), ("INQUIRY CONFIRMED",20),
-        ("CYBER CELL",            15), ("FORMAL INQUIRY",   15),
-        # Evidence actions
-        ("EVIDENCE DELETION",     18), ("DELETION CONFIRMED",18),
-        ("DELETION",              18), ("DELETED",          18),
-        ("REPO_DELETE",           18), ("POST_DELETE",      18),
-        ("MODEL_DELETE",          18), ("EVIDENCE",         12),
-        # Malicious activity
-        ("MALICIOUS DEPLOYMENT",  15), ("MALICIOUS",        15),
-        ("EXPLOIT",               15), ("UNAUTHORISED",     12),
-        ("UNAUTHORIZED",          12),
-        # Legal status
-        ("LOOKOUT",               15), ("CHARGESHEET",      15), ("ARREST",         12),
-        ("SEIZED",                12), ("DEPLOYED",         15), ("DEPLOYMENT",     15),
-    ]
-    MEDIUM_SEVERITY = [
-        ("TELEGRAM",      8),  ("ENCRYPTED",    8),  ("PROTONMAIL",    8),
-        ("SIGNAL",        8),  ("BURNER",       10), ("DUBAI",          8),
-        ("UAE",           8),  ("+971",          8),  ("SCRAPING",      8),
-        ("VPN",           6),  ("NIGHT",         5),
-        ("2AM",           6),  ("1AM",           6),
-    ]
-
-    seen_keywords: set = set()
-    for keyword, weight in HIGH_SEVERITY + MEDIUM_SEVERITY:
-        kw_upper = keyword.upper()
-        if kw_upper in flag_text and kw_upper not in seen_keywords:
-            seen_keywords.add(kw_upper)
-            score += weight
-            factors.append({
-                "factor":   keyword.title() + " indicator",
+    seen: set = set()
+    keyword_factors: list = []
+    for kw, weight in _RISK_HIGH_SEVERITY + _RISK_MEDIUM_SEVERITY:
+        kw_up = kw.upper()
+        if kw_up in flag_upper and kw_up not in seen:
+            seen.add(kw_up)
+            base_score += weight
+            keyword_factors.append({
+                "factor":   kw.title() + " indicator",
                 "weight":   weight,
-                "evidence": f"{keyword} detected in anomaly flags",
+                "evidence": f"{kw} detected in confirmed flags",
                 "source":   "anomaly_flags",
             })
 
-    score = max(28, min(92, score))
+    # Sparse data penalty — large datasets provide more reliable evidence
+    if data_size < 8000:
+        base_score = max(0, base_score - 25)
 
-    if score >= 82:   level = "CRITICAL"
-    elif score >= 65: level = "HIGH"
-    elif score >= 45: level = "MEDIUM"
-    else:             level = "LOW"
+    # Hard-cap when data is very sparse — can't be HIGH+ without real evidence
+    if data_size < 4000 and n_anomalies < 2:
+        base_score = min(base_score, 50)
 
-    MITIGATION = {
-        "LOW":      "Continue routine monitoring. No immediate action required.",
-        "MEDIUM":   "Increase monitoring frequency. Cross-reference all sources.",
-        "HIGH":     "Escalate for senior analyst. Investigate all connections.",
-        "CRITICAL": "Immediate escalation required. Multiple confirmed violations. Preserve evidence urgently.",
-    }
+    # Deterministic level (always derived from score — LLM cannot override)
+    if base_score >= 75:   level = "CRITICAL"
+    elif base_score >= 55: level = "HIGH"
+    elif base_score >= 35: level = "MEDIUM"
+    else:                  level = "LOW"
 
-    # Dynamic confidence from data richness
-    data_pts   = sum([bool(p.get("confirmed_name")), bool(phones),
-                      bool(locations), bool(platforms), bool(flags)])
-    confidence = max(35, min(88, 40 + (data_pts * 5) + (len(factors) * 4)))
+    # Deterministic confidence from source richness
+    confidence = min(85, 30 + (sources * 12))
 
-    return {
-        "risk_score":       score,
-        "risk_level":       level,
-        "risk_factors":     factors[:8],
-        "mitigation_notes": MITIGATION[level],
-        "confidence":       confidence,
-        "explanation":      (
-            f"Risk Score {score}/100 ({level}) — weighted fallback "
-            f"scoring from confirmed evidence flags."
-        ),
-        "agent":            "RiskAgent",
-        "method":           "weighted-fallback",
-        "generated_at":     datetime.datetime.utcnow().isoformat(),
-    }
+    # ── STEP 2: LLM FOR EXPLANATION AND KEY FACTORS ────────────────────────────
+    evidence_lines = []
+    if flags:
+        evidence_lines.append("CONFIRMED FLAGS:\n" + "\n".join(f"- {f[:120]}" for f in flags[:15]))
+    if p.get("confirmed_name"):
+        evidence_lines.append(f"SUBJECT: {p['confirmed_name']}")
+    phones = p.get("phones_found", [])
+    if phones:
+        evidence_lines.append(f"PHONES: {', '.join(str(x) for x in phones[:5])}")
+    locs = p.get("location_stated", [])
+    if locs:
+        evidence_lines.append(f"LOCATIONS: {', '.join(str(x) for x in locs[:4])}")
+    evidence_text = "\n".join(evidence_lines) or "No specific evidence provided."
 
+    llm_prompt = f"""You are a conservative Indian law enforcement risk analyst.
 
-def _rule_based_risk(entity_data: dict) -> dict:
-    """
-    Thin wrapper: builds the anomalies list from entity_data then delegates
-    to calculate_risk_score for scoring logic.
-    """
-    # Collect anomaly strings from all known person-dict fields
-    anomalies: list = []
-    for f in entity_data.get("anomaly_flags", []) or []:
-        anomalies.append(f.get("flag", str(f)) if isinstance(f, dict) else str(f))
-    for c in entity_data.get("conflicts", []) or []:
-        anomalies.append(c.get("flag", str(c)) if isinstance(c, dict) else str(c))
-    for bf in entity_data.get("behavioral_flags", []) or []:
-        anomalies.append(str(bf))
+The deterministic risk score for this subject is already fixed: {base_score}/100 (Level: {level}).
+Do NOT change the score. Your job is only to explain WHY this score is justified.
 
-    result = calculate_risk_score(entity_data, anomalies)
-    # Keep uppercase aliases for any callers that read RISK_SCORE / RISK_LEVEL
-    result["RISK_SCORE"] = result["risk_score"]
-    result["RISK_LEVEL"] = result["risk_level"]
-    result["method"]     = "rule-based-fallback"
-    return result
+Evidence:
+{evidence_text}
 
+Return ONLY valid JSON (no markdown, no code blocks):
+{{
+  "key_factors": ["3-4 specific factors that drove this score"],
+  "explanation": "one-sentence explanation referencing the actual evidence",
+  "recommendation": "one-sentence next investigative step",
+  "mitigation_notes": "brief mitigation or escalation guidance"
+}}"""
 
-def run_risk_agent(
-    person: dict,
-    anomalies=None,
-    graph=None,
-    user_id: str = "system",
-) -> dict:
-    """
-    Risk assessment with proper evidence-based scoring.
+    llm_result: dict = {}
+    try:
+        raw = _call_ai(llm_prompt, max_tokens=600)
+        if raw:
+            clean = re.sub(r"```(?:json)?|```", "", raw).strip()
+            m = re.search(r"\{.*\}", clean, re.DOTALL)
+            if m:
+                llm_result = json.loads(m.group())
+    except Exception as e:
+        print(f"[RISK] LLM explanation failed: {e}")
 
-    Signature: run_risk_agent(person, anomalies=None, graph=None, user_id="system")
+    # ── STEP 3: MERGE — deterministic values always win ────────────────────────
+    key_factors = llm_result.get("key_factors") or [
+        f.get("factor", "") for f in keyword_factors[:4]
+    ] or [f"Anomalies detected: {n_anomalies}", f"Data sources: {sources}"]
 
-    Backward-compatible:
-      - Old callers that pass a single entity_data dict work unchanged.
-      - Old callers that pass (entity_data, user_id_string) also work:
-        the string is detected and shifted to user_id automatically.
-      - New callers can pass anomalies explicitly for full control.
-    """
-    # ── Backward-compat: handle old-style calls ────────────────────────────────
-    # orchestrator calls fn(data, user_id) → anomalies receives a string
-    # _build_risk_section calls run_risk_agent(person) → anomalies is None
-    if isinstance(anomalies, str):
-        # Caller passed user_id as the second positional arg (old signature)
-        user_id   = anomalies
-        anomalies = None
-
-    # Build anomalies list from person dict when caller didn't supply one
-    if not isinstance(anomalies, list):
-        anomalies = []
-        for f in (person or {}).get("anomaly_flags", []) or []:
-            anomalies.append(f.get("flag", str(f)) if isinstance(f, dict) else str(f))
-        for c in (person or {}).get("conflicts", []) or []:
-            anomalies.append(c.get("flag", str(c)) if isinstance(c, dict) else str(c))
-        for bf in (person or {}).get("behavioral_flags", []) or []:
-            anomalies.append(str(bf))
-
-    # ── Core scoring (user-specified logic) ───────────────────────────────────
-    risk_result = calculate_risk_score(person, anomalies, graph)
+    risk_factors = (
+        [{"factor": kf, "weight": 10, "evidence": kf, "source": "hybrid"} for kf in key_factors[:5]]
+        if key_factors else keyword_factors[:5]
+    )
 
     result = {
-        "risk_score":       risk_result["risk_score"],
-        "risk_level":       risk_result["risk_level"],
-        "confidence":       risk_result["confidence"],
-        "explanation":      risk_result["explanation"],
-        # Top anomaly strings shown as evidence bullets in §16 of the PDF report.
-        # _build_risk_section handles both plain strings and structured dicts.
-        # Prefer structured risk_factors from AI path; fall back to raw anomaly strings.
-        "risk_factors":     risk_result.get("risk_factors") or (anomalies[:5] if anomalies else []),
-        # Kept for _build_risk_section compatibility (mitigation line in §16)
-        "mitigation_notes": risk_result.get("mitigation_notes", ""),
-        # Kept for orchestrator callers and test assertions
-        "agent":            "RiskAgent v2 - Evidence Based",
-        "generated_by":     "RiskAgent v2 - Evidence Based",
+        "risk_score":       base_score,
+        "risk_level":       level,
+        "confidence":       confidence,
+        "explanation":      (
+            llm_result.get("explanation")
+            or f"Risk Score {base_score}/100 ({level}) — hybrid scoring from {n_anomalies} flags."
+        ),
+        "recommendation":   llm_result.get("recommendation", ""),
+        "mitigation_notes": (
+            llm_result.get("mitigation_notes")
+            or _MITIGATION_BY_LEVEL[level]
+        ),
+        "key_factors":      key_factors,
+        "risk_factors":     risk_factors,
+        "agent":            "RiskAgent v2 — Hybrid",
+        "generated_by":     "RiskAgent v2 — Hybrid",
+        "method":           f"hybrid ({LAST_ENGINE_USED})",
         "timestamp":        datetime.datetime.utcnow().isoformat(),
         "generated_at":     datetime.datetime.utcnow().isoformat(),
-        # Pass through actual method so report shows ai-bedrock vs weighted-fallback
-        "method":           risk_result.get("method", "evidence-based"),
     }
 
     _log_agent_run(
         "RiskAgent",
-        "score=" + str(result["risk_score"]) + " level=" + result["risk_level"]
-        + " anomalies=" + str(len(anomalies)),
+        f"score={base_score} level={level} flags={n_anomalies} sources={sources}",
         user_id,
     )
     return result
@@ -631,35 +544,45 @@ def run_pattern_agent(ontology_data: dict, user_id: str = "system") -> dict:
         events    = [e for e in entities.values() if e.get("entity_type") == "EVENT"]
         locations = [e for e in entities.values() if e.get("entity_type") == "LOCATION"]
         if len(persons) > 1:
-            patterns.append({"pattern_type": "MULTI_IDENTITY", "entities_involved": [p.get("id","") for p in persons[:5]],
-                              "description": f"{len(persons)} person entities — possible cross-platform identity",
-                              "evidence": ["Multiple PersonEntity nodes"], "significance": "MEDIUM", "confidence": 75})
+            patterns.append({
+                "pattern_type": "MULTI_IDENTITY",
+                "entities_involved": [p.get("id", "") for p in persons[:5]],
+                "description": f"{len(persons)} person entities — possible cross-platform identity",
+                "evidence": ["Multiple PersonEntity nodes"], "significance": "MEDIUM", "confidence": 75,
+            })
         if events:
-            patterns.append({"pattern_type": "ACTIVITY_CLUSTER", "entities_involved": [e.get("id","") for e in events[:5]],
-                              "description": f"{len(events)} activity events recorded",
-                              "evidence": ["EventEntity nodes present"], "significance": "LOW", "confidence": 65})
+            patterns.append({
+                "pattern_type": "ACTIVITY_CLUSTER",
+                "entities_involved": [e.get("id", "") for e in events[:5]],
+                "description": f"{len(events)} activity events recorded",
+                "evidence": ["EventEntity nodes present"], "significance": "LOW", "confidence": 65,
+            })
         if locations:
-            patterns.append({"pattern_type": "LOCATION_PATTERN", "entities_involved": [l.get("id","") for l in locations[:5]],
-                              "description": f"{len(locations)} location(s) linked to subject",
-                              "evidence": ["LocationEntity nodes present"], "significance": "LOW", "confidence": 60})
-        result = {"patterns_found": patterns, "hidden_connections": [], "anomalies": [],
-                  "agent": "PatternAgent", "generated_at": datetime.datetime.utcnow().isoformat(), "method": "local"}
+            patterns.append({
+                "pattern_type": "LOCATION_PATTERN",
+                "entities_involved": [l.get("id", "") for l in locations[:5]],
+                "description": f"{len(locations)} location(s) linked to subject",
+                "evidence": ["LocationEntity nodes present"], "significance": "LOW", "confidence": 60,
+            })
+        result = {
+            "patterns_found": patterns, "hidden_connections": [], "anomalies": [],
+            "agent": "PatternAgent", "generated_at": datetime.datetime.utcnow().isoformat(),
+            "method": "local",
+        }
 
-    # Rule 2: tag each pattern as [SUPPORTED] or [UNSUPPORTED]
-    entities = ontology_data.get("entities", {})
+    entities  = ontology_data.get("entities", {})
     confirmed = [
         v.get("name", k) for k, v in entities.items()
         if isinstance(v, dict) and v.get("name")
     ]
     result = validate_agent_output(result, confirmed)
-
     result["engine"] = LAST_ENGINE_USED
-    _log_agent_run("PatternAgent", f"patterns={len(result.get('patterns_found',[]))}", user_id)
+    _log_agent_run("PatternAgent", f"patterns={len(result.get('patterns_found', []))}", user_id)
     return result
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# AGENT 3 — INVESTIGATIVE STEPS
+# AGENT 3 — INVESTIGATIVE NEXT STEPS
 # ══════════════════════════════════════════════════════════════════════════════
 
 _NEXT_STEP_PROMPT = (
@@ -681,11 +604,8 @@ def run_next_step_agent(report: dict, user_id: str = "system") -> dict:
     Steps are tailored to the actual crime type, anomalies, and legal context.
     Falls back to rule-based steps if AI is unavailable.
     """
-    import json, re
-
     person = report.get("person", {}) if isinstance(report, dict) else {}
 
-    # Collect all anomaly/flag strings from every available source
     anomalies: list = list(
         report.get("anomalies")
         or report.get("sections", {}).get("anomalies_and_flags", {}).get("flags", [])
@@ -698,33 +618,15 @@ def run_next_step_agent(report: dict, user_id: str = "system") -> dict:
     for f in person.get("behavioral_flags", []):
         anomalies.append(str(f))
 
-    # Build context fields for the prompt
-    subject_name   = person.get("confirmed_name", "Unknown Subject")
-    institution    = person.get("employer", person.get("occupation", "Unknown"))
-    locations      = ", ".join(person.get("location_stated", [])[:4]) or "Unknown"
-    platforms      = ", ".join(person.get("platforms_confirmed", [])
-                               or person.get("platforms", []))[:200] or "None confirmed"
-    legal_flags    = [str(a) for a in anomalies
-                      if any(k in str(a).upper() for k in
-                             ["PMLA", "NDPS", "NCB", "IT ACT", "DPDP", "CERT",
-                              "ARREST", "CHARGESHEET", "LOOKOUT", "ED ", "SEIZED"])]
-    anomaly_text   = "\n".join(f"- {a}" for a in anomalies[:25]) or "None recorded."
-    legal_text     = "\n".join(f"- {f}" for f in legal_flags[:10]) or "None detected."
-
-    # ── AI PATH ────────────────────────────────────────────────────────────────
-    person_name = (person or {}).get("confirmed_name", "Unknown")
-    locations   = ", ".join((person or {}).get("location_stated", []) or [])
+    person_name = person.get("confirmed_name", "Unknown Subject")
+    locations   = ", ".join(person.get("location_stated", []) or [])
 
     flag_list = [
         str(f).strip()
         for f in (anomalies or [])
         if str(f).strip() and len(str(f).strip()) > 10
     ]
-
-    flag_text = "\n".join([
-        f"- {f[:120]}"
-        for f in flag_list[:12]
-    ]) or "No specific flags"
+    flag_text = "\n".join(f"- {f[:120]}" for f in flag_list[:12]) or "No specific flags"
 
     has_financial = any(
         any(x in str(f).upper() for x in
@@ -737,7 +639,7 @@ def run_next_step_agent(report: dict, user_id: str = "system") -> dict:
         for f in flag_list
     )
 
-    print(f"[NEXTSTEP] flags received: {len(flag_list)} has_financial={has_financial} has_certin={has_certin}")
+    print(f"[NEXTSTEP] flags={len(flag_list)} financial={has_financial} certin={has_certin}")
 
     extra = []
     if has_financial:
@@ -755,7 +657,6 @@ def run_next_step_agent(report: dict, user_id: str = "system") -> dict:
             "Evidence deletion confirmed. Device seizure urgent. "
             "Include forensic preservation."
         )
-
     extra_str = "\n".join(extra)
 
     prompt = (
@@ -790,25 +691,21 @@ def run_next_step_agent(report: dict, user_id: str = "system") -> dict:
         clean = re.sub(r"```(?:json)?|```", "", result_text).strip()
         m = re.search(r"\{.*\}", clean, re.DOTALL)
         if m:
-            parsed = json.loads(m.group())
+            parsed   = json.loads(m.group())
             ai_steps = parsed.get("steps", [])
             if ai_steps:
-                # Normalise to the key schema expected by the report renderer.
-                # Keys used by _build_next_steps_section:
-                #   step / action, step_number, legal_basis,
-                #   authorization_required, priority, value, fills_gap
                 normalised = []
                 for idx, s in enumerate(ai_steps[:5], 1):
                     normalised.append({
-                        "step":                  s.get("action", ""),
-                        "action":                s.get("action", ""),   # dual-key compat
-                        "step_number":           s.get("step_number", idx),
-                        "legal_basis":           s.get("legal_basis", ""),
-                        "authorization":         s.get("authorization", ""),
+                        "step":                   s.get("action", ""),
+                        "action":                 s.get("action", ""),
+                        "step_number":            s.get("step_number", idx),
+                        "legal_basis":            s.get("legal_basis", ""),
+                        "authorization":          s.get("authorization", ""),
                         "authorization_required": s.get("authorization", ""),
-                        "priority":              s.get("step_number", idx),
-                        "value":                 s.get("priority", "HIGH"),
-                        "fills_gap":             s.get("fills_gap", ""),
+                        "priority":               s.get("step_number", idx),
+                        "value":                  s.get("priority", "HIGH"),
+                        "fills_gap":              s.get("fills_gap", ""),
                     })
                 result = {
                     "next_steps":   normalised,
@@ -823,8 +720,8 @@ def run_next_step_agent(report: dict, user_id: str = "system") -> dict:
     except Exception as e:
         print(f"[NEXT_STEP] AI failed: {e} -> rule-based fallback")
 
-    # ── RULE-BASED FALLBACK ────────────────────────────────────────────────────
-    steps = []
+    # ── Rule-based fallback ────────────────────────────────────────────────────
+    steps      = []
     anom_upper = " ".join(str(a).upper() for a in anomalies)
 
     if "PMLA" in anom_upper or " ED " in anom_upper:
@@ -848,8 +745,8 @@ def run_next_step_agent(report: dict, user_id: str = "system") -> dict:
             "priority":    3, "value": "HIGH",
             "fills_gap":   "Encrypted communication evidence",
         })
-    if "IT ACT" in anom_upper or "DPDP" in anom_upper or "CERT" in anom_upper \
-            or "DELETION" in anom_upper or "SCRAPING" in anom_upper:
+    if ("IT ACT" in anom_upper or "DPDP" in anom_upper or "CERT" in anom_upper
+            or "DELETION" in anom_upper or "SCRAPING" in anom_upper):
         steps.append({
             "step":        "File formal complaint with CERT-In and request preservation of server logs",
             "legal_basis": "IT Act 2000 — Section 43/66 + DPDP Act 2023",
@@ -871,7 +768,6 @@ def run_next_step_agent(report: dict, user_id: str = "system") -> dict:
             "fills_gap":   "Identity verification across name variants",
         })
 
-    # Absolute fallback — only if nothing matched at all
     if not steps:
         steps = [
             {
@@ -888,13 +784,12 @@ def run_next_step_agent(report: dict, user_id: str = "system") -> dict:
             },
         ]
 
-    # Pad to minimum 5 steps so Section 17 always has substantive content.
     _PAD_STEPS = [
         {
             "step":        "File formal complaint with CERT-In and request server log preservation",
             "legal_basis": "IT Act 2000 — Section 43/66 + DPDP Act 2023",
             "priority":    len(steps) + 1, "value": "HIGH",
-            "fills_gap":   "Cyber offence documentation and log preservation",
+            "fills_gap":   "Cyber offence documentation",
         },
         {
             "step":        "Obtain CDR (Call Detail Records) and tower-dump from telecom provider",
@@ -921,15 +816,13 @@ def run_next_step_agent(report: dict, user_id: str = "system") -> dict:
             "fills_gap":   "Admissible digital forensic evidence",
         },
     ]
-    _pad_idx = 0
-    while len(steps) < 5 and _pad_idx < len(_PAD_STEPS):
-        _candidate = _PAD_STEPS[_pad_idx]
-        _pad_idx += 1
-        # Don't duplicate a step that's semantically already in the list
-        _existing_text = " ".join(s.get("step","") for s in steps).upper()
-        if not any(kw in _existing_text for kw in
-                   _candidate["step"].upper().split()[:4]):
-            steps.append(_candidate)
+    pad_idx = 0
+    while len(steps) < 5 and pad_idx < len(_PAD_STEPS):
+        candidate    = _PAD_STEPS[pad_idx]
+        pad_idx     += 1
+        existing_txt = " ".join(s.get("step", "") for s in steps).upper()
+        if not any(kw in existing_txt for kw in candidate["step"].upper().split()[:4]):
+            steps.append(candidate)
 
     result = {
         "next_steps":   steps[:5],
@@ -969,168 +862,536 @@ def run_compliance_agent(report_data: dict, user_id: str = "system") -> dict:
     if result and "compliance_score" in result:
         result.setdefault("agent", "ComplianceAgent")
         result.setdefault("generated_at", datetime.datetime.utcnow().isoformat())
-        result["method"] = "ai"
+        result["method"]           = "ai"
         result["compliance_score"] = max(0, min(100, int(result.get("compliance_score", 0))))
     else:
-        flags = []
+        flags  = []
         person = report_data.get("person", {}) if isinstance(report_data, dict) else {}
         if isinstance(person, dict):
             if person.get("phones_found") or person.get("emails_found"):
-                flags.append({"concern": "Personal contact data in report",
-                               "section": "DPDP Act 2023 §4 — Data Minimization",
-                               "recommendation": "Verify lawful basis for retaining contact details"})
+                flags.append({
+                    "concern": "Personal contact data in report",
+                    "section": "DPDP Act 2023 §4 — Data Minimization",
+                    "recommendation": "Verify lawful basis for retaining contact details",
+                })
             if len(person.get("location_stated", [])) > 3:
-                flags.append({"concern": "Multiple location data points may exceed necessity",
-                               "section": "DPDP Act 2023 §5 — Purpose Limitation",
-                               "recommendation": "Retain only locations necessary for stated purpose"})
-        score = max(0, 100 - len(flags) * 15)
+                flags.append({
+                    "concern": "Multiple location data points may exceed necessity",
+                    "section": "DPDP Act 2023 §5 — Purpose Limitation",
+                    "recommendation": "Retain only locations necessary for stated purpose",
+                })
+        score  = max(0, 100 - len(flags) * 15)
         result = {
-            "compliant": len(flags) == 0, "compliance_score": score, "flags": flags,
-            "cleared_for_export": len(flags) <= 1, "agent": "ComplianceAgent",
-            "generated_at": datetime.datetime.utcnow().isoformat(), "method": "local",
+            "compliant":          len(flags) == 0,
+            "compliance_score":   score,
+            "flags":              flags,
+            "cleared_for_export": len(flags) <= 1,
+            "agent":              "ComplianceAgent",
+            "generated_at":       datetime.datetime.utcnow().isoformat(),
+            "method":             "local",
         }
 
     _log_agent_run("ComplianceAgent",
-                   f"compliant={result.get('compliant')} score={result.get('compliance_score')}", user_id)
+                   f"compliant={result.get('compliant')} score={result.get('compliance_score')}",
+                   user_id)
     return result
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# AGENT 5 — OPERATIONAL STRATEGY
+# AGENT 5 — TACTICAL OPERATION PLAN (Hybrid v2)
+# Deterministic sequencing skeleton built first. LLM enhances wording only.
+# Structural fields (id, agency, dependencies, time_window, priority) are
+# never overridden by LLM output — they come from deterministic logic.
 # ══════════════════════════════════════════════════════════════════════════════
 
-_STRATEGY_PROMPT = (
-    "You are StrategyAgent, an operational intelligence planner for a lawful OSINT platform.\n"
-    "Design a phased operational strategy based on the subject profile, asset inventory, and report data.\n"
-    "Every phase MUST cite a legal basis under Indian law (DPDP Act 2023, CrPC, IT Act 2000).\n"
-    "Include clear abort conditions for each phase.\n"
-    "Do NOT suggest illegal, coercive, or surveillance methods.\n\n"
-    "Return ONLY this JSON (no markdown, no commentary):\n"
-    '{{\n  "operational_phases": [\n'
-    '    {{\n      "phase": 1,\n      "name": "",\n      "objective": "",\n'
-    '      "actions": [],\n      "legal_basis": "",\n'
-    '      "resources_required": [],\n      "success_criteria": "",\n'
-    '      "abort_condition": ""\n    }}\n  ],\n'
-    '  "risk_mitigations": [],\n  "priority_targets": [],\n'
-    '  "estimated_timeline": "",\n  "classification": "RESTRICTED",\n'
-    '  "agent": "StrategyAgent",\n  "generated_at": ""\n}}\n\n'
-    "Subject profile:\n{person_json}\n\n"
-    "Assets data:\n{assets_json}\n\n"
-    "Report summary:\n{report_json}"
-)
+_VALID_AGENCIES     = {"Cyber Cell", "CERT-In", "ED", "NCB", "Local Police", "Court", "SFIO"}
+_VALID_TIME_WINDOWS = {"0-24 hours", "24-72 hours", "72hrs-7days", "7-30 days"}
+_VALID_LEVELS       = {"CRITICAL", "HIGH", "MEDIUM", "LOW"}
+
+# Keys that form the required action schema
+_REQUIRED_ACTION_KEYS = {
+    "id", "title", "description", "legal_basis", "authority_required",
+    "agency", "time_window", "time_sensitivity", "priority",
+    "depends_on", "blocks", "parallel_with",
+    "risk_if_delayed", "risk_if_reversed", "reward",
+}
+
+# Structural keys owned by deterministic logic — LLM may not change these
+_STRUCTURAL_KEYS = {
+    "id", "agency", "time_window", "time_sensitivity", "priority",
+    "depends_on", "blocks", "parallel_with",
+    "risk_if_delayed", "risk_if_reversed",
+}
 
 
-def run_strategy_agent(
-    person_object: dict,
-    assets_data:   list,
-    report_data:   dict,
-    user_id:       str = "system",
-) -> dict:
-    """Generate an operational strategy based on subject, assets, and report data."""
-    person_json = json.dumps(person_object or {}, indent=2, ensure_ascii=False)
-    if len(person_json) > 4000:
-        person_json = person_json[:4000] + "... [truncated]"
+def _tactical_plan_fallback(
+    person_name: str,
+    flags:       list,
+    has_cyber:      bool,
+    has_financial:  bool,
+    has_narcotics:  bool,
+    has_deletion:   bool,
+    has_certin:     bool,
+) -> list:
+    """
+    Deterministic 6-action skeleton — sequencing, dependencies, agencies, and
+    time windows are all computed from case-type flags, never from LLM output.
+    """
+    actions = []
 
-    assets_json = json.dumps(assets_data or [], indent=2, ensure_ascii=False)
-    if len(assets_json) > 3000:
-        assets_json = assets_json[:3000] + "... [truncated]"
+    # ── Action 1 — Digital preservation (always first, no dependencies) ────────
+    actions.append({
+        "id": 1,
+        "title": "Preserve Digital Evidence Immediately",
+        "description": (
+            f"Issue preservation notice to all platforms where {person_name} has confirmed "
+            "presence. Preserve server logs, account metadata, transaction records, and cloud "
+            "storage. Do not notify subject."
+        ),
+        "legal_basis": (
+            "IT Act 2000 — Section 69 / BNSS Section 94 / "
+            "IT (Procedure and Safeguards) Rules 2009"
+        ),
+        "authority_required": "Superintendent of Police (Cyber) or designated nodal officer",
+        "agency":            "Cyber Cell",
+        "time_window":       "0-24 hours",
+        "time_sensitivity":  "CRITICAL",
+        "priority":          "CRITICAL",
+        "depends_on":        [],
+        "blocks":            [],
+        "parallel_with":     [2],
+        "risk_if_delayed":   "HIGH",
+        "risk_if_reversed":  "HIGH",
+        "reward": (
+            "Prevents evidence deletion; secures platform metadata and activity logs "
+            "before subject is alerted"
+        ),
+    })
 
-    report_json = json.dumps(report_data or {}, indent=2, ensure_ascii=False)
-    if len(report_json) > 3000:
-        report_json = report_json[:3000] + "... [truncated]"
-
-    # Rule 1: build grounding context and append to prompt
-    grounding = build_grounding_context(person_object or {})
-    strategy_prompt = _STRATEGY_PROMPT + GROUNDING_RULE.format(grounding_context=grounding)
-
-    raw    = _call_ai(strategy_prompt.format(
-        person_json=person_json,
-        assets_json=assets_json,
-        report_json=report_json,
-    ))
-    result = _extract_json(raw) if raw else None
-
-    if result and "operational_phases" in result:
-        result.setdefault("agent", "StrategyAgent")
-        result.setdefault("generated_at", datetime.datetime.utcnow().isoformat())
-        result["method"] = "ai"
+    # ── Action 2 — Parallel with Action 1; branches on case type ─────────────
+    if has_financial:
+        actions.append({
+            "id": 2,
+            "title": "Freeze Bank Accounts Under PMLA",
+            "description": (
+                f"Apply for provisional attachment order under PMLA for all accounts linked "
+                f"to {person_name}. File with ED simultaneously. "
+                "Do not notify subject before freeze is confirmed."
+            ),
+            "legal_basis": "PMLA 2002 — Section 5 (Provisional Attachment) / FEMA 1999 Section 37A",
+            "authority_required": "ED Deputy Director / Designated PMLA Authority",
+            "agency":            "ED",
+            "time_window":       "0-24 hours",
+            "time_sensitivity":  "CRITICAL",
+            "priority":          "CRITICAL",
+            "depends_on":        [],
+            "blocks":            [5],
+            "parallel_with":     [1],
+            "risk_if_delayed":   "HIGH",
+            "risk_if_reversed":  "HIGH",
+            "reward": "Prevents asset dissipation; freezes proceeds of crime before subject is aware",
+        })
+    elif has_certin:
+        actions.append({
+            "id": 2,
+            "title": "Coordinate with CERT-In for Existing Inquiry",
+            "description": (
+                f"Contact CERT-In nodal officer to reference active inquiry. Request server logs, "
+                f"incident reports, and technical evidence already collected related to {person_name}."
+            ),
+            "legal_basis": "IT Act 2000 — Section 70B / CERT-In Rules 2013",
+            "authority_required": "CERT-In Director General / Designated Nodal Officer",
+            "agency":            "CERT-In",
+            "time_window":       "0-24 hours",
+            "time_sensitivity":  "CRITICAL",
+            "priority":          "CRITICAL",
+            "depends_on":        [],
+            "blocks":            [],
+            "parallel_with":     [1],
+            "risk_if_delayed":   "HIGH",
+            "risk_if_reversed":  "MEDIUM",
+            "reward": "Consolidates government cyber evidence; prevents parallel inquiry conflicts",
+        })
+    elif has_narcotics:
+        actions.append({
+            "id": 2,
+            "title": "Notify NCB and Obtain NDPS Search Warrant",
+            "description": (
+                f"Coordinate with NCB regional office. Apply for search warrant under NDPS Act "
+                f"covering all known premises of {person_name}. Do not proceed without warrant."
+            ),
+            "legal_basis": (
+                "NDPS Act 1985 — Section 41 (search warrant) / "
+                "Section 50 (conditions of search)"
+            ),
+            "authority_required": "Metropolitan Magistrate / NCB Zonal Director",
+            "agency":            "NCB",
+            "time_window":       "0-24 hours",
+            "time_sensitivity":  "CRITICAL",
+            "priority":          "CRITICAL",
+            "depends_on":        [],
+            "blocks":            [4],
+            "parallel_with":     [1],
+            "risk_if_delayed":   "HIGH",
+            "risk_if_reversed":  "HIGH",
+            "reward": "Legal authorization for premises search; NCB coordination for substance evidence",
+        })
     else:
-        phases = []
-        if assets_data:
-            phases.append({
-                "phase":              1,
-                "name":               "Asset Verification",
-                "objective":          f"Verify and legally document {len(assets_data)} identified asset(s)",
-                "actions":            [
-                    "Cross-reference asset identifiers with public registries",
-                    "Confirm ownership via MCA/VAHAN/RERA public portals",
-                    "Document chain-of-custody for each asset record",
-                ],
-                "legal_basis":        "IT Act 2000 §69B — Monitoring for intelligence purposes; public records access",
-                "resources_required": ["Digital forensics analyst", "Public registry access"],
-                "success_criteria":   "All assets verified with legal documentation trail",
-                "abort_condition":    "Assets confirmed legally unrelated to subject of interest",
-            })
-        phases.append({
-            "phase":              len(phases) + 1,
-            "name":               "Digital Footprint Mapping",
-            "objective":          "Compile complete open-source digital profile",
-            "actions":            [
-                "OSINT collection from publicly accessible platforms",
-                "Username correlation across platforms",
-                "Communication pattern analysis from public posts",
-            ],
-            "legal_basis":        "DPDP Act 2023 §7 — Processing for legitimate purposes with safeguards",
-            "resources_required": ["OSINT analyst", "AetherLens platform"],
-            "success_criteria":   "Complete digital profile with confidence ≥ 70%",
-            "abort_condition":    "Evidence of coordinated OPSEC indicating counter-surveillance",
+        actions.append({
+            "id": 2,
+            "title": "Apply for Judicial Interception Order",
+            "description": (
+                f"Apply for lawful interception and monitoring order for {person_name}'s confirmed "
+                "communication platforms. Include all identified phone numbers and email accounts."
+            ),
+            "legal_basis": "IT Act 2000 — Section 69 / Telegraph Act 1885 — Section 5(2)",
+            "authority_required": "Home Secretary (State) / Secretary MHA (Central)",
+            "agency":            "Cyber Cell",
+            "time_window":       "0-24 hours",
+            "time_sensitivity":  "HIGH",
+            "priority":          "HIGH",
+            "depends_on":        [],
+            "blocks":            [],
+            "parallel_with":     [1],
+            "risk_if_delayed":   "MEDIUM",
+            "risk_if_reversed":  "LOW",
+            "reward": "Enables real-time intelligence collection on ongoing communications",
         })
-        phases.append({
-            "phase":              len(phases) + 1,
-            "name":               "Network & Association Analysis",
-            "objective":          "Map known associates and organizational affiliations",
-            "actions":            [
-                "Graph analysis of relationship network",
-                "Cross-platform identity correlation",
-                "Corporate/NGO affiliation search via MCA public portal",
-            ],
-            "legal_basis":        "CrPC §91 — Production and inspection of public documents",
-            "resources_required": ["Intelligence analyst", "Network analysis tools"],
-            "success_criteria":   "Network map with all first-degree connections documented",
-            "abort_condition":    "Network connections confirmed as coincidental with no operational relevance",
-        })
-        phases.append({
-            "phase":              len(phases) + 1,
-            "name":               "Compliance Review & Report",
-            "objective":          "Ensure all collected intelligence meets DPDP Act 2023 compliance",
-            "actions":            [
-                "Audit data collection methods for lawful basis",
-                "Apply data minimization — purge non-essential records",
-                "Generate final intelligence report with legal citations",
-            ],
-            "legal_basis":        "DPDP Act 2023 §4–§9 — Data minimization, purpose limitation, lawful basis",
-            "resources_required": ["Legal compliance officer", "AetherLens PDF export"],
-            "success_criteria":   "Compliance score ≥ 85%, report cleared for authorized distribution",
-            "abort_condition":    "Compliance violations detected that cannot be remediated",
-        })
-        result = {
-            "operational_phases":  phases,
-            "risk_mitigations": [
-                "Maintain strict chain of custody for all digital evidence",
-                "All collection methods must comply with DPDP Act 2023 §7",
-                "Document legal authorization before each phase commences",
-                "Store all collected data with AES-256 encryption at rest",
-            ],
-            "priority_targets":    [str((person_object or {}).get("confirmed_name", "Primary Subject"))],
-            "estimated_timeline":  "2–4 weeks",
-            "classification":      "RESTRICTED",
-            "agent":               "StrategyAgent",
-            "generated_at":        datetime.datetime.utcnow().isoformat(),
-            "method":              "local",
-        }
 
-    # Rule 2: tag each phase as [SUPPORTED] or [UNSUPPORTED]
-    po = person_object or {}
+    # ── Action 3 — Device seizure (CRITICAL if deletion confirmed) ────────────
+    if has_deletion:
+        actions.append({
+            "id": 3,
+            "title": "Emergency Device Seizure and Forensic Imaging",
+            "description": (
+                f"Execute emergency device seizure for all devices used by {person_name}. "
+                "Evidence deletion confirmed — treat as time-critical. Perform forensic imaging "
+                "under chain of custody immediately after seizure."
+            ),
+            "legal_basis": (
+                "IT Act 2000 — Section 65B (admissibility) / "
+                "BNSS Section 94 (search and seizure)"
+            ),
+            "authority_required": "Magistrate Order (BNSS S.94) / SP-level for emergency",
+            "agency":            "Cyber Cell",
+            "time_window":       "0-24 hours",
+            "time_sensitivity":  "CRITICAL",
+            "priority":          "CRITICAL",
+            "depends_on":        [1],
+            "blocks":            [5],
+            "parallel_with":     [],
+            "risk_if_delayed":   "HIGH",
+            "risk_if_reversed":  "HIGH",
+            "reward": "Recovers deleted evidence; secures hardware before further tampering",
+        })
+    else:
+        actions.append({
+            "id": 3,
+            "title": "Obtain Search Warrant for Physical Premises",
+            "description": (
+                f"Apply for search warrant covering all known addresses of {person_name}. "
+                "Warrant to cover electronic devices, storage media, financial documents, "
+                "and any communications equipment."
+            ),
+            "legal_basis": "BNSS Section 94 / IT Act 2000 — Section 80 (warrant for search)",
+            "authority_required": "Judicial Magistrate First Class (JMFC)",
+            "agency":            "Local Police",
+            "time_window":       "24-72 hours",
+            "time_sensitivity":  "HIGH",
+            "priority":          "HIGH",
+            "depends_on":        [1, 2],
+            "blocks":            [4],
+            "parallel_with":     [],
+            "risk_if_delayed":   "MEDIUM",
+            "risk_if_reversed":  "MEDIUM",
+            "reward": "Legal authorization for physical search; device and document seizure",
+        })
+
+    # ── Action 4 — Records subpoena ───────────────────────────────────────────
+    actions.append({
+        "id": 4,
+        "title": "Subpoena Financial and Telecom Records",
+        "description": (
+            f"Issue production orders to telecom providers for CDR / tower dump for "
+            f"{person_name}'s confirmed numbers. Issue simultaneous bank record subpoena "
+            "for all linked accounts. Minimum 12-month lookback period."
+        ),
+        "legal_basis": (
+            "BNSS Section 94 / TRAI Regulations / "
+            "PMLA 2002 — Section 50 (summons for records)"
+        ),
+        "authority_required": "SP or above / ED Deputy Director",
+        "agency":            "Cyber Cell",
+        "time_window":       "24-72 hours",
+        "time_sensitivity":  "HIGH",
+        "priority":          "HIGH",
+        "depends_on":        [1],
+        "blocks":            [6],
+        "parallel_with":     [3],
+        "risk_if_delayed":   "MEDIUM",
+        "risk_if_reversed":  "LOW",
+        "reward": "Call pattern evidence; financial transaction trail; movement history",
+    })
+
+    # ── Action 5 — Subject notice (AFTER digital preservation and freezes) ────
+    actions.append({
+        "id": 5,
+        "title": "Issue Formal Notice to Subject",
+        "description": (
+            f"After digital evidence is preserved and accounts frozen, issue formal notice "
+            f"to {person_name} under BNSS. Do NOT contact subject before Actions 1–3 complete — "
+            "premature contact will trigger evidence destruction."
+        ),
+        "legal_basis": (
+            "BNSS Section 35 / Section 179 (examination of person) / "
+            "IT Act 2000 — Section 67C"
+        ),
+        "authority_required": "SP / Additional SP",
+        "agency":            "Local Police",
+        "time_window":       "72hrs-7days",
+        "time_sensitivity":  "MEDIUM",
+        "priority":          "HIGH",
+        "depends_on":        [1, 2, 3],
+        "blocks":            [],
+        "parallel_with":     [4],
+        "risk_if_delayed":   "LOW",
+        "risk_if_reversed":  "MEDIUM",
+        "reward": "Subject's recorded statement; opportunity to identify co-conspirators",
+    })
+
+    # ── Action 6 — Chargesheet (all prior actions must complete first) ─────────
+    actions.append({
+        "id": 6,
+        "title": "File Chargesheet and Prosecution Report",
+        "description": (
+            "Compile all collected evidence into formal chargesheet. File prosecution complaint "
+            "with designated court. Include Section 65B IT Act certificates for all digital "
+            "evidence. Brief public prosecutor."
+        ),
+        "legal_basis": (
+            "BNSS Section 193 (chargesheet) / "
+            "IT Act 2000 — Section 65B / CrPC Section 173"
+        ),
+        "authority_required": "SP / DCP (minimum) to authorize chargesheet",
+        "agency":            "Court",
+        "time_window":       "7-30 days",
+        "time_sensitivity":  "MEDIUM",
+        "priority":          "MEDIUM",
+        "depends_on":        [1, 2, 3, 4, 5],
+        "blocks":            [],
+        "parallel_with":     [],
+        "risk_if_delayed":   "MEDIUM",
+        "risk_if_reversed":  "LOW",
+        "reward": (
+            "Formal prosecution; prevents subject from claiming lack of notice; "
+            "initiates judicial process"
+        ),
+    })
+
+    return actions
+
+
+def run_tactical_plan_agent(
+    person:      dict,
+    anomalies:   list,
+    assets_data: list,
+    report_stub: dict,
+    user_id:     str = "system",
+) -> dict:
+    """
+    Hybrid Tactical Operation Plan generator — replaces old Section 18 StrategyAgent.
+
+    Step 1: Build deterministic sequencing skeleton using _tactical_plan_fallback.
+    Step 2: Call LLM to enhance wording (title, description, legal_basis, reward)
+            and generate case_summary + critical_warning.
+    Step 3: Merge — structural fields (agency, time_window, priority, depends_on,
+            blocks, parallel_with, risk_*) always come from deterministic skeleton.
+    """
+    p           = person or {}
+    person_name = p.get("confirmed_name", "Unknown Subject")
+    locations   = ", ".join(p.get("location_stated", [])[:5]) or "Not stated"
+    platforms   = ", ".join(p.get("platforms_confirmed", [])[:8]) or "None confirmed"
+
+    # Build flag list
+    flags = []
+    for a in (anomalies or []):
+        if isinstance(a, dict):
+            flags.append(str(a.get("flag") or a.get("detail") or a.get("type") or a))
+        else:
+            flags.append(str(a))
+    flags = [f for f in flags if f.strip() and len(f.strip()) > 5]
+
+    flag_text  = "\n".join(f"- {f[:150]}" for f in flags[:15]) or "No specific flags detected."
+    flag_upper = " ".join(str(f).upper() for f in flags)
+
+    # Assets summary
+    if assets_data:
+        asset_lines = []
+        for asset in (assets_data or [])[:10]:
+            if isinstance(asset, dict):
+                asset_lines.append(
+                    f"- {asset.get('asset_type', 'Asset')}: "
+                    f"{asset.get('description', str(asset))[:100]}"
+                )
+            else:
+                asset_lines.append(f"- {str(asset)[:100]}")
+        assets_text = "IDENTIFIED ASSETS:\n" + "\n".join(asset_lines)
+    else:
+        assets_text = "No asset files uploaded."
+
+    # Case-type detection (deterministic flags)
+    has_cyber     = any(x in flag_upper for x in
+                        ["IT ACT", "CERT", "DPDP", "SECTION 66", "SECTION 43",
+                         "MALICIOUS", "DELETION", "SCRAPING", "UNAUTHORI"])
+    has_financial = any(x in flag_upper for x in
+                        ["PMLA", "FEMA", "ED ", "HAWALA", "MONEY LAUNDER",
+                         "USD", "INTERNATIONAL TRANSFER", "CASH DEPOSIT"])
+    has_narcotics = any(x in flag_upper for x in ["NDPS", "NCB", "NARCOTIC", "DRUG"])
+    has_deletion  = any(x in flag_upper for x in
+                        ["DELETION", "DELETED", "REPO_DELETE", "EVIDENCE DELETION"])
+    has_certin    = any(x in flag_upper for x in ["CERT-IN", "CERTIN", "CERT IN"])
+
+    context_parts = []
+    if has_cyber:
+        context_parts.append(
+            "CYBER CASE: Digital preservation must precede any physical action. "
+            "Server logs, account data, and cloud storage must be preserved before subject is aware."
+        )
+    if has_financial:
+        context_parts.append(
+            "FINANCIAL CRIME: Account freeze orders must precede any interview or arrest "
+            "to prevent asset dissipation."
+        )
+    if has_narcotics:
+        context_parts.append(
+            "NARCOTICS: NCB coordination required. NDPS Act provisions apply. "
+            "Physical search warrants needed before premises entry."
+        )
+    if has_deletion:
+        context_parts.append(
+            "EVIDENCE DELETION CONFIRMED: Immediate forensic preservation is CRITICAL. "
+            "Device seizure cannot wait — treat as emergency action."
+        )
+    if has_certin:
+        context_parts.append(
+            "ACTIVE CERT-In INQUIRY: Reference existing case number in all actions. "
+            "Coordinate with CERT-In nodal officer before independent action."
+        )
+    context_str = (
+        "\n".join(context_parts)
+        or "General OSINT investigation. Apply standard digital-first sequencing."
+    )
+
+    # ── STEP 1: Build deterministic skeleton ──────────────────────────────────
+    det_actions = _tactical_plan_fallback(
+        person_name, flags,
+        has_cyber, has_financial, has_narcotics, has_deletion, has_certin,
+    )
+
+    # ── STEP 2: LLM for wording + case_summary + critical_warning ────────────
+    llm_prompt = f"""You are a senior Indian law enforcement officer and legal strategist with 20+ years experience.
+
+Your job is to improve the WORDING of a pre-built Tactical Operation Plan.
+The sequencing, dependencies, agencies, time windows, and priority levels are already fixed — do not change them.
+You may only improve: title (max 8 words), description (specific to this case), legal_basis (exact section), reward.
+
+Subject: {person_name}
+Locations: {locations}
+Platforms: {platforms}
+
+CONFIRMED EVIDENCE FLAGS:
+{flag_text}
+
+{assets_text}
+
+CRITICAL CONTEXT:
+{context_str}
+
+Return ONLY valid JSON (no markdown):
+{{
+  "case_summary": "one-sentence assessment of this specific case",
+  "critical_warning": "single most important sequencing risk for this specific case",
+  "actions": [
+    {{
+      "id": 1,
+      "title": "improved title max 8 words",
+      "description": "case-specific description referencing actual flags",
+      "legal_basis": "Exact Indian law section",
+      "reward": "what specific evidence or outcome this action secures"
+    }},
+    {{"id": 2, "title": "...", "description": "...", "legal_basis": "...", "reward": "..."}},
+    {{"id": 3, "title": "...", "description": "...", "legal_basis": "...", "reward": "..."}},
+    {{"id": 4, "title": "...", "description": "...", "legal_basis": "...", "reward": "..."}},
+    {{"id": 5, "title": "...", "description": "...", "legal_basis": "...", "reward": "..."}},
+    {{"id": 6, "title": "...", "description": "...", "legal_basis": "...", "reward": "..."}}
+  ]
+}}"""
+
+    llm_result: dict = {}
+    method = "rule-based-fallback"
+    try:
+        raw = _call_ai(llm_prompt, max_tokens=2500)
+        if raw:
+            clean = re.sub(r"```(?:json)?|```", "", raw).strip()
+            parsed = None
+            try:
+                parsed = json.loads(clean)
+            except Exception:
+                m = re.search(r"\{.*\}", clean, re.DOTALL)
+                if m:
+                    parsed = json.loads(m.group())
+            if (
+                parsed
+                and isinstance(parsed, dict)
+                and isinstance(parsed.get("actions"), list)
+                and len(parsed["actions"]) >= 4
+            ):
+                llm_result = parsed
+                method = f"hybrid ({LAST_ENGINE_USED})"
+    except Exception as e:
+        print(f"[TACTICAL_PLAN] LLM wording call failed: {e}")
+
+    # ── STEP 3: Merge — structural fields from skeleton; text from LLM ────────
+    llm_actions_by_id: dict = {}
+    for la in llm_result.get("actions", []):
+        if isinstance(la, dict) and la.get("id"):
+            llm_actions_by_id[int(la["id"])] = la
+
+    final_actions = []
+    for det in det_actions:
+        la  = llm_actions_by_id.get(det["id"], {})
+        merged = {}
+        for key in _REQUIRED_ACTION_KEYS:
+            if key in _STRUCTURAL_KEYS:
+                # Deterministic values always win for structure
+                merged[key] = det[key]
+            else:
+                # LLM may improve text fields; fall back to deterministic if empty/missing
+                llm_val = la.get(key, "")
+                merged[key] = llm_val if llm_val and str(llm_val).strip() else det[key]
+        # authority_required is deterministic (not in LLM output schema)
+        merged["authority_required"] = det["authority_required"]
+        final_actions.append(merged)
+
+    result = {
+        "case_summary": (
+            llm_result.get("case_summary")
+            or f"Tactical operation plan for {person_name} — "
+               f"{len(flags)} confirmed evidence flag(s) across "
+               f"{'multiple crime types' if sum([has_cyber, has_financial, has_narcotics]) > 1 else 'single case type'}."
+        ),
+        "critical_warning": (
+            llm_result.get("critical_warning")
+            or "Digital preservation must precede all physical actions. Evidence loss is irreversible."
+        ),
+        "actions":      final_actions,
+        "agent":        "TacticalPlanAgent",
+        "method":       method,
+        "generated_at": datetime.datetime.utcnow().isoformat(),
+    }
+
+    # Grounding validation pass
+    po        = person or {}
     confirmed = (
         [po.get("confirmed_name", "")]
         + list(po.get("platforms_confirmed", []))
@@ -1138,7 +1399,11 @@ def run_strategy_agent(
     )
     result = validate_agent_output(result, confirmed)
 
-    _log_agent_run("StrategyAgent", f"phases={len(result.get('operational_phases', []))}", user_id)
+    _log_agent_run(
+        "TacticalPlanAgent",
+        f"actions={len(final_actions)} method={method} flags={len(flags)}",
+        user_id or "system",
+    )
     return result
 
 
@@ -1153,8 +1418,8 @@ def run_timeline_analysis_agent(
     person_name:     str,
 ) -> dict:
     """
-    Generates a narrative analysis of the timeline — what story does it tell,
-    critical moments, what an investigator should focus on first.
+    Generates a narrative analysis of the timeline — pattern, critical moments,
+    investigator focus.
     """
     if not timeline_events:
         return {
@@ -1172,12 +1437,10 @@ def run_timeline_analysis_agent(
         f"[{e.get('source','')[:30]}]"
         for e in timeline_events[:30]
     ])
-
     contradiction_summary = "\n".join([
         f"CONTRADICTION: {c.get('conflict','')} at {c.get('timestamp','')}"
         for c in (contradictions or [])
     ]) or "None detected"
-
     gap_summary = "\n".join([
         f"GAP: {g.get('gap_days',0)} days "
         f"({g.get('gap_start','')} to {g.get('gap_end','')})"
@@ -1210,9 +1473,9 @@ Return JSON only. No markdown.
 }}"""
 
     try:
-        result = _call_ai(prompt, max_tokens=800)
-        clean  = re.sub(r"```(?:json)?|```", "", result).strip()
-        m      = re.search(r"\{.*\}", clean, re.DOTALL)
+        raw   = _call_ai(prompt, max_tokens=800)
+        clean = re.sub(r"```(?:json)?|```", "", raw).strip()
+        m     = re.search(r"\{.*\}", clean, re.DOTALL)
         if m:
             parsed = json.loads(m.group())
             parsed["agent"]  = "TimelineAgent"
@@ -1237,10 +1500,11 @@ Return JSON only. No markdown.
 
 class AgentOrchestrator:
     _DISPATCH = {
-        "RiskAgent":       run_risk_agent,
-        "PatternAgent":    run_pattern_agent,
-        "NextStepAgent":   run_next_step_agent,
-        "ComplianceAgent": run_compliance_agent,
+        "RiskAgent":         run_risk_agent,
+        "PatternAgent":      run_pattern_agent,
+        "NextStepAgent":     run_next_step_agent,
+        "ComplianceAgent":   run_compliance_agent,
+        "TacticalPlanAgent": run_tactical_plan_agent,
     }
 
     def run_agent(self, agent_name: str, data: dict, user_id: str = "system") -> dict:
@@ -1265,23 +1529,36 @@ class AgentOrchestrator:
         agents_run = ["RiskAgent", "PatternAgent", "NextStepAgent", "ComplianceAgent"]
 
         results = {
-            "risk":       self.run_agent("RiskAgent",       person_data, user_id),
-            "patterns":   self.run_agent("PatternAgent",    ontology,    user_id),
-            "next_steps": self.run_agent("NextStepAgent",   report,      user_id),
-            "compliance": self.run_agent("ComplianceAgent", report,      user_id),
+            "risk":       run_risk_agent(person_data, user_id=user_id),
+            "patterns":   run_pattern_agent(ontology,  user_id),
+            "next_steps": run_next_step_agent(report,  user_id),
+            "compliance": run_compliance_agent(report, user_id),
         }
 
-        # StrategyAgent — only when assets data is provided
-        if assets_data:
-            try:
-                strat = run_strategy_agent(person_data, assets_data, report, user_id)
-                results["strategy"] = strat
-                agents_run.append("StrategyAgent")
-            except Exception as exc:
-                results["strategy"] = {
-                    "error": str(exc), "agent": "StrategyAgent",
-                    "generated_at": datetime.datetime.utcnow().isoformat(),
-                }
+        # TacticalPlanAgent — always runs on every case (no assets gate)
+        try:
+            all_anomalies = []
+            for f in person_data.get("anomaly_flags", []) or []:
+                all_anomalies.append(f.get("flag", str(f)) if isinstance(f, dict) else str(f))
+            for c in person_data.get("conflicts", []) or []:
+                all_anomalies.append(c.get("flag", str(c)) if isinstance(c, dict) else str(c))
+            for bf in person_data.get("behavioral_flags", []) or []:
+                all_anomalies.append(str(bf))
+            report_stub = {"person": person_data}
+            results["tactical_plan"] = run_tactical_plan_agent(
+                person_data,
+                all_anomalies,
+                assets_data or [],
+                report_stub,
+                user_id,
+            )
+            agents_run.append("TacticalPlanAgent")
+        except Exception as exc:
+            results["tactical_plan"] = {
+                "error":        str(exc),
+                "agent":        "TacticalPlanAgent",
+                "generated_at": datetime.datetime.utcnow().isoformat(),
+            }
 
         # TimelineAgent — runs after contradiction and gap detection
         try:
@@ -1289,13 +1566,13 @@ class AgentOrchestrator:
                 detect_timeline_contradictions,
                 detect_timeline_gaps,
             )
-            timeline_events = person_data.get("timeline_events", [])
+            timeline_events   = person_data.get("timeline_events", [])
             tl_contradictions = detect_timeline_contradictions(
                 timeline_events, raw_documents or []
             )
             tl_gaps = detect_timeline_gaps(timeline_events)
 
-            results["timeline_analysis"] = run_timeline_analysis_agent(
+            results["timeline_analysis"]      = run_timeline_analysis_agent(
                 timeline_events,
                 tl_contradictions,
                 tl_gaps,
@@ -1306,7 +1583,8 @@ class AgentOrchestrator:
             agents_run.append("TimelineAgent")
         except Exception as exc:
             results["timeline_analysis"] = {
-                "error": str(exc), "agent": "TimelineAgent",
+                "error":        str(exc),
+                "agent":        "TimelineAgent",
                 "generated_at": datetime.datetime.utcnow().isoformat(),
             }
 

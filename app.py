@@ -1926,7 +1926,7 @@ def screen_fusion():
         st.markdown(
             '<div style="font-size:0.77rem;color:#9D4EDD;margin-bottom:0.6rem;">'
             'Upload asset registers (CSV/XLSX) — vehicles, equipment, property, personnel, financials. '
-            'Triggers Section 18 Operational Strategy in the report.</div>',
+            'Asset data enriches the Section 18 Tactical Operation Plan (Section 18 runs on every case).</div>',
             unsafe_allow_html=True,
         )
         asset_uploads = st.file_uploader(
@@ -2273,7 +2273,7 @@ def screen_fusion():
 
     # ── Parse asset files ─────────────────────────────────────────────────────
     ast_staged   = st.session_state.get("fusion_assets_staged", [])
-    assets_dicts = []  # list of dicts for StrategyAgent + Section 18
+    assets_dicts = []  # list of dicts for TacticalPlanAgent (Section 18)
     if ast_staged:
         try:
             from modules.ingest import ingest_file
