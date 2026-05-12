@@ -418,6 +418,9 @@ def run_risk_agent(
     if data_size < 4000 and n_anomalies < 2:
         base_score = min(base_score, 50)
 
+    # Absolute ceiling — keyword boosts can push past 100; enforce hard cap
+    base_score = min(100, base_score)
+
     # Deterministic level (always derived from score — LLM cannot override)
     if base_score >= 75:   level = "CRITICAL"
     elif base_score >= 55: level = "HIGH"

@@ -392,6 +392,20 @@ _NAME_SUFFIX_WORDS = {
     "1", "2", "3", "a", "b",
 }
 
+# Social-platform tokens that can never appear in a real human name.
+# Shared by _is_platform_suffix(), is_bad_subject_name(), and detect_all_conflicts().
+_PLATFORM_TOKEN_SET = {
+    "instagram", "telegram", "twitter", "github",
+    "huggingface", "hugging", "face", "linkedin",
+    "facebook", "youtube", "reddit", "discord",
+    "whatsapp", "signal", "snapchat", "tiktok",
+    "x.com", "threads", "account", "user",
+    "profile", "handle", "subject", "page",
+    "channel", "group", "official", "verified",
+    "post", "story", "reel", "dm", "message",
+}
+
+
 def _is_name_with_suffix(primary: str, variant: str) -> bool:
     """Return True if variant is primary name plus trailing descriptor words (not a real alias)."""
     p = primary.lower().strip()
@@ -483,6 +497,11 @@ def is_bad_subject_name(candidate, raw_documents=None) -> bool:
     # without needing to enumerate every possible phrase.
     words = [w.strip(".:,()[]") for w in str(candidate).strip().split()]
     if any(w.lower() in _IMPOSSIBLE_NAME_WORDS for w in words):
+        return True
+
+    # Reject if ANY token is a known social-platform word.
+    # Catches NER artifacts like "Harshvardhan Instagram" or "Telegram Account".
+    if any(w.lower() in _PLATFORM_TOKEN_SET for w in words):
         return True
 
     # Match against skip patterns (substring check on normalised string)
@@ -1296,31 +1315,53 @@ _DOB_CONTEXT_RE = re.compile(
 def _is_platform_suffix(primary: str, variant: str) -> bool:
     """
     Returns True when the variant is just the primary name concatenated with
-    a social-platform word (or vice-versa), or when the variant is the
-    primary name repeated twice.  These are NER artefacts, not real conflicts.
-    Examples that must be suppressed:
-        primary="Harshvardhan"  variant="Harshvardhan Instagram"  → True
-        primary="Harshvardhan"  variant="Harshvardhan Harshvardhan" → True
+    social-platform words (or vice-versa), or the primary name repeated.
+    Catches NER artefacts such as:
+        "Harshvardhan Instagram"           → True  (exact platform suffix)
+        "Harshvardhan Harshvardhan"        → True  (doubled name)
+        "Harshvardhan Telegram Profile"    → True  (multi-word platform suffix)
+        "Instagram Harshvardhan"           → True  (platform prefix)
+        "Harshvardhan Gautam Instagram"    → True  (multi-token primary + platform)
     """
     p = primary.lower().strip()
     v = variant.lower().strip()
 
-    PLATFORM_WORDS = [
-        "instagram", "telegram", "twitter", "github",
-        "hugging face", "huggingface", "linkedin",
-        "facebook", "youtube", "reddit", "discord",
-        "whatsapp", "signal", "snapchat", "tiktok",
-        "x.com", "threads", "account", "user",
-        "profile", "handle", "subject",
-    ]
+    if not p or not v or p == v:
+        return True   # identical or empty → not a real conflict
 
-    for platform in PLATFORM_WORDS:
-        if v == f"{p} {platform}" or v == f"{platform} {p}":
-            return True
+    p_tokens = p.split()
+    v_tokens = v.split()
 
-    # e.g. "Harshvardhan Harshvardhan"
+    # 1. Exact doubled primary: "Harshvardhan Harshvardhan"
     if v == f"{p} {p}":
         return True
+    # Multi-token doubled: ["a","b","a","b"]
+    if (len(v_tokens) == 2 * len(p_tokens)
+            and v_tokens[:len(p_tokens)] == p_tokens
+            and v_tokens[len(p_tokens):] == p_tokens):
+        return True
+
+    # 2. Primary is a prefix of variant and every suffix token is a platform word
+    if v.startswith(p + " "):
+        suffix_tokens = v[len(p):].strip().split()
+        if suffix_tokens and all(t in _PLATFORM_TOKEN_SET for t in suffix_tokens):
+            return True
+
+    # 3. Variant starts with a platform word, rest matches primary
+    if v_tokens and v_tokens[0] in _PLATFORM_TOKEN_SET:
+        rest = " ".join(v_tokens[1:])
+        if rest == p:
+            return True
+
+    # 4. Remove ALL platform tokens from variant — if what remains equals primary
+    non_platform = [t for t in v_tokens if t not in _PLATFORM_TOKEN_SET]
+    if non_platform and " ".join(non_platform) == p:
+        return True
+
+    # 5. Legacy exact-match check for single platform word either side
+    for platform in _PLATFORM_TOKEN_SET:
+        if v == f"{p} {platform}" or v == f"{platform} {p}":
+            return True
 
     return False
 

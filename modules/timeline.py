@@ -194,11 +194,12 @@ def extract_dates_from_person(person: dict, search_results: dict) -> list[dict]:
             e["event_type"] = "news_mention"
         all_events.extend(events)
 
-    # Deduplicate by (normalized_date, source)
+    # Deduplicate by (normalized_date, context[:80]) — same approach as deduplicate_events
     seen_keys = set()
     unique = []
     for e in all_events:
-        key = (e["normalized"], e["source"][:30])
+        ctx_clean = re.sub(r"\s+", " ", safe_str(e.get("context", ""))).strip().lower()[:80]
+        key = (e["normalized"], ctx_clean)
         if key not in seen_keys:
             seen_keys.add(key)
             unique.append(e)
@@ -458,19 +459,46 @@ def build_timeline(person: dict, search_results: dict) -> dict:
 
 def deduplicate_events(events: list) -> list:
     """
-    Content-aware deduplication: keyed on (date, normalized_description[:40]).
-    Same event from 6 files = 1 entry. Works on any future file format.
+    Two-pass content-aware deduplication.
+
+    Pass 1 — primary key: (normalized_date, context_normalized[:80])
+        Strips "Document: <file> [<col>]" prefixes so the same event ingested
+        via both the raw-text scan and build_timeline_from_all_files collapses
+        into one entry.
+
+    Pass 2 — secondary key: (normalized_date, source_file_stem)
+        Ensures the same file cannot contribute more than one event per date
+        (catches cases where the context snippet differs across scans of the
+        same file, making Pass 1 miss the duplicate).
     """
+    # ── Pass 1: content-based dedup ───────────────────────────────────────────
     seen:   set  = set()
-    unique: list = []
+    pass1:  list = []
     for event in (events or []):
-        date_str   = safe_str(event.get("normalized", event.get("date", "")))
-        desc       = safe_str(event.get("description", event.get("context", "")))
-        desc_clean = re.sub(r"Document:.*?\[.*?\]", "", desc).strip().lower()[:40]
-        key        = (date_str, desc_clean)
+        date_str = safe_str(event.get("normalized", event.get("date", "")))
+        desc     = safe_str(event.get("description", event.get("context", "")))
+        # Strip "Document: <filename> [<col>]" and "Document: <filename>" prefixes
+        desc_clean = re.sub(r"Document:\s*[^\[\n]*(?:\[[^\]]*\])?", "", desc)
+        desc_clean = re.sub(r"\s+", " ", desc_clean).strip().lower()[:80]
+        key = (date_str, desc_clean)
         if key not in seen:
             seen.add(key)
+            pass1.append(event)
+
+    # ── Pass 2: per-file per-date dedup ───────────────────────────────────────
+    seen2:  set  = set()
+    unique: list = []
+    for event in pass1:
+        date_str = safe_str(event.get("normalized", event.get("date", "")))
+        source   = safe_str(event.get("source", ""))
+        # Extract bare filename stem: "Document: foo.csv [challan_date]" → "foo.csv"
+        stem = re.sub(r"Document:\s*", "", source).split("[")[0].strip().lower()[:50]
+        key2 = (date_str, stem)
+        if not stem or key2 not in seen2:
+            if stem:
+                seen2.add(key2)
             unique.append(event)
+
     return sorted(unique, key=lambda x: safe_str(x.get("normalized", x.get("date", ""))))
 
 
