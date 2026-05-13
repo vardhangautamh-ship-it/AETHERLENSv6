@@ -387,9 +387,12 @@ def run_risk_agent(
     has_assets   = bool(p.get("assets_data"))
     entity_count = len(str(p))
 
-    base_score = (sources * 15) + (n_anomalies * 12) + (30 if has_assets else 0)
-    if entity_count < 8000:
-        base_score -= 25
+    # Conservative scoring — avoids automatic 100/100 on flag-heavy cases
+    base_score = (sources * 7) + (n_anomalies * 9) + (20 if has_assets else 0)
+    if entity_count < 5000:
+        base_score -= 15
+    if sources <= 4:
+        base_score -= 12
 
     # FINAL HARD CAP — never exceed 100, never below 0
     base_score = max(0, min(100, base_score))
@@ -1161,21 +1164,16 @@ def run_tactical_plan_agent(
     Step 2: If LLM fails or returns != 6 actions, fall back to the deterministic
             _tactical_plan_fallback which auto-detects case type from anomaly text.
     """
-    anomalies = (
-        report_data.get("anomalies", [])
-        or report_data.get("anomaly_flags", [])
-        or []
-    )
+    anomalies = report_data.get("anomalies", []) or report_data.get("anomaly_flags", [])
     grounding = build_grounding_context(person_object)
 
     prompt = f"""You are a senior Indian law enforcement tactical planner.
-Case: {person_object.get('confirmed_name', 'Unknown')}
-Anomalies detected: {len(anomalies)}
-Case indicators: {', '.join([str(a)[:60] for a in anomalies[:5]]) if anomalies else 'General OSINT'}
+Subject: {person_object.get('confirmed_name')}
+Anomalies/Flags detected: {len(anomalies)}
+Key indicators: {', '.join(str(a)[:80] for a in anomalies[:6]) if anomalies else 'General OSINT'}
 
-Generate a strict 6-action Tactical Operation Plan following Indian legal sequencing.
-Prioritize digital preservation first, then parallel financial/interception actions, then physical search, then subject contact last.
-Return ONLY valid JSON with keys: case_summary, critical_warning, actions (list of 6)."""
+Create a professional 6-action Tactical Operation Plan with strict Indian legal sequencing.
+Return ONLY valid JSON."""
 
     raw    = _call_ai(prompt, 2200)
     result = _extract_json(raw) or {}
@@ -1183,16 +1181,13 @@ Return ONLY valid JSON with keys: case_summary, critical_warning, actions (list 
     if not result.get("actions") or len(result.get("actions", [])) != 6:
         result = _tactical_plan_fallback(person_object, anomalies, assets_data)
 
-    result["method"] = (
-        f"hybrid ({LAST_ENGINE_USED})" if raw
-        else "rule-based-fallback (generalized)"
-    )
+    result["method"]       = f"hybrid ({LAST_ENGINE_USED})" if raw else "rule-based-fallback"
     result["agent"]        = "TacticalPlanAgent"
     result["generated_at"] = datetime.datetime.utcnow().isoformat()
 
     _log_agent_run(
         "TacticalPlanAgent",
-        f"actions=6, method={result['method']}",
+        f"actions=6 method={result['method']}",
         user_id or "system",
     )
     return result

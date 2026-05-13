@@ -572,6 +572,42 @@ def generate_pdf(
             story.append(KeepTogether(render_tactical_plan(content)))
             continue
 
+        # ── Section 03 — Platform Presence: clean deduped renderer ─────────────
+        if key == "platform_presence":
+            block = []
+            block.append(Paragraph(_safe(title), _STYLES["section_header"]))
+            block.append(_hr())
+            platforms = report_data.get("platform_presence", {}) or report_data.get("confirmed_platforms", {})
+            if platforms and isinstance(platforms, dict):
+                seen = set()
+                for platform, data in platforms.items():
+                    pkey = str(platform).lower().replace(" ", "").replace("_", "")
+                    if pkey in seen:
+                        continue
+                    seen.add(pkey)
+                    # data can be a rich dict (from build_platform_presence)
+                    # or a plain string "url | @handle" (from _sections_to_pdf_data)
+                    if isinstance(data, dict):
+                        handle  = data.get("username") or data.get("handle") or "Not found"
+                        url     = data.get("url", "")
+                        conf    = "CONFIRMED" if data.get("confirmed", True) else "UNVERIFIED"
+                        handle_str = f"@{handle}" if handle and not handle.startswith("@") else handle
+                        line = f"• {platform.upper()}: {handle_str}"
+                        if url:
+                            line += f" — {url}"
+                        line += f" [{conf}]"
+                    else:
+                        line = f"• {platform.upper()}: {_safe(str(data))}"
+                    block.append(Paragraph(line, _STYLES["verified"]))
+            else:
+                block.append(Paragraph(
+                    "[VERIFIED DATA] No confirmed public platform accounts found.",
+                    _STYLES["verified"],
+                ))
+            block.append(Spacer(1, 4 * mm))
+            story.append(KeepTogether(block))
+            continue
+
         block = []
         block.append(Paragraph(_safe(title), _STYLES["section_header"]))
         block.append(_hr())
