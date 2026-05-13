@@ -3927,10 +3927,14 @@ def screen_heatmap():
         return
     try:
         import pandas as pd
-        import calplot
-        import matplotlib.pyplot as plt
         import matplotlib
         matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        try:
+            import calplot
+            _calplot_ok = True
+        except ImportError:
+            _calplot_ok = False
 
         events = tl.get("events", [])
         dates = []
@@ -3964,18 +3968,38 @@ def screen_heatmap():
         # ── Calendar heatmap ──────────────────────────────────────────────────
         st.markdown(panel_hdr("H·03","ACTIVITY CALENDAR","PURPLE INTENSITY = FREQUENCY"), unsafe_allow_html=True)
         series = pd.Series(1, index=pd.DatetimeIndex(dates)).resample("D").sum()
-        fig_cal, ax = calplot.calplot(series, cmap="Purples", colorbar=False,
-                                      edgecolor="#0A0015", figsize=(14, 3))
-        fig_cal.patch.set_facecolor("#05000D")
-        for axis in fig_cal.get_axes():
-            axis.set_facecolor("#05000D")
-            for spine in axis.spines.values():
-                spine.set_edgecolor("rgba(123,47,190,0.28)")
-            axis.tick_params(colors="#9CA3AF", labelsize=8)
-        st.markdown('<div class="panel" style="padding:12px;">', unsafe_allow_html=True)
-        st.pyplot(fig_cal)
-        st.markdown('</div>', unsafe_allow_html=True)
-        plt.close(fig_cal)
+        try:
+            if not _calplot_ok:
+                raise ImportError("calplot not installed")
+            fig_cal, ax = calplot.calplot(series, cmap="Purples", colorbar=False,
+                                          edgecolor="#0A0015", figsize=(14, 3))
+            fig_cal.patch.set_facecolor("#05000D")
+            for axis in fig_cal.get_axes():
+                axis.set_facecolor("#05000D")
+                for spine in axis.spines.values():
+                    spine.set_edgecolor("rgba(123,47,190,0.28)")
+                axis.tick_params(colors="#9CA3AF", labelsize=8)
+            st.markdown('<div class="panel" style="padding:12px;">', unsafe_allow_html=True)
+            st.pyplot(fig_cal)
+            st.markdown('</div>', unsafe_allow_html=True)
+            plt.close(fig_cal)
+        except Exception:
+            # calplot unavailable — render Plotly bar chart fallback
+            import plotly.graph_objects as go
+            df_heat = series.reset_index()
+            df_heat.columns = ["date", "count"]
+            fig_fb = go.Figure(go.Bar(
+                x=df_heat["date"].astype(str),
+                y=df_heat["count"],
+                marker_color="#7B2FBE",
+                marker_line_width=0,
+            ))
+            fig_fb.update_layout(
+                plot_bgcolor="#05000D", paper_bgcolor="#05000D",
+                font_color="#9CA3AF", margin=dict(l=0, r=0, t=8, b=0),
+                height=180, xaxis=dict(showgrid=False), yaxis=dict(showgrid=False),
+            )
+            st.plotly_chart(fig_fb, use_container_width=True)
 
         # ── Event log table ───────────────────────────────────────────────────
         st.markdown('<hr class="divider">', unsafe_allow_html=True)
