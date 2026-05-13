@@ -395,12 +395,11 @@ _NAME_SUFFIX_WORDS = {
 # Social-platform tokens that can never appear in a real human name.
 # Shared by _is_platform_suffix(), is_bad_subject_name(), and detect_all_conflicts().
 _PLATFORM_TOKEN_SET = {
-    "instagram", "telegram", "twitter", "github",
-    "huggingface", "hugging", "face", "linkedin",
-    "facebook", "youtube", "reddit", "discord",
-    "whatsapp", "signal", "snapchat", "tiktok",
-    "x.com", "threads", "account", "user",
-    "profile", "handle", "subject", "page",
+    "instagram", "telegram", "twitter", "github", "linkedin", "youtube",
+    "facebook", "huggingface", "hugging_face", "reddit", "discord",
+    "signal", "whatsapp", "tiktok", "snapchat", "threads", "x.com",
+    # additional tokens kept for coverage
+    "account", "user", "profile", "handle", "page",
     "channel", "group", "official", "verified",
     "post", "story", "reel", "dm", "message",
 }
@@ -450,80 +449,50 @@ _IMPOSSIBLE_NAME_WORDS = {
 
 def is_bad_subject_name(candidate, raw_documents=None) -> bool:
     """
-    Return True if `candidate` is clearly a filename, test artifact, or
-    document-title string that should NEVER be treated as a real subject.
-    Uses both a blocklist (FILENAME_SKIP_PATTERNS) and a positive guard
-    (_IMPOSSIBLE_NAME_WORDS) so category phrases like "Academic Year" or
-    "Criminal Procedure" are caught even if they are new / unseen.
+    Return True if `candidate` is clearly a filename, test artifact,
+    platform artifact, or document-title that should never be a subject.
     """
     if not candidate:
         return True
-
-    # Reject multi-line strings — text-extraction artifacts like "Zafar Ahmed Khan\nCase"
-    if "\n" in str(candidate) or "\r" in str(candidate):
+    s = str(candidate).strip()
+    if "\n" in s or "\r" in s or len(s) < 3:
         return True
-
-    c_lower = (
-        str(candidate).lower().strip()
-        .replace(" ", "_")
-        .replace("-", "_")
-    )
-
-    # Too short to be a real name
-    if len(str(candidate).strip()) < 3:
+    if re.match(r'^[\d\s\-_]+$', s):
         return True
-
-    # Contains only digits / separators
-    if re.match(r'^[\d\s\-_]+$', str(candidate).strip()):
+    sl = s.lower()
+    # Platform-suffix / doubled-name artifact check
+    if _is_name_with_suffix(s, sl) or _is_platform_suffix(s, sl):
         return True
-
-    # Reject names that start with a law-enforcement / officer role title
-    _ROLE_TITLES = {
-        "officer", "constable", "inspector", "sub-inspector", "sub_inspector",
-        "si", "dsp", "sp", "ips", "ips officer", "asi", "pi", "psi",
-        "head constable", "dy sp", "dysp", "superintendent",
-        "field officer", "investigating officer", "io",
-    }
-    first_word = str(candidate).strip().split()[0].lower().rstrip(".:,")
-    if first_word in _ROLE_TITLES:
-        return True
-    # Also reject if candidate starts with a full role phrase
-    for title in _ROLE_TITLES:
-        if c_lower.startswith(title.replace("-", "_").replace(" ", "_")):
-            return True
-
-    # Positive guard: reject if ANY individual word is an impossible-name word.
-    # Handles "Academic Year", "Criminal Procedure", "Annual Report", etc.
-    # without needing to enumerate every possible phrase.
-    words = [w.strip(".:,()[]") for w in str(candidate).strip().split()]
-    if any(w.lower() in _IMPOSSIBLE_NAME_WORDS for w in words):
-        return True
-
-    # Reject if ANY token is a known social-platform word.
-    # Catches NER artifacts like "Harshvardhan Instagram" or "Telegram Account".
+    # Any token that is a known platform word → artifact
+    words = [w.strip(".:,()[]") for w in s.split()]
     if any(w.lower() in _PLATFORM_TOKEN_SET for w in words):
         return True
-
-    # Match against skip patterns (substring check on normalised string)
+    # Impossible-name words (Academic, Report, Procedure, etc.)
+    if any(w.lower() in _IMPOSSIBLE_NAME_WORDS for w in words):
+        return True
+    # Role title at start (Officer, Inspector, etc.)
+    _ROLE_TITLES = {
+        "officer", "constable", "inspector", "sub-inspector", "sub_inspector",
+        "si", "dsp", "sp", "ips", "asi", "pi", "psi",
+        "head", "superintendent", "investigating", "io",
+    }
+    if words and words[0].lower().rstrip(".:,") in _ROLE_TITLES:
+        return True
+    # Filename skip-pattern blocklist
+    c_lower = sl.replace(" ", "_").replace("-", "_")
     for pattern in FILENAME_SKIP_PATTERNS:
         if pattern in c_lower:
             return True
-
     # Match against uploaded filenames
     for doc in (raw_documents or []):
-        fname = (
-            doc.get("filename", "") or doc.get("name", "")
-        ).lower()
+        fname = (doc.get("filename", "") or doc.get("name", "")).lower()
         for ext in (".csv", ".pdf", ".txt", ".xlsx", ".xls", ".json"):
             fname = fname.replace(ext, "")
         fname = fname.replace(" ", "_").replace("-", "_").strip()
         if not fname:
             continue
-        if c_lower == fname:
+        if c_lower == fname or (len(fname) > 4 and fname in c_lower):
             return True
-        if len(fname) > 4 and fname in c_lower:
-            return True
-
     return False
 
 
@@ -1326,8 +1295,8 @@ def _is_platform_suffix(primary: str, variant: str) -> bool:
     p = primary.lower().strip()
     v = variant.lower().strip()
 
-    if not p or not v or p == v:
-        return True   # identical or empty → not a real conflict
+    if not p or not v:
+        return False
 
     p_tokens = p.split()
     v_tokens = v.split()
@@ -1353,9 +1322,11 @@ def _is_platform_suffix(primary: str, variant: str) -> bool:
         if rest == p:
             return True
 
-    # 4. Remove ALL platform tokens from variant — if what remains equals primary
+    # 4. Remove ALL platform tokens from variant — if what remains equals primary.
+    # Guard: only fire when at least one platform token was actually stripped;
+    # otherwise good names ("Arjun Mehta" vs "arjun mehta") would always match.
     non_platform = [t for t in v_tokens if t not in _PLATFORM_TOKEN_SET]
-    if non_platform and " ".join(non_platform) == p:
+    if len(non_platform) < len(v_tokens) and non_platform and " ".join(non_platform) == p:
         return True
 
     # 5. Legacy exact-match check for single platform word either side

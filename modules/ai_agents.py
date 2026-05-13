@@ -33,34 +33,38 @@ def _call_bedrock(prompt: str, max_tokens: int = 4096) -> str:
     """
     Claude Sonnet 4 on AWS Bedrock (ap-south-1 / Mumbai).
     Primary engine — data stays in India for DPDP compliance.
-    Returns raw text on success, empty string on failure.
+    Retries up to 3 times with exponential backoff before giving up.
+    Returns raw text on success, empty string on all-retry failure.
     """
     from config import get_bedrock_client
     client, model_id = get_bedrock_client()
-
     if not client:
-        print("[BEDROCK CALL] No client — skipping")
         return ""
-    try:
-        body = json.dumps({
-            "anthropic_version": "bedrock-2023-05-31",
-            "max_tokens": max_tokens,
-            "messages": [{"role": "user", "content": prompt}],
-        })
-        response = client.invoke_model(
-            modelId     = model_id,
-            body        = body,
-            contentType = "application/json",
-            accept      = "application/json",
-        )
-        result = json.loads(response["body"].read())
-        return result["content"][0]["text"] or ""
-    except Exception as e:
+    for attempt in range(3):
         try:
-            print(f"[BEDROCK] Call failed: {e}")
-        except Exception:
-            pass
-        return ""
+            body = json.dumps({
+                "anthropic_version": "bedrock-2023-05-31",
+                "max_tokens": max_tokens,
+                "messages": [{"role": "user", "content": prompt}],
+            })
+            response = client.invoke_model(
+                modelId     = model_id,
+                body        = body,
+                contentType = "application/json",
+                accept      = "application/json",
+            )
+            result = json.loads(response["body"].read())
+            return result["content"][0]["text"] or ""
+        except Exception as e:
+            if attempt == 2:
+                try:
+                    print(f"[BEDROCK] All 3 attempts failed: {e}")
+                except Exception:
+                    pass
+                return ""
+            import time
+            time.sleep(2 ** attempt)   # 1s, 2s before retries 2 and 3
+    return ""
 
 
 def _call_gemini(prompt: str, max_tokens: int = 4096) -> str:
@@ -378,48 +382,19 @@ def run_risk_agent(
     flags = [f for f in flags if f.strip()]
 
     # ── STEP 1: DETERMINISTIC BASE SCORE ──────────────────────────────────────
-    sources     = len(p.get("data_sources", []) or [])
-    n_anomalies = len(flags)
-    has_assets  = bool(p.get("assets_data") or p.get("assets_count", 0))
-    entity_str  = json.dumps(p, ensure_ascii=False, default=str)
-    data_size   = len(entity_str)
+    sources      = len(p.get("data_sources", []) or [])
+    n_anomalies  = len(p.get("anomalies", []) or p.get("anomaly_flags", []) or flags)
+    has_assets   = bool(p.get("assets_data"))
+    entity_count = len(str(p))
 
-    # Base from structural richness (sources×15, anomalies×12, assets+30)
-    base_score = min(100,
-        (sources     * 15) +
-        (n_anomalies * 12) +
-        (30 if has_assets else 0)
-    )
+    base_score = (sources * 15) + (n_anomalies * 12) + (30 if has_assets else 0)
+    if entity_count < 8000:
+        base_score -= 25
 
-    # Keyword severity boosts
-    flag_upper = (
-        " ".join(str(f).upper() for f in flags) + " " +
-        " ".join(str(f) for f in flags).upper()
-    ).strip()
-    seen: set = set()
+    # FINAL HARD CAP — never exceed 100, never below 0
+    base_score = max(0, min(100, base_score))
+
     keyword_factors: list = []
-    for kw, weight in _RISK_HIGH_SEVERITY + _RISK_MEDIUM_SEVERITY:
-        kw_up = kw.upper()
-        if kw_up in flag_upper and kw_up not in seen:
-            seen.add(kw_up)
-            base_score += weight
-            keyword_factors.append({
-                "factor":   kw.title() + " indicator",
-                "weight":   weight,
-                "evidence": f"{kw} detected in confirmed flags",
-                "source":   "anomaly_flags",
-            })
-
-    # Sparse data penalty — large datasets provide more reliable evidence
-    if data_size < 8000:
-        base_score = max(0, base_score - 25)
-
-    # Hard-cap when data is very sparse — can't be HIGH+ without real evidence
-    if data_size < 4000 and n_anomalies < 2:
-        base_score = min(base_score, 50)
-
-    # Absolute ceiling — keyword boosts can push past 100; enforce hard cap
-    base_score = min(100, base_score)
 
     # Deterministic level (always derived from score — LLM cannot override)
     if base_score >= 75:   level = "CRITICAL"
