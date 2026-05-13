@@ -2258,9 +2258,11 @@ def _generate_report_inner(
             anom_sec = sections.get("anomalies_and_flags", {})
             for fl in (anom_sec.get("flags", []) or []):
                 tp_anomalies.append(str(fl))
-            report_stub = {"person": person, "subject": subject}
             tactical_plan_result = run_tactical_plan_agent(
-                person, tp_anomalies, assets_data or [], report_stub, user_id
+                person,
+                assets_data or [],
+                {"anomalies": tp_anomalies, "person": person, "subject": subject},
+                user_id,
             )
         except Exception as _tp_exc:
             print(f"[TACTICAL_PLAN] _generate_report_inner fallback failed: {_tp_exc}")
