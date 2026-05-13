@@ -33,34 +33,38 @@ def _call_bedrock(prompt: str, max_tokens: int = 4096) -> str:
     """
     Claude Sonnet 4 on AWS Bedrock (ap-south-1 / Mumbai).
     Primary engine — data stays in India for DPDP compliance.
-    Returns raw text on success, empty string on failure.
+    Retries up to 3 times with exponential backoff before giving up.
+    Returns raw text on success, empty string on all-retry failure.
     """
     from config import get_bedrock_client
     client, model_id = get_bedrock_client()
-
     if not client:
-        print("[BEDROCK CALL] No client — skipping")
         return ""
-    try:
-        body = json.dumps({
-            "anthropic_version": "bedrock-2023-05-31",
-            "max_tokens": max_tokens,
-            "messages": [{"role": "user", "content": prompt}],
-        })
-        response = client.invoke_model(
-            modelId     = model_id,
-            body        = body,
-            contentType = "application/json",
-            accept      = "application/json",
-        )
-        result = json.loads(response["body"].read())
-        return result["content"][0]["text"] or ""
-    except Exception as e:
+    for attempt in range(3):
         try:
-            print(f"[BEDROCK] Call failed: {e}")
-        except Exception:
-            pass
-        return ""
+            body = json.dumps({
+                "anthropic_version": "bedrock-2023-05-31",
+                "max_tokens": max_tokens,
+                "messages": [{"role": "user", "content": prompt}],
+            })
+            response = client.invoke_model(
+                modelId     = model_id,
+                body        = body,
+                contentType = "application/json",
+                accept      = "application/json",
+            )
+            result = json.loads(response["body"].read())
+            return result["content"][0]["text"] or ""
+        except Exception as e:
+            if attempt == 2:
+                try:
+                    print(f"[BEDROCK] All 3 attempts failed: {e}")
+                except Exception:
+                    pass
+                return ""
+            import time
+            time.sleep(2 ** attempt)   # 1s, 2s before retries 2 and 3
+    return ""
 
 
 def _call_gemini(prompt: str, max_tokens: int = 4096) -> str:
@@ -378,48 +382,22 @@ def run_risk_agent(
     flags = [f for f in flags if f.strip()]
 
     # ── STEP 1: DETERMINISTIC BASE SCORE ──────────────────────────────────────
-    sources     = len(p.get("data_sources", []) or [])
-    n_anomalies = len(flags)
-    has_assets  = bool(p.get("assets_data") or p.get("assets_count", 0))
-    entity_str  = json.dumps(p, ensure_ascii=False, default=str)
-    data_size   = len(entity_str)
+    sources      = len(p.get("data_sources", []) or [])
+    n_anomalies  = len(p.get("anomalies", []) or p.get("anomaly_flags", []) or flags)
+    has_assets   = bool(p.get("assets_data"))
+    entity_count = len(str(p))
 
-    # Base from structural richness (sources×15, anomalies×12, assets+30)
-    base_score = min(100,
-        (sources     * 15) +
-        (n_anomalies * 12) +
-        (30 if has_assets else 0)
-    )
+    # Conservative scoring — avoids automatic 100/100 on flag-heavy cases
+    base_score = (sources * 7) + (n_anomalies * 9) + (20 if has_assets else 0)
+    if entity_count < 5000:
+        base_score -= 15
+    if sources <= 4:
+        base_score -= 12
 
-    # Keyword severity boosts
-    flag_upper = (
-        " ".join(str(f).upper() for f in flags) + " " +
-        " ".join(str(f) for f in flags).upper()
-    ).strip()
-    seen: set = set()
+    # FINAL HARD CAP — never exceed 100, never below 0
+    base_score = max(0, min(100, base_score))
+
     keyword_factors: list = []
-    for kw, weight in _RISK_HIGH_SEVERITY + _RISK_MEDIUM_SEVERITY:
-        kw_up = kw.upper()
-        if kw_up in flag_upper and kw_up not in seen:
-            seen.add(kw_up)
-            base_score += weight
-            keyword_factors.append({
-                "factor":   kw.title() + " indicator",
-                "weight":   weight,
-                "evidence": f"{kw} detected in confirmed flags",
-                "source":   "anomaly_flags",
-            })
-
-    # Sparse data penalty — large datasets provide more reliable evidence
-    if data_size < 8000:
-        base_score = max(0, base_score - 25)
-
-    # Hard-cap when data is very sparse — can't be HIGH+ without real evidence
-    if data_size < 4000 and n_anomalies < 2:
-        base_score = min(base_score, 50)
-
-    # Absolute ceiling — keyword boosts can push past 100; enforce hard cap
-    base_score = min(100, base_score)
 
     # Deterministic level (always derived from score — LLM cannot override)
     if base_score >= 75:   level = "CRITICAL"
@@ -927,484 +905,289 @@ _STRUCTURAL_KEYS = {
 }
 
 
-def _tactical_plan_fallback(
-    person_name: str,
-    flags:       list,
-    has_cyber:      bool,
-    has_financial:  bool,
-    has_narcotics:  bool,
-    has_deletion:   bool,
-    has_certin:     bool,
-) -> list:
+def _tactical_plan_fallback(person_object: dict, anomalies: list, assets_data: list) -> dict:
     """
-    Deterministic 6-action skeleton — sequencing, dependencies, agencies, and
-    time windows are all computed from case-type flags, never from LLM output.
+    Generalized 6-action Tactical Operation Plan that works for ANY case type.
+
+    Detects case type dynamically from anomaly text.  Action 2 branches on:
+      financial/FEMA/PMLA  → FREEZE BANK ACCOUNTS UNDER PMLA
+      cyber/IT Act/comms   → APPLY FOR JUDICIAL INTERCEPTION ORDER
+      else (general OSINT) → PRESERVE ALL PLATFORM & CLOUD DATA
+    Returns a complete dict (case_summary, critical_warning, actions).
     """
-    actions = []
+    person_name  = person_object.get("confirmed_name", "Unknown Subject")
+    anomaly_text = " ".join(str(a).lower() for a in (anomalies or []))
 
-    # ── Action 1 — Digital preservation (always first, no dependencies) ────────
-    actions.append({
-        "id": 1,
-        "title": "Preserve Digital Evidence Immediately",
-        "description": (
-            f"Issue preservation notice to all platforms where {person_name} has confirmed "
-            "presence. Preserve server logs, account metadata, transaction records, and cloud "
-            "storage. Do not notify subject."
-        ),
-        "legal_basis": (
-            "IT Act 2000 — Section 69 / BNSS Section 94 / "
-            "IT (Procedure and Safeguards) Rules 2009"
-        ),
-        "authority_required": "Superintendent of Police (Cyber) or designated nodal officer",
-        "agency":            "Cyber Cell",
-        "time_window":       "0-24 hours",
-        "time_sensitivity":  "CRITICAL",
-        "priority":          "CRITICAL",
-        "depends_on":        [],
-        "blocks":            [],
-        "parallel_with":     [2],
-        "risk_if_delayed":   "HIGH",
-        "risk_if_reversed":  "HIGH",
-        "reward": (
-            "Prevents evidence deletion; secures platform metadata and activity logs "
-            "before subject is alerted"
-        ),
-    })
+    has_financial = any(k in anomaly_text for k in [
+        "fema", "pmla", "bank", "financial", "international transfer", "ed indicator",
+        "hawala", "money launder", "cash deposit", "usd",
+    ])
+    has_cyber = any(k in anomaly_text for k in [
+        "it act", "cyber", "platform", "digital evidence", "cert-in",
+        "section 66", "section 43", "malicious", "deletion", "scraping",
+        "unauthori", "dpdp",
+    ])
+    has_drug = any(k in anomaly_text for k in [
+        "ndps", "drug", "narcotic", "psychotropic", "ncb",
+    ])
 
-    # ── Action 2 — Parallel with Action 1; branches on case type ─────────────
+    # ── Action 2: branches on detected case type ───────────────────────────────
     if has_financial:
-        actions.append({
+        action2 = {
             "id": 2,
-            "title": "Freeze Bank Accounts Under PMLA",
+            "title": "FREEZE BANK ACCOUNTS UNDER PMLA",
+            "priority": "CRITICAL",
+            "time_window": "0-24 hours",
+            "time_sensitivity": "CRITICAL",
             "description": (
-                f"Apply for provisional attachment order under PMLA for all accounts linked "
-                f"to {person_name}. File with ED simultaneously. "
-                "Do not notify subject before freeze is confirmed."
+                f"Apply for provisional attachment order under PMLA for all accounts linked to "
+                f"{person_name}. File with ED simultaneously. Do not notify subject before freeze."
             ),
             "legal_basis": "PMLA 2002 — Section 5 (Provisional Attachment) / FEMA 1999 Section 37A",
             "authority_required": "ED Deputy Director / Designated PMLA Authority",
-            "agency":            "ED",
-            "time_window":       "0-24 hours",
-            "time_sensitivity":  "CRITICAL",
-            "priority":          "CRITICAL",
-            "depends_on":        [],
-            "blocks":            [5],
-            "parallel_with":     [1],
-            "risk_if_delayed":   "HIGH",
-            "risk_if_reversed":  "HIGH",
+            "agency": "ED",
+            "depends_on": [],
+            "blocks": [5],
+            "parallel_with": [1],
+            "risk_if_delayed": "HIGH",
+            "risk_if_reversed": "HIGH",
             "reward": "Prevents asset dissipation; freezes proceeds of crime before subject is aware",
-        })
-    elif has_certin:
-        actions.append({
+        }
+    elif has_cyber:
+        action2 = {
             "id": 2,
-            "title": "Coordinate with CERT-In for Existing Inquiry",
+            "title": "APPLY FOR JUDICIAL INTERCEPTION ORDER",
+            "priority": "CRITICAL",
+            "time_window": "0-24 hours",
+            "time_sensitivity": "CRITICAL",
             "description": (
-                f"Contact CERT-In nodal officer to reference active inquiry. Request server logs, "
-                f"incident reports, and technical evidence already collected related to {person_name}."
-            ),
-            "legal_basis": "IT Act 2000 — Section 70B / CERT-In Rules 2013",
-            "authority_required": "CERT-In Director General / Designated Nodal Officer",
-            "agency":            "CERT-In",
-            "time_window":       "0-24 hours",
-            "time_sensitivity":  "CRITICAL",
-            "priority":          "CRITICAL",
-            "depends_on":        [],
-            "blocks":            [],
-            "parallel_with":     [1],
-            "risk_if_delayed":   "HIGH",
-            "risk_if_reversed":  "MEDIUM",
-            "reward": "Consolidates government cyber evidence; prevents parallel inquiry conflicts",
-        })
-    elif has_narcotics:
-        actions.append({
-            "id": 2,
-            "title": "Notify NCB and Obtain NDPS Search Warrant",
-            "description": (
-                f"Coordinate with NCB regional office. Apply for search warrant under NDPS Act "
-                f"covering all known premises of {person_name}. Do not proceed without warrant."
-            ),
-            "legal_basis": (
-                "NDPS Act 1985 — Section 41 (search warrant) / "
-                "Section 50 (conditions of search)"
-            ),
-            "authority_required": "Metropolitan Magistrate / NCB Zonal Director",
-            "agency":            "NCB",
-            "time_window":       "0-24 hours",
-            "time_sensitivity":  "CRITICAL",
-            "priority":          "CRITICAL",
-            "depends_on":        [],
-            "blocks":            [4],
-            "parallel_with":     [1],
-            "risk_if_delayed":   "HIGH",
-            "risk_if_reversed":  "HIGH",
-            "reward": "Legal authorization for premises search; NCB coordination for substance evidence",
-        })
-    else:
-        actions.append({
-            "id": 2,
-            "title": "Apply for Judicial Interception Order",
-            "description": (
-                f"Apply for lawful interception and monitoring order for {person_name}'s confirmed "
-                "communication platforms. Include all identified phone numbers and email accounts."
+                f"Apply for lawful interception and monitoring order for all confirmed "
+                f"communication platforms and phone numbers linked to {person_name}."
             ),
             "legal_basis": "IT Act 2000 — Section 69 / Telegraph Act 1885 — Section 5(2)",
             "authority_required": "Home Secretary (State) / Secretary MHA (Central)",
-            "agency":            "Cyber Cell",
-            "time_window":       "0-24 hours",
-            "time_sensitivity":  "HIGH",
-            "priority":          "HIGH",
-            "depends_on":        [],
-            "blocks":            [],
-            "parallel_with":     [1],
-            "risk_if_delayed":   "MEDIUM",
-            "risk_if_reversed":  "LOW",
+            "agency": "Cyber Cell",
+            "depends_on": [],
+            "blocks": [],
+            "parallel_with": [1],
+            "risk_if_delayed": "MEDIUM",
+            "risk_if_reversed": "LOW",
             "reward": "Enables real-time intelligence collection on ongoing communications",
-        })
-
-    # ── Action 3 — Device seizure (CRITICAL if deletion confirmed) ────────────
-    if has_deletion:
-        actions.append({
-            "id": 3,
-            "title": "Emergency Device Seizure and Forensic Imaging",
+        }
+    else:
+        action2 = {
+            "id": 2,
+            "title": "PRESERVE ALL PLATFORM & CLOUD DATA",
+            "priority": "HIGH",
+            "time_window": "0-24 hours",
+            "time_sensitivity": "HIGH",
             "description": (
-                f"Execute emergency device seizure for all devices used by {person_name}. "
-                "Evidence deletion confirmed — treat as time-critical. Perform forensic imaging "
-                "under chain of custody immediately after seizure."
+                f"Issue preservation notices to all platforms and cloud providers where "
+                f"{person_name} has confirmed presence. Secure server logs, account metadata, "
+                "and storage. Do not notify subject."
+            ),
+            "legal_basis": "IT Act 2000 — Section 69 / BNSS Section 94",
+            "authority_required": "SP (Cyber) or designated nodal officer",
+            "agency": "Cyber Cell",
+            "depends_on": [],
+            "blocks": [],
+            "parallel_with": [1],
+            "risk_if_delayed": "HIGH",
+            "risk_if_reversed": "HIGH",
+            "reward": "Secures digital evidence before subject can delete or alter it",
+        }
+
+    actions = [
+        # ── Action 1 — Digital preservation: always first, always CRITICAL ─────
+        {
+            "id": 1,
+            "title": "PRESERVE DIGITAL EVIDENCE IMMEDIATELY",
+            "priority": "CRITICAL",
+            "time_window": "0-24 hours",
+            "time_sensitivity": "CRITICAL",
+            "description": (
+                f"Issue preservation notice to all platforms where {person_name} has confirmed "
+                "presence. Preserve server logs, account metadata, transaction records, and "
+                "cloud storage. Do not notify subject."
             ),
             "legal_basis": (
-                "IT Act 2000 — Section 65B (admissibility) / "
-                "BNSS Section 94 (search and seizure)"
+                "IT Act 2000 — Section 69 / BNSS Section 94 / "
+                "IT (Procedure and Safeguards) Rules 2009"
             ),
-            "authority_required": "Magistrate Order (BNSS S.94) / SP-level for emergency",
-            "agency":            "Cyber Cell",
-            "time_window":       "0-24 hours",
-            "time_sensitivity":  "CRITICAL",
-            "priority":          "CRITICAL",
-            "depends_on":        [1],
-            "blocks":            [5],
-            "parallel_with":     [],
-            "risk_if_delayed":   "HIGH",
-            "risk_if_reversed":  "HIGH",
-            "reward": "Recovers deleted evidence; secures hardware before further tampering",
-        })
-    else:
-        actions.append({
+            "authority_required": "Superintendent of Police (Cyber) or designated nodal officer",
+            "agency": "Cyber Cell",
+            "depends_on": [],
+            "blocks": [],
+            "parallel_with": [2],
+            "risk_if_delayed": "HIGH",
+            "risk_if_reversed": "HIGH",
+            "reward": (
+                "Prevents evidence deletion; secures platform metadata and activity logs "
+                "before subject is alerted"
+            ),
+        },
+        # ── Action 2 — Case-adaptive parallel action ───────────────────────────
+        action2,
+        # ── Action 3 — Search warrant (depends on 1+2 for financial; else 1) ──
+        {
             "id": 3,
-            "title": "Obtain Search Warrant for Physical Premises",
+            "title": "OBTAIN SEARCH WARRANT FOR PHYSICAL PREMISES",
+            "priority": "HIGH",
+            "time_window": "24-72 hours",
+            "time_sensitivity": "HIGH",
             "description": (
                 f"Apply for search warrant covering all known addresses of {person_name}. "
                 "Warrant to cover electronic devices, storage media, financial documents, "
-                "and any communications equipment."
+                "and communications equipment."
             ),
             "legal_basis": "BNSS Section 94 / IT Act 2000 — Section 80 (warrant for search)",
             "authority_required": "Judicial Magistrate First Class (JMFC)",
-            "agency":            "Local Police",
-            "time_window":       "24-72 hours",
-            "time_sensitivity":  "HIGH",
-            "priority":          "HIGH",
-            "depends_on":        [1, 2],
-            "blocks":            [4],
-            "parallel_with":     [],
-            "risk_if_delayed":   "MEDIUM",
-            "risk_if_reversed":  "MEDIUM",
+            "agency": "Local Police",
+            "depends_on": [1, 2] if has_financial else [1],
+            "blocks": [4],
+            "parallel_with": [],
+            "risk_if_delayed": "MEDIUM",
+            "risk_if_reversed": "MEDIUM",
             "reward": "Legal authorization for physical search; device and document seizure",
-        })
+        },
+        # ── Action 4 — Records subpoena ────────────────────────────────────────
+        {
+            "id": 4,
+            "title": "SUBPOENA FINANCIAL AND TELECOM RECORDS",
+            "priority": "HIGH",
+            "time_window": "24-72 hours",
+            "time_sensitivity": "HIGH",
+            "description": (
+                f"Issue production orders to telecom providers for CDR/tower dump for "
+                f"{person_name}'s confirmed numbers. Issue simultaneous bank record subpoena "
+                "for all linked accounts. Minimum 12-month lookback period."
+            ),
+            "legal_basis": (
+                "BNSS Section 94 / TRAI Regulations / "
+                "PMLA 2002 — Section 50 (summons for records)"
+            ),
+            "authority_required": "SP or above / ED Deputy Director",
+            "agency": "Cyber Cell",
+            "depends_on": [1],
+            "blocks": [6],
+            "parallel_with": [3],
+            "risk_if_delayed": "MEDIUM",
+            "risk_if_reversed": "LOW",
+            "reward": "Call pattern evidence; financial transaction trail; movement history",
+        },
+        # ── Action 5 — Subject notice: only after digital + financial secured ─
+        {
+            "id": 5,
+            "title": "ISSUE FORMAL NOTICE TO SUBJECT",
+            "priority": "HIGH",
+            "time_window": "72hrs-7days",
+            "time_sensitivity": "MEDIUM",
+            "description": (
+                f"After digital evidence is preserved and accounts frozen (or interception "
+                f"active), issue formal notice to {person_name} under BNSS. Do NOT contact "
+                "subject before Actions 1-3 are complete."
+            ),
+            "legal_basis": (
+                "BNSS Section 35 / Section 179 (examination of person) / "
+                "IT Act 2000 — Section 67C"
+            ),
+            "authority_required": "SP / Additional SP",
+            "agency": "Local Police",
+            "depends_on": [1, 2, 3],
+            "blocks": [],
+            "parallel_with": [4],
+            "risk_if_delayed": "LOW",
+            "risk_if_reversed": "MEDIUM",
+            "reward": "Subject's recorded statement; opportunity to identify co-conspirators",
+        },
+        # ── Action 6 — Chargesheet: all prior actions must complete first ──────
+        {
+            "id": 6,
+            "title": "FILE CHARGESHEET AND PROSECUTION REPORT",
+            "priority": "MEDIUM",
+            "time_window": "7-30 days",
+            "time_sensitivity": "MEDIUM",
+            "description": (
+                "Compile all collected evidence into formal chargesheet. File prosecution "
+                "complaint with designated court. Include Section 65B IT Act certificates "
+                "for all digital evidence. Brief public prosecutor."
+            ),
+            "legal_basis": (
+                "BNSS Section 193 (chargesheet) / "
+                "IT Act 2000 — Section 65B / CrPC Section 173"
+            ),
+            "authority_required": "SP / DCP (minimum) to authorize chargesheet",
+            "agency": "Court",
+            "depends_on": [1, 2, 3, 4, 5],
+            "blocks": [],
+            "parallel_with": [],
+            "risk_if_delayed": "MEDIUM",
+            "risk_if_reversed": "LOW",
+            "reward": (
+                "Formal prosecution; prevents subject from claiming lack of notice; "
+                "initiates judicial process"
+            ),
+        },
+    ]
 
-    # ── Action 4 — Records subpoena ───────────────────────────────────────────
-    actions.append({
-        "id": 4,
-        "title": "Subpoena Financial and Telecom Records",
-        "description": (
-            f"Issue production orders to telecom providers for CDR / tower dump for "
-            f"{person_name}'s confirmed numbers. Issue simultaneous bank record subpoena "
-            "for all linked accounts. Minimum 12-month lookback period."
+    case_type = (
+        "Financial Crime" if has_financial
+        else ("Cyber Crime" if has_cyber
+              else ("Drug/Narcotics" if has_drug
+                    else "General OSINT"))
+    )
+    return {
+        "case_summary": (
+            f"Tactical operation plan for {person_name} — "
+            f"{len(anomalies or [])} confirmed evidence flag(s) across {case_type} case type."
         ),
-        "legal_basis": (
-            "BNSS Section 94 / TRAI Regulations / "
-            "PMLA 2002 — Section 50 (summons for records)"
+        "critical_warning": (
+            "Digital preservation must precede all physical actions. "
+            "Evidence loss is irreversible."
         ),
-        "authority_required": "SP or above / ED Deputy Director",
-        "agency":            "Cyber Cell",
-        "time_window":       "24-72 hours",
-        "time_sensitivity":  "HIGH",
-        "priority":          "HIGH",
-        "depends_on":        [1],
-        "blocks":            [6],
-        "parallel_with":     [3],
-        "risk_if_delayed":   "MEDIUM",
-        "risk_if_reversed":  "LOW",
-        "reward": "Call pattern evidence; financial transaction trail; movement history",
-    })
-
-    # ── Action 5 — Subject notice (AFTER digital preservation and freezes) ────
-    actions.append({
-        "id": 5,
-        "title": "Issue Formal Notice to Subject",
-        "description": (
-            f"After digital evidence is preserved and accounts frozen, issue formal notice "
-            f"to {person_name} under BNSS. Do NOT contact subject before Actions 1–3 complete — "
-            "premature contact will trigger evidence destruction."
-        ),
-        "legal_basis": (
-            "BNSS Section 35 / Section 179 (examination of person) / "
-            "IT Act 2000 — Section 67C"
-        ),
-        "authority_required": "SP / Additional SP",
-        "agency":            "Local Police",
-        "time_window":       "72hrs-7days",
-        "time_sensitivity":  "MEDIUM",
-        "priority":          "HIGH",
-        "depends_on":        [1, 2, 3],
-        "blocks":            [],
-        "parallel_with":     [4],
-        "risk_if_delayed":   "LOW",
-        "risk_if_reversed":  "MEDIUM",
-        "reward": "Subject's recorded statement; opportunity to identify co-conspirators",
-    })
-
-    # ── Action 6 — Chargesheet (all prior actions must complete first) ─────────
-    actions.append({
-        "id": 6,
-        "title": "File Chargesheet and Prosecution Report",
-        "description": (
-            "Compile all collected evidence into formal chargesheet. File prosecution complaint "
-            "with designated court. Include Section 65B IT Act certificates for all digital "
-            "evidence. Brief public prosecutor."
-        ),
-        "legal_basis": (
-            "BNSS Section 193 (chargesheet) / "
-            "IT Act 2000 — Section 65B / CrPC Section 173"
-        ),
-        "authority_required": "SP / DCP (minimum) to authorize chargesheet",
-        "agency":            "Court",
-        "time_window":       "7-30 days",
-        "time_sensitivity":  "MEDIUM",
-        "priority":          "MEDIUM",
-        "depends_on":        [1, 2, 3, 4, 5],
-        "blocks":            [],
-        "parallel_with":     [],
-        "risk_if_delayed":   "MEDIUM",
-        "risk_if_reversed":  "LOW",
-        "reward": (
-            "Formal prosecution; prevents subject from claiming lack of notice; "
-            "initiates judicial process"
-        ),
-    })
-
-    return actions
+        "actions": actions,
+        "method": "rule-based-fallback (generalized for all case types)",
+    }
 
 
 def run_tactical_plan_agent(
-    person:      dict,
-    anomalies:   list,
-    assets_data: list,
-    report_stub: dict,
-    user_id:     str = "system",
+    person_object: dict,
+    assets_data:   list,
+    report_data:   dict,
+    user_id:       str = "system",
 ) -> dict:
     """
-    Hybrid Tactical Operation Plan generator — replaces old Section 18 StrategyAgent.
+    Hybrid Tactical Operation Plan generator — generalized for ANY case type.
 
-    Step 1: Build deterministic sequencing skeleton using _tactical_plan_fallback.
-    Step 2: Call LLM to enhance wording (title, description, legal_basis, reward)
-            and generate case_summary + critical_warning.
-    Step 3: Merge — structural fields (agency, time_window, priority, depends_on,
-            blocks, parallel_with, risk_*) always come from deterministic skeleton.
+    Pulls anomalies from report_data (keys: "anomalies" or "anomaly_flags").
+    Step 1: Try LLM for a full 6-action plan.
+    Step 2: If LLM fails or returns != 6 actions, fall back to the deterministic
+            _tactical_plan_fallback which auto-detects case type from anomaly text.
     """
-    p           = person or {}
-    person_name = p.get("confirmed_name", "Unknown Subject")
-    locations   = ", ".join(p.get("location_stated", [])[:5]) or "Not stated"
-    platforms   = ", ".join(p.get("platforms_confirmed", [])[:8]) or "None confirmed"
+    anomalies = report_data.get("anomalies", []) or report_data.get("anomaly_flags", [])
+    grounding = build_grounding_context(person_object)
 
-    # Build flag list
-    flags = []
-    for a in (anomalies or []):
-        if isinstance(a, dict):
-            flags.append(str(a.get("flag") or a.get("detail") or a.get("type") or a))
-        else:
-            flags.append(str(a))
-    flags = [f for f in flags if f.strip() and len(f.strip()) > 5]
+    prompt = f"""You are a senior Indian law enforcement tactical planner.
+Subject: {person_object.get('confirmed_name')}
+Anomalies/Flags detected: {len(anomalies)}
+Key indicators: {', '.join(str(a)[:80] for a in anomalies[:6]) if anomalies else 'General OSINT'}
 
-    flag_text  = "\n".join(f"- {f[:150]}" for f in flags[:15]) or "No specific flags detected."
-    flag_upper = " ".join(str(f).upper() for f in flags)
+Create a professional 6-action Tactical Operation Plan with strict Indian legal sequencing.
+Return ONLY valid JSON."""
 
-    # Assets summary
-    if assets_data:
-        asset_lines = []
-        for asset in (assets_data or [])[:10]:
-            if isinstance(asset, dict):
-                asset_lines.append(
-                    f"- {asset.get('asset_type', 'Asset')}: "
-                    f"{asset.get('description', str(asset))[:100]}"
-                )
-            else:
-                asset_lines.append(f"- {str(asset)[:100]}")
-        assets_text = "IDENTIFIED ASSETS:\n" + "\n".join(asset_lines)
-    else:
-        assets_text = "No asset files uploaded."
+    raw    = _call_ai(prompt, 2200)
+    result = _extract_json(raw) or {}
 
-    # Case-type detection (deterministic flags)
-    has_cyber     = any(x in flag_upper for x in
-                        ["IT ACT", "CERT", "DPDP", "SECTION 66", "SECTION 43",
-                         "MALICIOUS", "DELETION", "SCRAPING", "UNAUTHORI"])
-    has_financial = any(x in flag_upper for x in
-                        ["PMLA", "FEMA", "ED ", "HAWALA", "MONEY LAUNDER",
-                         "USD", "INTERNATIONAL TRANSFER", "CASH DEPOSIT"])
-    has_narcotics = any(x in flag_upper for x in ["NDPS", "NCB", "NARCOTIC", "DRUG"])
-    has_deletion  = any(x in flag_upper for x in
-                        ["DELETION", "DELETED", "REPO_DELETE", "EVIDENCE DELETION"])
-    has_certin    = any(x in flag_upper for x in ["CERT-IN", "CERTIN", "CERT IN"])
+    if not result.get("actions") or len(result.get("actions", [])) != 6:
+        result = _tactical_plan_fallback(person_object, anomalies, assets_data)
 
-    context_parts = []
-    if has_cyber:
-        context_parts.append(
-            "CYBER CASE: Digital preservation must precede any physical action. "
-            "Server logs, account data, and cloud storage must be preserved before subject is aware."
-        )
-    if has_financial:
-        context_parts.append(
-            "FINANCIAL CRIME: Account freeze orders must precede any interview or arrest "
-            "to prevent asset dissipation."
-        )
-    if has_narcotics:
-        context_parts.append(
-            "NARCOTICS: NCB coordination required. NDPS Act provisions apply. "
-            "Physical search warrants needed before premises entry."
-        )
-    if has_deletion:
-        context_parts.append(
-            "EVIDENCE DELETION CONFIRMED: Immediate forensic preservation is CRITICAL. "
-            "Device seizure cannot wait — treat as emergency action."
-        )
-    if has_certin:
-        context_parts.append(
-            "ACTIVE CERT-In INQUIRY: Reference existing case number in all actions. "
-            "Coordinate with CERT-In nodal officer before independent action."
-        )
-    context_str = (
-        "\n".join(context_parts)
-        or "General OSINT investigation. Apply standard digital-first sequencing."
-    )
-
-    # ── STEP 1: Build deterministic skeleton ──────────────────────────────────
-    det_actions = _tactical_plan_fallback(
-        person_name, flags,
-        has_cyber, has_financial, has_narcotics, has_deletion, has_certin,
-    )
-
-    # ── STEP 2: LLM for wording + case_summary + critical_warning ────────────
-    llm_prompt = f"""You are a senior Indian law enforcement officer and legal strategist with 20+ years experience.
-
-Your job is to improve the WORDING of a pre-built Tactical Operation Plan.
-The sequencing, dependencies, agencies, time windows, and priority levels are already fixed — do not change them.
-You may only improve: title (max 8 words), description (specific to this case), legal_basis (exact section), reward.
-
-Subject: {person_name}
-Locations: {locations}
-Platforms: {platforms}
-
-CONFIRMED EVIDENCE FLAGS:
-{flag_text}
-
-{assets_text}
-
-CRITICAL CONTEXT:
-{context_str}
-
-Return ONLY valid JSON (no markdown):
-{{
-  "case_summary": "one-sentence assessment of this specific case",
-  "critical_warning": "single most important sequencing risk for this specific case",
-  "actions": [
-    {{
-      "id": 1,
-      "title": "improved title max 8 words",
-      "description": "case-specific description referencing actual flags",
-      "legal_basis": "Exact Indian law section",
-      "reward": "what specific evidence or outcome this action secures"
-    }},
-    {{"id": 2, "title": "...", "description": "...", "legal_basis": "...", "reward": "..."}},
-    {{"id": 3, "title": "...", "description": "...", "legal_basis": "...", "reward": "..."}},
-    {{"id": 4, "title": "...", "description": "...", "legal_basis": "...", "reward": "..."}},
-    {{"id": 5, "title": "...", "description": "...", "legal_basis": "...", "reward": "..."}},
-    {{"id": 6, "title": "...", "description": "...", "legal_basis": "...", "reward": "..."}}
-  ]
-}}"""
-
-    llm_result: dict = {}
-    method = "rule-based-fallback"
-    try:
-        raw = _call_ai(llm_prompt, max_tokens=2500)
-        if raw:
-            clean = re.sub(r"```(?:json)?|```", "", raw).strip()
-            parsed = None
-            try:
-                parsed = json.loads(clean)
-            except Exception:
-                m = re.search(r"\{.*\}", clean, re.DOTALL)
-                if m:
-                    parsed = json.loads(m.group())
-            if (
-                parsed
-                and isinstance(parsed, dict)
-                and isinstance(parsed.get("actions"), list)
-                and len(parsed["actions"]) >= 4
-            ):
-                llm_result = parsed
-                method = f"hybrid ({LAST_ENGINE_USED})"
-    except Exception as e:
-        print(f"[TACTICAL_PLAN] LLM wording call failed: {e}")
-
-    # ── STEP 3: Merge — structural fields from skeleton; text from LLM ────────
-    llm_actions_by_id: dict = {}
-    for la in llm_result.get("actions", []):
-        if isinstance(la, dict) and la.get("id"):
-            llm_actions_by_id[int(la["id"])] = la
-
-    final_actions = []
-    for det in det_actions:
-        la  = llm_actions_by_id.get(det["id"], {})
-        merged = {}
-        for key in _REQUIRED_ACTION_KEYS:
-            if key in _STRUCTURAL_KEYS:
-                # Deterministic values always win for structure
-                merged[key] = det[key]
-            else:
-                # LLM may improve text fields; fall back to deterministic if empty/missing
-                llm_val = la.get(key, "")
-                merged[key] = llm_val if llm_val and str(llm_val).strip() else det[key]
-        # authority_required is deterministic (not in LLM output schema)
-        merged["authority_required"] = det["authority_required"]
-        final_actions.append(merged)
-
-    result = {
-        "case_summary": (
-            llm_result.get("case_summary")
-            or f"Tactical operation plan for {person_name} — "
-               f"{len(flags)} confirmed evidence flag(s) across "
-               f"{'multiple crime types' if sum([has_cyber, has_financial, has_narcotics]) > 1 else 'single case type'}."
-        ),
-        "critical_warning": (
-            llm_result.get("critical_warning")
-            or "Digital preservation must precede all physical actions. Evidence loss is irreversible."
-        ),
-        "actions":      final_actions,
-        "agent":        "TacticalPlanAgent",
-        "method":       method,
-        "generated_at": datetime.datetime.utcnow().isoformat(),
-    }
-
-    # Grounding validation pass
-    po        = person or {}
-    confirmed = (
-        [po.get("confirmed_name", "")]
-        + list(po.get("platforms_confirmed", []))
-        + list(po.get("location_stated", []))
-    )
-    result = validate_agent_output(result, confirmed)
+    result["method"]       = f"hybrid ({LAST_ENGINE_USED})" if raw else "rule-based-fallback"
+    result["agent"]        = "TacticalPlanAgent"
+    result["generated_at"] = datetime.datetime.utcnow().isoformat()
 
     _log_agent_run(
         "TacticalPlanAgent",
-        f"actions={len(final_actions)} method={method} flags={len(flags)}",
+        f"actions=6 method={result['method']}",
         user_id or "system",
     )
     return result
@@ -1547,12 +1330,10 @@ class AgentOrchestrator:
                 all_anomalies.append(c.get("flag", str(c)) if isinstance(c, dict) else str(c))
             for bf in person_data.get("behavioral_flags", []) or []:
                 all_anomalies.append(str(bf))
-            report_stub = {"person": person_data}
             results["tactical_plan"] = run_tactical_plan_agent(
                 person_data,
-                all_anomalies,
                 assets_data or [],
-                report_stub,
+                {"anomalies": all_anomalies, "person": person_data},
                 user_id,
             )
             agents_run.append("TacticalPlanAgent")

@@ -572,6 +572,42 @@ def generate_pdf(
             story.append(KeepTogether(render_tactical_plan(content)))
             continue
 
+        # ── Section 03 — Platform Presence: clean deduped renderer ─────────────
+        if key == "platform_presence":
+            block = []
+            block.append(Paragraph(_safe(title), _STYLES["section_header"]))
+            block.append(_hr())
+            platforms = report_data.get("platform_presence", {}) or report_data.get("confirmed_platforms", {})
+            if platforms and isinstance(platforms, dict):
+                seen = set()
+                for platform, data in platforms.items():
+                    pkey = str(platform).lower().replace(" ", "").replace("_", "")
+                    if pkey in seen:
+                        continue
+                    seen.add(pkey)
+                    # data can be a rich dict (from build_platform_presence)
+                    # or a plain string "url | @handle" (from _sections_to_pdf_data)
+                    if isinstance(data, dict):
+                        handle  = data.get("username") or data.get("handle") or "Not found"
+                        url     = data.get("url", "")
+                        conf    = "CONFIRMED" if data.get("confirmed", True) else "UNVERIFIED"
+                        handle_str = f"@{handle}" if handle and not handle.startswith("@") else handle
+                        line = f"• {platform.upper()}: {handle_str}"
+                        if url:
+                            line += f" — {url}"
+                        line += f" [{conf}]"
+                    else:
+                        line = f"• {platform.upper()}: {_safe(str(data))}"
+                    block.append(Paragraph(line, _STYLES["verified"]))
+            else:
+                block.append(Paragraph(
+                    "[VERIFIED DATA] No confirmed public platform accounts found.",
+                    _STYLES["verified"],
+                ))
+            block.append(Spacer(1, 4 * mm))
+            story.append(KeepTogether(block))
+            continue
+
         block = []
         block.append(Paragraph(_safe(title), _STYLES["section_header"]))
         block.append(_hr())
@@ -797,37 +833,47 @@ def _call_gemini_report(payload_str: str) -> dict | None:
 
 def build_platform_presence(person: dict) -> dict:
     """
-    Fix 1E: Build platform presence from ALL sources:
-    platforms_confirmed, usernames dict, and confirmed_linked_profiles.
+    Build platform presence from ALL sources with case-insensitive dedup.
+    Sources: platforms_confirmed → usernames dict → confirmed_linked_profiles.
+    Normalises platform keys to title-case so "github"/"GitHub"/"GITHUB"
+    all collapse to a single "Github" entry (no Section 03 duplicates).
     """
+    # _seen maps normalised-lowercase key → canonical display name
+    _seen: dict = {}
     platforms: dict = {}
+
+    def _add(raw_name: str, entry: dict):
+        key = raw_name.strip().lower()
+        if key and key not in _seen:
+            canonical = raw_name.strip().title()
+            _seen[key] = canonical
+            platforms[canonical] = entry
 
     # From confirmed platforms list
     for p in person.get("platforms_confirmed", []):
-        platforms[p] = {
+        _add(p, {
             "status":   "CONFIRMED",
             "url":      person.get("profile_urls", {}).get(p, "Not found"),
             "username": person.get("usernames", {}).get(p, "Not found"),
-        }
+        })
 
     # From usernames dict (catches cases like Telegram not in platforms_confirmed)
     for platform, username in person.get("usernames", {}).items():
-        if platform not in platforms:
-            platforms[platform] = {
-                "status":   "CONFIRMED",
-                "url":      person.get("profile_urls", {}).get(platform, "Not public"),
-                "username": str(username),
-            }
+        _add(platform, {
+            "status":   "CONFIRMED",
+            "url":      person.get("profile_urls", {}).get(platform, "Not public"),
+            "username": str(username),
+        })
 
     # From confirmed linked profiles
     for profile in person.get("confirmed_linked_profiles", []):
         p = profile.get("platform", "")
-        if p and p not in platforms:
-            platforms[p] = {
+        if p:
+            _add(p, {
                 "status":   "CONFIRMED",
                 "url":      profile.get("url", ""),
                 "username": profile.get("username", ""),
-            }
+            })
 
     return platforms
 
@@ -2248,9 +2294,11 @@ def _generate_report_inner(
             anom_sec = sections.get("anomalies_and_flags", {})
             for fl in (anom_sec.get("flags", []) or []):
                 tp_anomalies.append(str(fl))
-            report_stub = {"person": person, "subject": subject}
             tactical_plan_result = run_tactical_plan_agent(
-                person, tp_anomalies, assets_data or [], report_stub, user_id
+                person,
+                assets_data or [],
+                {"anomalies": tp_anomalies, "person": person, "subject": subject},
+                user_id,
             )
         except Exception as _tp_exc:
             print(f"[TACTICAL_PLAN] _generate_report_inner fallback failed: {_tp_exc}")
