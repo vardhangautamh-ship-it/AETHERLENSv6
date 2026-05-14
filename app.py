@@ -1394,9 +1394,18 @@ def _run_pipeline_auto(target: dict, query: str, search_results: dict):
             twin.save_to_db()
             st.session_state.ontology_graph  = twin
             st.session_state.ontology_json   = ont_json
+
+            # Build unified anomaly list from person BEFORE calling agents
+            _osint_anomaly_strings = [
+                (f.get("flag", str(f)) if isinstance(f, dict) else str(f))
+                for f in (person.get("anomaly_flags", []) or [])
+            ] + [
+                (f.get("flag", str(f)) if isinstance(f, dict) else str(f))
+                for f in (person.get("conflicts", []) or [])
+            ]
             agent_results = _orch.run_all_agents(
                 ontology  = ont_json,
-                report    = {"person": person, **rd},
+                report    = {"person": person, "anomalies": _osint_anomaly_strings, **rd},
                 mode      = "OSINT",
                 user_id   = uid,
             )
@@ -2315,15 +2324,45 @@ def screen_fusion():
         twin     = None
         ont_json = {}
 
+    # ── Inject rule_anomalies into person BEFORE agents run ──────────────────
+    # rule_anomalies = list of {"flag": str, "detail": str} dicts computed above.
+    # Merge them into primary_person["anomaly_flags"] so every agent sees them.
+    if primary_person is None:
+        primary_person = {}
+    _existing_flags = primary_person.get("anomaly_flags", []) or []
+    _existing_texts = {
+        (f.get("flag", str(f)) if isinstance(f, dict) else str(f)).lower()
+        for f in _existing_flags
+    }
+    for ra in (rule_anomalies or []):
+        flag_text = ra.get("flag", str(ra)) if isinstance(ra, dict) else str(ra)
+        if flag_text.lower() not in _existing_texts:
+            _existing_texts.add(flag_text.lower())
+            _existing_flags.append({
+                "flag":     flag_text,
+                "detail":   ra.get("detail", "") if isinstance(ra, dict) else "",
+                "source":   "rule-based-detector",
+                "severity": "MEDIUM",
+            })
+    primary_person["anomaly_flags"] = _existing_flags
+
+    # Also build a flat string list for report["anomalies"] so agents reading
+    # that key (NextStepAgent, TacticalPlanAgent) get the full picture
+    _all_anomaly_strings = [
+        (f.get("flag", str(f)) if isinstance(f, dict) else str(f))
+        for f in _existing_flags
+    ]
+
     print(
         f"[APP] Calling agents with {len(all_results)} docs"
-        f" person={( primary_person or {}).get('confirmed_name', 'Unknown')}"
-        f" confidence={( primary_person or {}).get('confidence_score', 0)}"
+        f" person={primary_person.get('confirmed_name', 'Unknown')}"
+        f" confidence={primary_person.get('confidence_score', 0)}"
+        f" anomalies={len(_existing_flags)}"
     )
     try:
         ag_res = _orch.run_all_agents(
             ont_json,
-            {"person": primary_person or {}},
+            {"person": primary_person, "anomalies": _all_anomaly_strings},
             "FUSION",
             uid,
             assets_data=assets_dicts if assets_dicts else None,

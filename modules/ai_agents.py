@@ -387,12 +387,12 @@ def run_risk_agent(
     has_assets   = bool(p.get("assets_data"))
     entity_count = len(str(p))
 
-    # Conservative scoring — avoids automatic 100/100 on flag-heavy cases
-    base_score = (sources * 7) + (n_anomalies * 9) + (20 if has_assets else 0)
+    # Conservative scoring — realistic range without automatic 100/100 inflation
+    base_score = (sources * 6) + (n_anomalies * 8) + (18 if has_assets else 0)
     if entity_count < 5000:
-        base_score -= 15
-    if sources <= 4:
         base_score -= 12
+    if sources <= 4:
+        base_score -= 10
 
     # FINAL HARD CAP — never exceed 100, never below 0
     base_score = max(0, min(100, base_score))
@@ -1310,30 +1310,58 @@ class AgentOrchestrator:
     ) -> dict:
         person_data = {}
         if isinstance(report, dict):
-            person_data = report.get("person", {}) or {}
+            person_data = dict(report.get("person", {}) or {})
+
+        # ── PRE-AGENT: unify anomalies from ALL sources before any agent runs ──
+        # Sources:
+        #   1. person_data.anomaly_flags  (document-level flags from ingest)
+        #   2. report["anomalies"]        (rule_anomalies injected by caller)
+        #   3. person_data.conflicts / behavioral_flags
+        _seen_flags: set = set()
+        unified_anomalies: list = []
+
+        def _add_flag(raw):
+            text = raw.get("flag", str(raw)) if isinstance(raw, dict) else str(raw)
+            text = text.strip()
+            if text and text.lower() not in _seen_flags:
+                _seen_flags.add(text.lower())
+                unified_anomalies.append(text)
+
+        for f in person_data.get("anomaly_flags",   []) or []: _add_flag(f)
+        for f in report.get("anomalies",            []) or []: _add_flag(f)
+        for f in report.get("anomaly_flags",         []) or []: _add_flag(f)
+        for c in person_data.get("conflicts",        []) or []: _add_flag(c)
+        for b in person_data.get("behavioral_flags", []) or []: _add_flag(b)
+
+        # Inject unified list back into person_data so risk/next-step agents see it
+        if unified_anomalies:
+            person_data["anomaly_flags"] = [
+                {"flag": a, "source": "pipeline-unified", "severity": "MEDIUM"}
+                for a in unified_anomalies
+            ]
+            person_data["anomalies"] = unified_anomalies
+
+        # Rebuild report with enriched person_data and explicit anomalies key
+        enriched_report = {**report, "person": person_data, "anomalies": unified_anomalies}
+
+        print(f"[ORCHESTRATOR] unified_anomalies={len(unified_anomalies)} "
+              f"sources={len(person_data.get('data_sources', []))}")
 
         agents_run = ["RiskAgent", "PatternAgent", "NextStepAgent", "ComplianceAgent"]
 
         results = {
             "risk":       run_risk_agent(person_data, user_id=user_id),
             "patterns":   run_pattern_agent(ontology,  user_id),
-            "next_steps": run_next_step_agent(report,  user_id),
-            "compliance": run_compliance_agent(report, user_id),
+            "next_steps": run_next_step_agent(enriched_report, user_id),
+            "compliance": run_compliance_agent(enriched_report, user_id),
         }
 
         # TacticalPlanAgent — always runs on every case (no assets gate)
         try:
-            all_anomalies = []
-            for f in person_data.get("anomaly_flags", []) or []:
-                all_anomalies.append(f.get("flag", str(f)) if isinstance(f, dict) else str(f))
-            for c in person_data.get("conflicts", []) or []:
-                all_anomalies.append(c.get("flag", str(c)) if isinstance(c, dict) else str(c))
-            for bf in person_data.get("behavioral_flags", []) or []:
-                all_anomalies.append(str(bf))
             results["tactical_plan"] = run_tactical_plan_agent(
                 person_data,
                 assets_data or [],
-                {"anomalies": all_anomalies, "person": person_data},
+                {"anomalies": unified_anomalies, "person": person_data},
                 user_id,
             )
             agents_run.append("TacticalPlanAgent")
