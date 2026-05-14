@@ -383,19 +383,23 @@ def run_risk_agent(
 
     # ── STEP 1: DETERMINISTIC BASE SCORE ──────────────────────────────────────
     sources      = len(p.get("data_sources", []) or [])
+    # n_anomalies: prefer explicit "anomalies" key (set by orchestrator write-back),
+    # then anomaly_flags count, then the normalised flags list from the caller.
     n_anomalies  = len(p.get("anomalies", []) or p.get("anomaly_flags", []) or flags)
     has_assets   = bool(p.get("assets_data"))
     entity_count = len(str(p))
 
-    # Conservative scoring — realistic range without automatic 100/100 inflation
-    base_score = (sources * 6) + (n_anomalies * 8) + (18 if has_assets else 0)
+    # Calibrated scoring — keeps heavy cases (7 src / 8 flags) in 72–85 band.
+    # sources*5 + anomalies*6 → 7*5 + 8*6 = 83 (8 flags); 101 → 85 (11 flags).
+    # Hard ceiling of 85 prevents 100/100 inflation on every multi-flag case.
+    base_score = (sources * 5) + (n_anomalies * 6) + (18 if has_assets else 0)
     if entity_count < 5000:
         base_score -= 12
     if sources <= 4:
         base_score -= 10
 
-    # FINAL HARD CAP — never exceed 100, never below 0
-    base_score = max(0, min(100, base_score))
+    # FINAL HARD CAP — ceiling 85, floor 0 (only the most extreme cases hit 85)
+    base_score = max(0, min(85, base_score))
 
     keyword_factors: list = []
 
@@ -1335,11 +1339,20 @@ class AgentOrchestrator:
 
         # Inject unified list back into person_data so risk/next-step agents see it
         if unified_anomalies:
-            person_data["anomaly_flags"] = [
+            _unified_flag_dicts = [
                 {"flag": a, "source": "pipeline-unified", "severity": "MEDIUM"}
                 for a in unified_anomalies
             ]
-            person_data["anomalies"] = unified_anomalies
+            person_data["anomaly_flags"] = _unified_flag_dicts
+            person_data["anomalies"]     = unified_anomalies
+
+            # Write-back: mutate the ORIGINAL person dict inside report so that
+            # subsequent generate_report() calls (with the same person object) also
+            # see the enriched anomaly data without re-running the orchestrator.
+            _orig_person = report.get("person")
+            if isinstance(_orig_person, dict):
+                _orig_person["anomaly_flags"] = _unified_flag_dicts
+                _orig_person["anomalies"]     = unified_anomalies
 
         # Rebuild report with enriched person_data and explicit anomalies key
         enriched_report = {**report, "person": person_data, "anomalies": unified_anomalies}

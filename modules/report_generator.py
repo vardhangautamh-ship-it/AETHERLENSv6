@@ -316,9 +316,11 @@ def render_tactical_plan(tactical_plan: dict) -> list:
     block.append(Paragraph("18. TACTICAL OPERATION PLAN", _STYLES["section_header"]))
     block.append(_hr(PURPLE, 1.0))
 
-    # Method badge
+    # Method badge — show [AI ANALYSIS] for any LLM-backed engine, [RULE-BASED]
+    # only for the pure deterministic fallback ("rule-based-fallback" / empty).
     method = tactical_plan.get("method", "")
-    badge  = "[AI ANALYSIS]" if "ai" in method.lower() else "[RULE-BASED]"
+    _ai_kw = ("hybrid", "bedrock", "gemini", "claude", "llm", "ai-")
+    badge  = "[AI ANALYSIS]" if any(k in method.lower() for k in _ai_kw) else "[RULE-BASED]"
     block.append(Paragraph(f"{badge} TacticalPlanAgent", _STYLES["label"]))
 
     # Case summary
@@ -577,28 +579,44 @@ def generate_pdf(
             block = []
             block.append(Paragraph(_safe(title), _STYLES["section_header"]))
             block.append(_hr())
-            platforms = report_data.get("platform_presence", {}) or report_data.get("confirmed_platforms", {})
-            if platforms and isinstance(platforms, dict):
-                seen = set()
-                for platform, data in platforms.items():
+            raw_plat = report_data.get("platform_presence") or report_data.get("confirmed_platforms")
+
+            # Normalise to dict — _sections_to_pdf_data always produces a dict,
+            # but a direct generate_pdf() call may pass a string content summary.
+            if isinstance(raw_plat, str) and raw_plat.strip():
+                # Render the string summary as-is and skip per-platform loop
+                block.append(Paragraph(_safe(raw_plat), _STYLES["verified"]))
+            elif isinstance(raw_plat, dict) and raw_plat:
+                # Skip structural/non-platform keys (e.g. "query", "total", "results")
+                _non_platform_keys = {"query", "total", "results", "errors", "content",
+                                      "confidence", "platforms", "status"}
+                seen: set = set()
+                rendered = 0
+                for platform, data in raw_plat.items():
                     pkey = str(platform).lower().replace(" ", "").replace("_", "")
-                    if pkey in seen:
+                    if pkey in _non_platform_keys or pkey in seen:
                         continue
                     seen.add(pkey)
                     # data can be a rich dict (from build_platform_presence)
                     # or a plain string "url | @handle" (from _sections_to_pdf_data)
                     if isinstance(data, dict):
-                        handle  = data.get("username") or data.get("handle") or "Not found"
-                        url     = data.get("url", "")
-                        conf    = "CONFIRMED" if data.get("confirmed", True) else "UNVERIFIED"
+                        handle     = data.get("username") or data.get("handle") or "Not found"
+                        url        = data.get("url", "")
+                        conf       = "CONFIRMED" if data.get("confirmed", True) else "UNVERIFIED"
                         handle_str = f"@{handle}" if handle and not handle.startswith("@") else handle
                         line = f"• {platform.upper()}: {handle_str}"
-                        if url:
+                        if url and url != "Not found":
                             line += f" — {url}"
                         line += f" [{conf}]"
                     else:
                         line = f"• {platform.upper()}: {_safe(str(data))}"
                     block.append(Paragraph(line, _STYLES["verified"]))
+                    rendered += 1
+                if rendered == 0:
+                    block.append(Paragraph(
+                        "[VERIFIED DATA] No confirmed public platform accounts found.",
+                        _STYLES["verified"],
+                    ))
             else:
                 block.append(Paragraph(
                     "[VERIFIED DATA] No confirmed public platform accounts found.",
@@ -1982,7 +2000,10 @@ def _sections_to_pdf_data(sections: dict) -> dict:
         "subject_identity":       _flatten(s1, "verified_items"),
         "confidence_score":       f"{oc}/100",
         "confidence_explanation": sections.get("confidence_explanation", ""),
-        "platform_presence":      s3.get("platforms", {}) or s3.get("content", "Not found."),
+        # Always return a dict so generate_pdf Section 03 renderer's isinstance()
+        # check succeeds.  An empty dict triggers the "No confirmed..." fallback,
+        # which is correct when no platform accounts were found.
+        "platform_presence":      s3.get("platforms") or {},
         "location_data":          _flatten(s4, "locations"),
         "network_summary":        _flatten(s5, "connections"),
         "timeline":               _flatten(s6, "events"),

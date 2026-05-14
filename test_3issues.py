@@ -75,8 +75,8 @@ medium = {
 r3 = run_risk_agent(medium, user_id="test")
 score3 = r3.get("risk_score", -1)
 print(f"  Medium case:   score={score3}/100  level={r3.get('risk_level')}")
-# 6*7 + 5*9 = 42+45=87, entity_count>5000 no penalty, sources>4 no penalty = 87
-check("medium score 80-92", 80 <= score3 <= 92)
+# New formula: 6*5 + 5*6 = 30+30 = 60, no penalties (entity>5000, sources>4), cap=85
+check("medium score 50-75", 50 <= score3 <= 75)
 
 # ── Issue 2: Tactical plan method field ───────────────────────────────────────
 print()
