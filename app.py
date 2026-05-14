@@ -83,7 +83,7 @@ CSS = """
 :root {
   --void:#000000; --abyss:#05000D; --deep:#0A0015; --card:#100020; --mid:#1E0040; --line:#221040;
   --purple-900:#3B0764; --purple-700:#6B21A8; --purple-600:#7B2FBE; --purple-500:#9D4EDD;
-  --purple-300:#C084FC; --purple-100:#E9D5FF;
+  --purple-400:#A855F7; --purple-300:#C084FC; --purple-100:#E9D5FF;
   /* legacy aliases still used by older code */
   --p600:#7B2FBE; --p500:#9D4EDD; --p300:#C084FC; --p100:#E9D5FF;
   --text-primary:#F0EAD6; --text-secondary:#9CA3AF; --text-dim:#4B5563; --text-faint:#2A2438;
@@ -894,6 +894,207 @@ div[data-testid="stSidebar"] .stButton > button[kind="primary"] {
 .ch .v { font-family: var(--f-display); font-weight: 600; font-size: 22px; color: var(--text-primary); letter-spacing: -0.2px; }
 .ch .v.ok { color: var(--online); }
 .ch .d { font-family: var(--f-mono); font-size: 9px; color: var(--text-secondary); letter-spacing: 1px; margin-top: 2px; }
+
+/* ── Platform presence grid ── */
+.plats { display: grid; grid-template-columns: repeat(4,1fr); gap: 10px; }
+.plat { padding: 10px 12px; border: 1px solid var(--border-soft); display:flex; align-items:center; justify-content:space-between; font-family:var(--f-mono); font-size:11px; }
+.plat .name { color:var(--text-primary); letter-spacing:1px; }
+.plat .st { font-size:9px; letter-spacing:2px; text-transform:uppercase; }
+.plat.found { border-color:rgba(22,163,74,0.35); }
+.plat.found .st { color:var(--online); }
+.plat.missing .st { color:var(--text-dim); }
+.plat.flag { border-color:rgba(220,38,38,0.4); }
+.plat.flag .st { color:var(--critical); }
+
+/* ── Associations table ── */
+.assoc { display:grid; grid-template-columns:28px 1fr 120px 110px 100px; gap:12px; align-items:center; padding:8px 0; border-bottom:1px dashed var(--border-soft); font-family:var(--f-mono); font-size:11px; }
+.assoc:last-child { border-bottom:0; }
+.assoc .dot { width:10px; height:10px; border-radius:50%; background:var(--purple-500); justify-self:center; }
+.assoc .dot.teal { background:var(--teal); }
+.assoc .dot.amber { background:var(--warning); }
+.assoc .dot.red { background:var(--critical); }
+.assoc .n { color:var(--text-primary); letter-spacing:0.5px; }
+.assoc .t { color:var(--text-dim); letter-spacing:2px; font-size:10px; text-transform:uppercase; }
+.assoc .strength { display:flex; gap:2px; }
+.assoc .strength i { width:10px; height:8px; background:var(--text-faint); }
+.assoc .strength i.on { background:var(--purple-500); }
+
+/* ── Timeline heatmap grid ── */
+.heat { display:grid; grid-template-columns:60px repeat(24,1fr); gap:2px; align-items:center; }
+.heat .row-l { font-family:var(--f-mono); font-size:9px; letter-spacing:1px; color:var(--text-dim); text-transform:uppercase; }
+.heat .cell { height:12px; background:rgba(123,47,190,0.08); }
+.heat .cell.l1 { background:rgba(123,47,190,0.22); }
+.heat .cell.l2 { background:rgba(123,47,190,0.45); }
+.heat .cell.l3 { background:rgba(157,78,221,0.75); }
+.heat .cell.l4 { background:var(--purple-300); box-shadow:0 0 6px var(--purple-300); }
+.heat .hour-row { grid-column:2/-1; display:grid; grid-template-columns:repeat(24,1fr); gap:2px; font-family:var(--f-mono); font-size:8px; color:var(--text-dim); letter-spacing:1px; margin-top:4px; }
+.heat .hour-row span { text-align:center; }
+
+/* ── Flag cards (anomalies) ── */
+.flag-card { display:grid; grid-template-columns:80px 1fr auto; gap:14px; align-items:center; padding:12px 14px; border:1px solid var(--border-soft); background:#040010; }
+.flag-card.hi { border-left:2px solid var(--critical); }
+.flag-card.md { border-left:2px solid var(--warning); }
+.flag-card.lo { border-left:2px solid var(--text-secondary); }
+.flag-card .sev { font-family:var(--f-mono); font-size:10px; letter-spacing:2px; padding:3px 8px; border:1px solid var(--border-soft); text-align:center; text-transform:uppercase; }
+.flag-card.hi .sev { color:var(--critical); border-color:rgba(220,38,38,0.5); background:rgba(220,38,38,0.08); }
+.flag-card.md .sev { color:var(--warning); border-color:rgba(217,119,6,0.5); }
+.flag-card.lo .sev { color:var(--text-secondary); }
+.flag-card .ttl { font-family:var(--f-mono); font-size:12px; color:var(--text-primary); letter-spacing:0.5px; }
+.flag-card .sub { font-family:var(--f-mono); font-size:10px; color:var(--text-dim); letter-spacing:1px; text-transform:uppercase; margin-top:3px; }
+.flag-card .score { font-family:var(--f-display); font-weight:600; font-size:20px; color:var(--warning); letter-spacing:-0.2px; text-align:right; }
+.flag-card.hi .score { color:var(--critical); }
+
+/* ── Behavioral pattern tiles ── */
+.pat-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; }
+.pat { padding:12px 14px; border:1px solid var(--border-soft); background:#040010; }
+.pat .k { font-family:var(--f-mono); font-size:9px; letter-spacing:3px; color:var(--text-dim); text-transform:uppercase; }
+.pat .v { font-family:var(--f-display); font-weight:600; font-size:20px; color:var(--text-primary); letter-spacing:-0.2px; }
+.pat .d { font-family:var(--f-mono); font-size:10px; color:var(--text-secondary); margin-top:2px; letter-spacing:0.5px; }
+
+/* ── Report note text ── */
+.note { font-family:var(--f-mono); font-size:11px; color:var(--text-secondary); line-height:1.6; letter-spacing:0.3px; }
+.note strong { color:var(--text-primary); font-weight:500; }
+
+/* ── Network map inline preview ── */
+.net-inline { position:relative; height:260px; background:radial-gradient(circle at 50% 50%,rgba(123,47,190,0.08),transparent 70%),#040010; border:1px solid var(--border-soft); overflow:hidden; }
+.net-inline svg { width:100%; height:100%; }
+
+/* ── Confidence gauge ── */
+.gauge { position:relative; width:200px; height:200px; }
+.gauge svg { width:100%; height:100%; transform:rotate(-90deg); }
+.gauge .val { position:absolute; inset:0; display:grid; place-items:center; text-align:center; }
+.gauge .num { font-family:var(--f-display); font-weight:600; font-size:58px; letter-spacing:-1px; color:var(--warning); line-height:1; }
+.gauge .lbl { font-family:var(--f-mono); font-size:9px; letter-spacing:3px; color:var(--text-dim); text-transform:uppercase; margin-top:2px; }
+.gauge .sub { font-family:var(--f-mono); font-size:10px; letter-spacing:2px; color:var(--warning); text-transform:uppercase; margin-top:6px; }
+
+/* ── Report top layout ── */
+.report-top { display:grid; grid-template-columns:1.2fr 220px 1fr auto; gap:22px; padding:20px 28px; border-bottom:1px solid var(--border); background:linear-gradient(180deg,#100020,#05000D); align-items:center; }
+.rt-subject .tag { font-family:var(--f-mono); font-size:10px; letter-spacing:4px; color:var(--purple-300); text-transform:uppercase; }
+.rt-subject h1 { font-family:var(--f-display); font-weight:600; font-size:36px; letter-spacing:1px; margin:4px 0 8px; color:var(--text-primary); }
+.rt-subject .meta { font-family:var(--f-mono); font-size:10px; letter-spacing:2px; color:var(--text-secondary); text-transform:uppercase; display:flex; gap:20px; flex-wrap:wrap; }
+.rt-meta-grid { display:grid; grid-template-columns:1fr 1fr; gap:4px 18px; font-family:var(--f-mono); font-size:11px; }
+.rt-meta-grid .k { font-size:9px; letter-spacing:3px; color:var(--text-dim); text-transform:uppercase; }
+.rt-meta-grid .v { color:var(--text-primary); letter-spacing:0.5px; margin-bottom:8px; }
+.rt-actions { display:flex; flex-direction:column; gap:8px; align-items:stretch; }
+
+/* ── TOC sidebar (report) ── */
+.toc { border-right:1px solid var(--border-soft); padding:22px 0; }
+.toc .ghd { padding:0 22px 8px; font-family:var(--f-mono); font-size:9px; letter-spacing:3px; color:var(--text-dim); text-transform:uppercase; }
+.toc .li { display:grid; grid-template-columns:28px 1fr; gap:8px; align-items:center; padding:6px 22px; font-family:var(--f-mono); font-size:10px; letter-spacing:1px; color:var(--text-secondary); text-transform:uppercase; cursor:pointer; border-left:2px solid transparent; }
+.toc .li .n { color:var(--purple-500); }
+.toc .li:hover { background:rgba(123,47,190,0.06); color:var(--text-primary); }
+.toc .li.active { background:rgba(123,47,190,0.10); color:var(--purple-100); border-left-color:var(--purple-500); }
+
+/* ── Fusion: step checklist ── */
+.step { display:grid; grid-template-columns:52px 1fr 140px 90px; gap:14px; align-items:center; padding:14px 4px; border-bottom:1px solid var(--border-soft); font-family:var(--f-mono); }
+.step .num { font-family:var(--f-display); font-weight:600; font-size:20px; color:var(--text-dim); letter-spacing:-0.5px; }
+.step.done .num { color:var(--online); }
+.step.active .num { color:var(--purple-300); }
+.step .t { color:var(--text-primary); font-size:12px; letter-spacing:1px; text-transform:uppercase; }
+.step .d { color:var(--text-dim); font-size:10px; letter-spacing:1px; margin-top:2px; }
+.step .state { font-size:9px; letter-spacing:2px; text-transform:uppercase; text-align:right; }
+.step.done .state { color:var(--online); }
+.step.active .state { color:var(--purple-300); }
+.step.pending .state { color:var(--text-dim); }
+.step .timer { color:var(--text-secondary); font-size:10px; letter-spacing:1px; text-align:right; }
+@keyframes blink-pulse { 50% { opacity:0.2; } }
+.step.active .t::after { content:""; display:inline-block; width:8px; height:8px; background:var(--purple-500); margin-left:10px; animation:blink-pulse 1s steps(2) infinite; vertical-align:middle; }
+
+/* ── Fusion: progress summary tiles ── */
+.progress-summary { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin-top:22px; }
+.progress-summary .tile { padding:12px 14px; border:1px solid var(--border-soft); background:rgba(16,0,32,0.5); }
+.progress-summary .tile .k { font-family:var(--f-mono); font-size:9px; letter-spacing:3px; color:var(--text-dim); text-transform:uppercase; }
+.progress-summary .tile .v { font-family:var(--f-display); font-weight:600; font-size:22px; color:var(--text-primary); letter-spacing:-0.3px; }
+
+/* ── Fusion: live trace ── */
+.live { background:#040010; border:1px solid var(--border-soft); padding:14px 16px; font-family:var(--f-mono); font-size:11px; color:var(--text-secondary); letter-spacing:0.5px; max-height:180px; overflow:hidden; position:relative; }
+.live::after { content:""; position:absolute; bottom:0; left:0; right:0; height:40px; background:linear-gradient(transparent,#040010); }
+.live .ln { padding:2px 0; }
+.live .t { color:var(--text-dim); margin-right:10px; }
+.live .ok { color:var(--online); }
+.live .wn { color:var(--warning); }
+.live .pr { color:var(--purple-300); }
+
+/* ── Fusion: processing banner ── */
+.banner { display:flex; align-items:center; gap:14px; padding:14px 18px; border:1px solid var(--border-active); background:linear-gradient(90deg,rgba(123,47,190,0.10),rgba(123,47,190,0.02)); margin-bottom:20px; }
+.banner .ic { width:26px; height:26px; border:1px solid var(--purple-300); border-radius:50%; display:grid; place-items:center; color:var(--purple-300); font-family:var(--f-mono); font-size:12px; }
+.banner .t { font-family:var(--f-display); font-size:16px; letter-spacing:2px; color:var(--text-primary); }
+.banner .s { font-family:var(--f-mono); font-size:10px; letter-spacing:2px; color:var(--purple-300); text-transform:uppercase; }
+.banner .r { margin-left:auto; font-family:var(--f-mono); font-size:10px; letter-spacing:2px; color:var(--text-secondary); text-transform:uppercase; }
+
+/* ── Fusion: progress bar ── */
+.progress-bar { height:4px; background:var(--text-faint); margin-top:18px; position:relative; overflow:hidden; }
+.progress-bar > i { position:absolute; left:0; top:0; bottom:0; background:linear-gradient(90deg,var(--purple-700),var(--purple-300)); box-shadow:var(--glow-purple); }
+.progress-bar > i::after { content:""; position:absolute; right:0; top:-4px; bottom:-4px; width:2px; background:var(--purple-300); box-shadow:0 0 8px var(--purple-300); }
+
+/* ── Admin: system status ── */
+.sys-grid { display:grid; grid-template-columns:1.4fr 1fr; gap:18px; }
+.sys-row { display:grid; grid-template-columns:1fr 90px 110px; gap:14px; padding:12px 16px; border-bottom:1px solid var(--border-soft); align-items:center; }
+.sys-row:last-child { border-bottom:0; }
+.sys-row .lbl { font-family:var(--f-mono); font-size:11px; color:var(--text-primary); letter-spacing:0.5px; }
+.sys-row .sub { font-family:var(--f-mono); font-size:9px; color:var(--text-dim); letter-spacing:1px; margin-top:2px; text-transform:uppercase; }
+.sys-row .val { font-family:var(--f-display); font-weight:600; font-size:18px; color:var(--text-primary); letter-spacing:-0.2px; text-align:right; }
+.sys-row .st { font-family:var(--f-mono); font-size:9px; letter-spacing:2px; text-transform:uppercase; text-align:right; }
+.sys-row .st.ok { color:var(--online); }
+.sys-row .st.warn { color:var(--warning); }
+
+/* ── Admin: status pill, role badge, row actions ── */
+.status-pill { display:inline-flex; align-items:center; gap:6px; font-family:var(--f-mono); font-size:9px; letter-spacing:2px; text-transform:uppercase; }
+.status-pill.active { color:var(--online); }
+.status-pill.suspended { color:var(--warning); }
+.status-pill.locked { color:var(--critical); }
+.role-badge.admin { color:var(--critical); border-color:rgba(220,38,38,0.5); background:rgba(220,38,38,0.06); }
+.role-badge.analyst { color:var(--purple-100); border-color:var(--border-active); background:rgba(123,47,190,0.12); }
+.role-badge.viewer { color:var(--text-secondary); background:transparent; }
+.role-badge.officer { color:var(--teal); border-color:rgba(13,148,136,0.5); background:transparent; }
+.row-actions { display:flex; gap:6px; }
+.row-actions button { padding:4px 10px; font-size:9px; letter-spacing:2px; background:transparent; border:1px solid var(--border-soft); color:var(--text-secondary); font-family:var(--f-mono); cursor:pointer; text-transform:uppercase; }
+.row-actions button:hover { border-color:var(--purple-500); color:var(--purple-100); }
+.row-actions button.danger:hover { border-color:var(--critical); color:var(--critical); }
+
+/* ── Admin: audit log table ── */
+.log-toolbar { display:grid; grid-template-columns:1fr auto auto auto; gap:10px; padding:14px 16px; border-bottom:1px solid var(--border-soft); align-items:center; }
+.log-hdr { display:grid; grid-template-columns:140px 110px 90px 1fr 140px 110px; gap:12px; padding:9px 16px; align-items:center; font-family:var(--f-mono); font-size:9px; letter-spacing:3px; color:var(--text-dim); text-transform:uppercase; border-bottom:1px solid var(--border); background:rgba(0,0,0,0.3); }
+.log-row.admin { display:grid; grid-template-columns:140px 110px 90px 1fr 140px 110px; gap:12px; padding:9px 16px; border-bottom:1px solid var(--border-soft); color:var(--text-secondary); font-family:var(--f-mono); font-size:11px; }
+.log-row.admin:nth-child(even) { background:rgba(16,0,32,0.25); }
+.log-row.admin:hover { background:rgba(123,47,190,0.05); }
+.log-row.admin .ts { color:var(--text-dim); letter-spacing:1px; }
+.log-row.admin .user { color:var(--purple-300); letter-spacing:1px; }
+.log-row.admin .int { font-size:9px; letter-spacing:2px; padding:2px 6px; text-align:center; text-transform:uppercase; display:inline-flex; align-items:center; gap:6px; }
+.log-row.admin .int.ok { color:var(--online); border:1px solid rgba(22,163,74,0.4); background:rgba(22,163,74,0.06); }
+.log-row.admin .int.bad { color:var(--critical); border:1px solid rgba(220,38,38,0.5); background:rgba(220,38,38,0.08); }
+.chain-summary { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; padding:14px 16px; border-bottom:1px solid var(--border-soft); }
+.pager { display:flex; justify-content:space-between; align-items:center; padding:12px 16px; font-family:var(--f-mono); font-size:10px; letter-spacing:2px; color:var(--text-secondary); text-transform:uppercase; }
+.pager .buttons { display:flex; gap:6px; }
+.pager button { padding:5px 10px; background:transparent; border:1px solid var(--border-soft); color:var(--text-secondary); font-family:var(--f-mono); font-size:10px; letter-spacing:2px; cursor:pointer; }
+.pager button.active { background:rgba(123,47,190,0.15); border-color:var(--border-active); color:var(--purple-100); }
+
+/* ── Network map chrome ── */
+.ctrl-group { display:flex; align-items:center; gap:10px; background:rgba(10,0,21,0.88); border:1px solid var(--border); padding:8px 14px; font-family:var(--f-mono); font-size:10px; letter-spacing:2px; color:var(--text-secondary); text-transform:uppercase; }
+.ctrl-group .lbl { color:var(--text-dim); }
+.chip { display:inline-flex; align-items:center; gap:6px; padding:3px 8px; border:1px solid var(--border-soft); font-family:var(--f-mono); font-size:9px; letter-spacing:2px; color:var(--text-secondary); cursor:pointer; }
+.chip.on { background:rgba(123,47,190,0.18); border-color:var(--border-active); color:var(--purple-100); }
+.chip .d { width:8px; height:8px; border-radius:50%; }
+.icon-btn { width:32px; height:32px; border:1px solid var(--border); background:rgba(10,0,21,0.88); color:var(--text-secondary); display:grid; place-items:center; cursor:pointer; font-family:var(--f-mono); font-size:12px; }
+.icon-btn:hover { border-color:var(--purple-500); color:var(--purple-100); }
+.statusbar { height:26px; background:#0a0015; border-top:1px solid var(--border); display:flex; align-items:center; padding:0 16px; gap:24px; font-family:var(--f-mono); font-size:9px; letter-spacing:2px; color:var(--text-dim); text-transform:uppercase; }
+.statusbar .hl { color:var(--purple-300); }
+
+/* ── Command Center: greet ── */
+.greet { display:flex; align-items:baseline; justify-content:space-between; padding:4px 0 2px; }
+.greet h1 { font-family:var(--f-display); font-weight:500; font-size:28px; letter-spacing:1px; margin:0; color:var(--text-primary); }
+.greet .usr { color:var(--purple-300); }
+.greet .sub { font-family:var(--f-mono); font-size:10px; letter-spacing:2px; color:var(--text-secondary); text-transform:uppercase; }
+
+/* ── Command Center: status grid ── */
+.status-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:14px; }
+.cols { display:grid; grid-template-columns:1.6fr 1fr; gap:18px; }
+.kpi-row { display:grid; grid-template-columns:1fr 1fr; gap:10px; padding:14px 16px; }
+
+/* ── Admin: KPIs ── */
+.kpis { display:grid; grid-template-columns:repeat(2,1fr); gap:10px; padding:14px 16px; }
+.kpi .v { font-family:var(--f-display); font-weight:600; font-size:26px; color:var(--text-primary); letter-spacing:-0.3px; }
+.kpi .d { font-family:var(--f-mono); font-size:9px; color:var(--online); letter-spacing:1px; margin-top:2px; }
 </style>
 """
 st.markdown(CSS, unsafe_allow_html=True)
@@ -1194,18 +1395,95 @@ def screen_pin_gate():
             st.markdown(f'<div class="lockout-msg" style="margin:1rem 0;">ACCESS LOCKED · {m}m {s:02d}s remaining</div>', unsafe_allow_html=True)
             time.sleep(1); st.rerun(); return
 
-        # PIN input (Streamlit widget — do not change)
-        st.markdown('<div style="text-align:center;margin-bottom:0.4rem;"><div style="font-family:var(--f-mono);font-size:9px;letter-spacing:4px;color:var(--text-dim);text-transform:uppercase;margin-bottom:0.8rem;">ENTER 6-DIGIT ACCESS CODE</div></div>', unsafe_allow_html=True)
-        pin = st.text_input("PIN", type="password", max_chars=6,
-                            placeholder="● ● ● ● ● ●", key="pin_field",
-                            label_visibility="collapsed")
+        # ── PIN state: built up via keypad button presses ─────────────────────
+        if "pin_entry" not in st.session_state:
+            st.session_state.pin_entry = ""
+        if "pin_error" not in st.session_state:
+            st.session_state.pin_error = ""
+
+        pin_val = st.session_state.pin_entry
+
+        # ── PIN boxes display ────────────────────────────────────────────────
+        box_filled_style = (
+            "width:36px;height:44px;border:1px solid #9D4EDD;"
+            "background:#1a0030;display:inline-flex;align-items:center;justify-content:center;"
+            "margin:0 4px;font-size:22px;color:#C084FC;"
+        )
+        box_empty_style = (
+            "width:36px;height:44px;border:1px solid rgba(123,47,190,0.35);"
+            "background:transparent;display:inline-flex;align-items:center;justify-content:center;"
+            "margin:0 4px;"
+        )
+        boxes_html = "".join(
+            f'<div style="{box_filled_style}">●</div>' if i < len(pin_val) else f'<div style="{box_empty_style}"></div>'
+            for i in range(6)
+        )
+        st.markdown(
+            f'<div style="display:flex;justify-content:center;margin:14px 0 8px;">{boxes_html}</div>',
+            unsafe_allow_html=True,
+        )
+
+        # Error / status message
+        if st.session_state.pin_error:
+            st.markdown(f'<div class="error-msg" style="text-align:center;margin-bottom:8px;">{st.session_state.pin_error}</div>', unsafe_allow_html=True)
+
+        # ── 3×4 Keypad ───────────────────────────────────────────────────────
+        _keypad = [["1","2","3"],["4","5","6"],["7","8","9"],["*","0","CLR"]]
+        _key_idx = 0
+        for row in _keypad:
+            kb1, kb2, kb3 = st.columns(3)
+            for btn_lbl, kcol in zip(row, [kb1, kb2, kb3]):
+                _key_idx += 1
+                if kcol.button(btn_lbl, key=f"kp_{_key_idx}", use_container_width=True):
+                    if btn_lbl == "CLR":
+                        st.session_state.pin_entry = ""
+                        st.session_state.pin_error = ""
+                    elif btn_lbl == "*":
+                        # Backspace one digit
+                        st.session_state.pin_entry = st.session_state.pin_entry[:-1]
+                        st.session_state.pin_error = ""
+                    elif len(st.session_state.pin_entry) < 6:
+                        st.session_state.pin_entry += btn_lbl
+                        st.session_state.pin_error = ""
+                    st.rerun()
+
+        # ── Auto-verify when 6 digits entered ────────────────────────────────
+        if len(pin_val) == 6:
+            try:
+                if verify_pin(pin_val):
+                    st.session_state.pin_verified = True
+                    st.session_state.pin_entry    = ""
+                    st.session_state.pin_error    = ""
+                    st.rerun()
+                else:
+                    locked_now, rem = is_pin_locked()
+                    if locked_now:
+                        m2, s2 = rem//60, rem%60
+                        st.session_state.pin_error = f"TOO MANY ATTEMPTS · LOCKED {m2}m {s2:02d}s"
+                    else:
+                        left = config.MAX_PIN_ATTEMPTS - get_pin_state().get("failed_attempts",0)
+                        st.session_state.pin_error = f"AUTHENTICATION FAILED · {left} ATTEMPT(S) REMAINING"
+                    st.session_state.pin_entry = ""
+                    st.rerun()
+            except RuntimeError as e:
+                st.session_state.pin_error = str(e)
+                st.session_state.pin_entry = ""
+                st.rerun()
+
+        # Fallback text input for keyboard entry
+        st.markdown('<div style="margin-top:8px;font-family:var(--f-mono);font-size:9px;letter-spacing:2px;color:var(--text-dim);text-align:center;">OR TYPE PIN DIRECTLY</div>', unsafe_allow_html=True)
+        pin_typed = st.text_input("PIN", type="password", max_chars=6,
+                                  placeholder="● ● ● ● ● ●", key="pin_field",
+                                  label_visibility="collapsed")
         if st.button("AUTHENTICATE", use_container_width=True, key="pin_unlock_btn"):
-            if len(pin) != 6 or not pin.isdigit():
+            if len(pin_typed) != 6 or not pin_typed.isdigit():
                 st.markdown('<div class="error-msg" style="margin-top:0.6rem;">INVALID PIN FORMAT · 6 DIGITS REQUIRED</div>', unsafe_allow_html=True)
             else:
                 try:
-                    if verify_pin(pin):
-                        st.session_state.pin_verified = True; st.rerun()
+                    if verify_pin(pin_typed):
+                        st.session_state.pin_verified = True
+                        st.session_state.pin_entry    = ""
+                        st.rerun()
                     else:
                         locked_now, rem = is_pin_locked()
                         if locked_now:
@@ -1823,10 +2101,52 @@ def screen_fusion():
 
     uid = st.session_state.get("current_user", "system")
 
+    st.markdown(
+        '<div class="al-classification-strip">TS//SCI//NOFORN · DOCUMENT FUSION ENGINE · MULTI-SOURCE INGESTION</div>',
+        unsafe_allow_html=True,
+    )
+
     # ── If analysis is already done, show results ─────────────────────────────
     if st.session_state.get("fusion_analysed") and st.session_state.get("fusion_summary"):
         _fusion_show_results()
         return
+
+    _stage = st.session_state.get("fusion_stage", "idle")
+    staged_count = len(st.session_state.get("fusion_staged", []))
+    declared_now = st.session_state.get("fusion_declaration", False)
+
+    # ── Pipeline step checklist (horizontal strip) ─────────────────────────────
+    step_states = [
+        ("01", "STAGING",     "done" if staged_count > 0 else "active"),
+        ("02", "DECLARATION", "done" if declared_now else ("active" if staged_count > 0 else "pending")),
+        ("03", "EXTRACTION",  "pending"),
+        ("04", "RESOLUTION",  "pending"),
+        ("05", "FUSION",      "pending"),
+        ("06", "REPORT",      "pending"),
+    ]
+    pct = (sum(1 for *_, s in step_states if s == "done") / len(step_states)) * 100
+    steps_html = ""
+    for num, title, state in step_states:
+        col_c = "var(--online)" if state == "done" else "var(--purple-300)" if state == "active" else "var(--text-dim)"
+        steps_html += (
+            f'<div style="display:flex;flex-direction:column;align-items:center;gap:4px;flex:1;">'
+            f'<div style="font-family:var(--f-display);font-weight:600;font-size:18px;color:{col_c};">{num}</div>'
+            f'<div style="font-family:var(--f-mono);font-size:9px;letter-spacing:2px;color:{col_c};text-transform:uppercase;text-align:center;">{title}</div>'
+            f'<div style="font-family:var(--f-mono);font-size:8px;color:var(--text-dim);letter-spacing:1px;text-transform:uppercase;">{"DONE" if state=="done" else "ACTIVE" if state=="active" else "PENDING"}</div>'
+            f'</div>'
+        )
+    st.markdown(
+        f'<div class="card" style="padding:14px 18px;margin-bottom:16px;">'
+        f'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">'
+        f'<div style="font-family:var(--f-mono);font-size:9px;letter-spacing:3px;color:var(--text-dim);text-transform:uppercase;">DOCUMENT FUSION PIPELINE</div>'
+        f'<div style="font-family:var(--f-mono);font-size:9px;letter-spacing:2px;color:{"var(--online)" if _stage=="complete" else "var(--warning)" if _stage=="processing" else "var(--text-dim)"};">'
+        f'{"COMPLETE" if _stage=="complete" else "PROCESSING" if _stage=="processing" else "STAGING"}</div>'
+        f'</div>'
+        f'<div style="display:flex;gap:8px;align-items:flex-start;margin-bottom:12px;">{steps_html}</div>'
+        f'<div class="progress-bar"><i style="width:{pct:.0f}%;"></i></div>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
 
     # ══════════════════════════════════════════════════════════════════════════
     # STEP 1 — FILE UPLOADER (staging)
@@ -1835,20 +2155,6 @@ def screen_fusion():
         '<div class="disclaimer-box">LEGAL NOTICE — All uploaded data must have been obtained through '
         'lawful authorization. Every upload is logged with your user ID and timestamp.</div>',
         unsafe_allow_html=True,
-    )
-
-    # Stage progress indicator
-    _stage = st.session_state.get("fusion_stage", "idle")
-    if _stage == "idle":
-        st.caption("Upload documents below then click ANALYSE DOCUMENTS.")
-    elif _stage == "processing":
-        st.caption("⏳ Analysis in progress — do not refresh.")
-    elif _stage == "complete":
-        st.caption("✅ Analysis complete — view report below.")
-
-    st.info(
-        "⚠️ Do NOT refresh the page after uploading. "
-        "Upload all files, check the declaration, then click ANALYSE DOCUMENTS."
     )
 
     if st.button("CLEAR & START OVER", key="btn_reset_fusion"):
@@ -2113,7 +2419,15 @@ def screen_fusion():
     total = len(staged)
     print(f"[FUSION 1] Analyse clicked, files: {total}")
     st.markdown('<hr class="divider">', unsafe_allow_html=True)
-    st.markdown('<div style="font-size:1rem;font-weight:700;color:#9D4EDD;letter-spacing:0.08rem;margin-bottom:0.8rem;">PROCESSING DOCUMENTS</div>', unsafe_allow_html=True)
+    st.markdown(
+        f'<div class="banner">'
+        f'<div class="ic">⊕</div>'
+        f'<div><div class="t">ANALYSIS IN PROGRESS</div>'
+        f'<div class="s">Processing {total} document{"s" if total!=1 else ""} through fusion pipeline</div></div>'
+        f'<div class="r">DO NOT REFRESH</div>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
 
     all_ents:     list = []
     all_rels:     list = []
@@ -2198,7 +2512,16 @@ def screen_fusion():
     # STEP 5 — CROSS-FILE LINKING
     # ══════════════════════════════════════════════════════════════════════════
     st.markdown('<hr class="divider">', unsafe_allow_html=True)
-    st.markdown('<div style="font-size:1rem;font-weight:700;color:#9D4EDD;letter-spacing:0.08rem;margin-bottom:0.8rem;">LINKING ACROSS DOCUMENTS</div>', unsafe_allow_html=True)
+    st.markdown(
+        f'<div class="progress-summary">'
+        f'<div class="tile"><div class="k">DOCUMENTS</div><div class="v">{len(all_results)}</div></div>'
+        f'<div class="tile"><div class="k">ENTITIES</div><div class="v">{total_entities}</div></div>'
+        f'<div class="tile"><div class="k">RELATIONSHIPS</div><div class="v">{total_relationships}</div></div>'
+        f'<div class="tile"><div class="k">STATUS</div><div class="v" style="font-size:14px;color:var(--online);">FUSING</div></div>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown('<div style="font-family:var(--f-mono);font-size:9px;letter-spacing:3px;color:var(--text-dim);text-transform:uppercase;margin:16px 0 8px;">LINKING ACROSS DOCUMENTS</div>', unsafe_allow_html=True)
 
     linking_pb     = st.progress(0)
     linking_status = st.empty()
@@ -2521,10 +2844,15 @@ def _fusion_show_results():
 def screen_network_map():
     screen_header("NETWORK MAP", "Relationship graph · Interactive zoom & pan · Hover for details")
     from modules.ui_components import stat_card, panel_hdr
+    st.markdown(
+        '<div class="al-classification-strip">TS//SCI//NOFORN · NETWORK MAP · RELATIONSHIP INTELLIGENCE</div>',
+        unsafe_allow_html=True,
+    )
+
     gd = st.session_state.graph_data
     if not gd:
         st.markdown(
-            '<div class="panel" style="text-align:center;padding:3rem 1rem;margin-top:1rem;">'
+            '<div class="card" style="text-align:center;padding:3rem 1rem;margin-top:1rem;">'
             '<div style="font-family:var(--f-mono);font-size:11px;color:var(--text-dim);'
             'letter-spacing:2px;">NO GRAPH DATA · RUN A SEARCH OR FUSION ANALYSIS FIRST</div>'
             '</div>',
@@ -2532,41 +2860,117 @@ def screen_network_map():
         )
         if st.button("GO TO SEARCH", key="nm_go"): st.session_state.active_screen="search"; st.rerun()
         return
+
     from modules.relationship_mapper import render_graph, EDGE_TYPES
     G, summary = gd["graph"], gd["summary"]
+    nodes_count = summary["nodes"]
+    edges_count = summary["edges"]
+    subj = st.session_state.search_query or "Subject"
 
-    # ── Stat row ──────────────────────────────────────────────────────────────
-    m1, m2, m3 = st.columns(3)
-    with m1:
-        st.markdown(stat_card("N·01","NODES", str(summary["nodes"]),
-            meta_lines=[("ENTITIES","IN GRAPH")]), unsafe_allow_html=True)
-    with m2:
-        st.markdown(stat_card("N·02","EDGES", str(summary["edges"]),
-            meta_lines=[("CONNECTIONS","MAPPED")]), unsafe_allow_html=True)
-    with m3:
-        st.markdown(stat_card("N·03","DENSITY", str(summary["density"]),
-            meta_lines=[("GRAPH","DENSITY")]), unsafe_allow_html=True)
-
-    # ── Connection type filter ────────────────────────────────────────────────
-    st.markdown(panel_hdr("N·04","CONNECTION TYPE FILTER","SELECT ACTIVE"), unsafe_allow_html=True)
+    # ── Top toolbar: filter chips + controls ─────────────────────────────────
     all_et = list(set(d.get("edge_type","mentioned_with") for _,_,d in G.edges(data=True))) or EDGE_TYPES
+    # Entity type filter chips as HTML (visual only — actual filter via multiselect below)
+    chips_html = "".join(
+        f'<div class="chip on"><span class="d" style="background:var(--purple-500);"></span>{et.upper()[:12]}</div>'
+        for et in all_et[:6]
+    )
+    st.markdown(
+        f'<div style="display:flex;align-items:center;gap:8px;padding:10px 0;flex-wrap:wrap;">'
+        f'{chips_html}'
+        f'<div class="ctrl-group" style="margin-left:auto;">'
+        f'<span class="lbl">NODES</span><span style="color:var(--purple-300);">{nodes_count}</span>'
+        f'&nbsp;&nbsp;<span class="lbl">EDGES</span><span style="color:var(--purple-300);">{edges_count}</span>'
+        f'</div>'
+        f'<div class="icon-btn" title="Export">⊕</div>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
+    # Functional filter via multiselect
     sel_et = st.multiselect("Connection types", options=all_et, default=all_et, key="et_filter",
                              label_visibility="collapsed")
 
-    # ── Graph ─────────────────────────────────────────────────────────────────
-    subj = st.session_state.search_query or "Subject"
-    fig  = render_graph(G, filter_edge_types=sel_et or None, title=f"Network Map — {subj}")
-    st.markdown('<div class="panel" style="padding:0;">', unsafe_allow_html=True)
-    st.plotly_chart(fig, use_container_width=True)
-    st.markdown('</div>', unsafe_allow_html=True)
+    # ── Main area: graph viewport + detail panel ──────────────────────────────
+    graph_col, detail_col = st.columns([3, 1])
 
-    # ── Top nodes table ───────────────────────────────────────────────────────
-    top = summary.get("top_nodes",[])
-    if top:
-        st.markdown('<hr class="divider">', unsafe_allow_html=True)
-        st.markdown(panel_hdr("N·05","TOP CONNECTED NODES","DEGREE RANK"), unsafe_allow_html=True)
-        import pandas as pd
-        st.dataframe(pd.DataFrame(top), use_container_width=True, hide_index=True)
+    with graph_col:
+        fig = render_graph(G, filter_edge_types=sel_et or None, title=f"Network Map — {subj}")
+        st.plotly_chart(fig, use_container_width=True)
+
+        # Legend
+        _legend_items = [
+            ("PRIMARY", "var(--purple-500)"),
+            ("SECONDARY", "rgba(157,78,221,0.7)"),
+            ("PERIPHERAL", "rgba(123,47,190,0.4)"),
+            ("LOCATION", "var(--teal)"),
+            ("DEVICE", "var(--warning)"),
+        ]
+        legend_html = "".join(
+            f'<div style="display:flex;align-items:center;gap:6px;font-family:var(--f-mono);font-size:9px;color:var(--text-secondary);letter-spacing:1px;">'
+            f'<span style="width:10px;height:10px;border-radius:50%;background:{c};display:inline-block;"></span>{lbl}'
+            f'</div>'
+            for lbl, c in _legend_items
+        )
+        st.markdown(
+            f'<div class="card" style="padding:10px 14px;margin-top:6px;">'
+            f'<div style="font-family:var(--f-mono);font-size:8px;letter-spacing:3px;color:var(--text-dim);text-transform:uppercase;margin-bottom:8px;">LEGEND</div>'
+            f'<div style="display:flex;gap:14px;flex-wrap:wrap;">{legend_html}</div>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+
+    with detail_col:
+        # Node detail panel
+        top = summary.get("top_nodes",[])
+        selected_node = top[0] if top else {}
+        node_name  = selected_node.get("label", selected_node.get("name", subj))[:24]
+        node_degree = selected_node.get("degree", edges_count)
+        node_type  = selected_node.get("entity_type", "PERSON")
+
+        st.markdown(
+            f'<div class="card" style="padding:0;overflow:hidden;">'
+            f'<div style="padding:12px 14px 8px;border-bottom:1px solid var(--border-soft);">'
+            f'<div style="font-family:var(--f-mono);font-size:9px;letter-spacing:3px;color:var(--text-dim);text-transform:uppercase;">NODE DETAIL</div>'
+            f'</div>'
+            f'<div style="padding:14px;">'
+            f'<div style="font-family:var(--f-display);font-weight:600;font-size:18px;color:var(--text-primary);letter-spacing:0.5px;">{node_name}</div>'
+            f'<div style="font-family:var(--f-mono);font-size:9px;letter-spacing:2px;color:var(--purple-300);text-transform:uppercase;margin-top:4px;">{node_type}</div>'
+            f'<div style="margin:12px 0;display:grid;grid-template-columns:1fr 1fr;gap:8px;">'
+            f'<div class="kv"><div style="font-size:9px;color:var(--text-dim);letter-spacing:2px;text-transform:uppercase;">CONNECTIONS</div><div style="font-family:var(--f-display);font-size:22px;color:var(--text-primary);">{node_degree}</div></div>'
+            f'<div class="kv"><div style="font-size:9px;color:var(--text-dim);letter-spacing:2px;text-transform:uppercase;">RANK</div><div style="font-family:var(--f-display);font-size:22px;color:var(--text-primary);">01</div></div>'
+            f'</div>'
+            f'</div>'
+
+            # Top connections
+            f'<div style="border-top:1px solid var(--border-soft);padding:10px 14px;">'
+            f'<div style="font-family:var(--f-mono);font-size:9px;letter-spacing:3px;color:var(--text-dim);text-transform:uppercase;margin-bottom:8px;">TOP CONNECTIONS</div>'
+            + "".join(
+                f'<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid var(--border-soft);">'
+                f'<span style="font-family:var(--f-mono);font-size:10px;color:var(--text-secondary);">{n.get("label",n.get("name",""))[:20]}</span>'
+                f'<span style="font-family:var(--f-mono);font-size:9px;color:var(--purple-300);">{n.get("degree",0)}</span>'
+                f'</div>'
+                for n in top[:6]
+            )
+            + f'</div>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+
+        st.markdown('<div style="margin-top:8px;"></div>', unsafe_allow_html=True)
+        if st.button("BUILD FULL REPORT", use_container_width=True, key="nm_report"):
+            st.session_state.active_screen = "reports"; st.rerun()
+
+    # ── Status bar ────────────────────────────────────────────────────────────
+    st.markdown(
+        f'<div class="statusbar">'
+        f'<span>NODES: <span class="hl">{nodes_count}</span></span>'
+        f'<span>EDGES: <span class="hl">{edges_count}</span></span>'
+        f'<span>SUBJECT: <span class="hl">{subj[:20]}</span></span>'
+        f'<span>DENSITY: <span class="hl">{summary.get("density","—")}</span></span>'
+        f'<span style="margin-left:auto;">LAYOUT: FORCE-DIRECTED</span>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -2575,11 +2979,14 @@ def screen_network_map():
 
 def screen_timeline():
     screen_header("TIMELINE", "Chronological event map · Gap detection · Anomaly flags")
-    from modules.ui_components import stat_card, panel_hdr
+    st.markdown(
+        '<div class="al-classification-strip">TS//SCI//NOFORN · TIMELINE ANALYSIS · CHRONOLOGICAL INTELLIGENCE</div>',
+        unsafe_allow_html=True,
+    )
     tl = st.session_state.timeline_data
     if not tl:
         st.markdown(
-            '<div class="panel" style="text-align:center;padding:3rem 1rem;margin-top:1rem;">'
+            '<div class="card" style="text-align:center;padding:3rem 1rem;margin-top:1rem;">'
             '<div style="font-family:var(--f-mono);font-size:11px;color:var(--text-dim);'
             'letter-spacing:2px;">NO TIMELINE DATA · RUN A SEARCH OR FUSION ANALYSIS FIRST</div>'
             '</div>',
@@ -2588,63 +2995,122 @@ def screen_timeline():
         if st.button("GO TO SEARCH", key="tl_go"): st.session_state.active_screen="search"; st.rerun()
         return
 
-    # ── Stat row ──────────────────────────────────────────────────────────────
-    m1, m2, m3 = st.columns(3)
-    with m1:
-        st.markdown(stat_card("T·01","EVENTS", str(tl["count"])), unsafe_allow_html=True)
-    with m2:
-        st.markdown(stat_card("T·02","GAPS", str(len(tl["gaps"])),
-                              meta_lines=[("ACTIVITY","GAPS DETECTED")]), unsafe_allow_html=True)
-    with m3:
-        st.markdown(stat_card("T·03","ANOMALIES", str(len(tl["anomalies"])),
-                              meta_lines=[("FLAGS","DETECTED")],
-                              bar_color="#DC2626"), unsafe_allow_html=True)
+    events    = tl.get("events", [])
+    gaps      = tl.get("gaps", [])
+    anomalies = tl.get("anomalies", [])
+    count     = tl.get("count", len(events))
 
-    # ── Timeline chart ────────────────────────────────────────────────────────
-    st.markdown('<div class="panel" style="padding:0;">', unsafe_allow_html=True)
-    st.plotly_chart(tl["figure"], use_container_width=True)
-    st.markdown('</div>', unsafe_allow_html=True)
+    # ── Progress-summary stat tiles ────────────────────────────────────────────
+    st.markdown(
+        f'<div class="progress-summary" style="margin-bottom:18px;">'
+        f'<div class="tile"><div class="k">EVENTS</div><div class="v">{count}</div></div>'
+        f'<div class="tile"><div class="k">ACTIVITY GAPS</div><div class="v" style="color:{"var(--warning)" if gaps else "var(--online)"};">{len(gaps)}</div></div>'
+        f'<div class="tile"><div class="k">ANOMALY FLAGS</div><div class="v" style="color:{"var(--critical)" if anomalies else "var(--online)"};">{len(anomalies)}</div></div>'
+        f'<div class="tile"><div class="k">DATE SPAN</div><div class="v" style="font-size:14px;">'
+        f'{(events[0].get("normalized","—")[:10] if events else "—")}</div></div>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
 
-    import pandas as pd
-
-    # ── Activity gaps table ───────────────────────────────────────────────────
-    if tl["gaps"]:
-        st.markdown('<hr class="divider">', unsafe_allow_html=True)
-        st.markdown(panel_hdr("T·04","ACTIVITY GAPS","DETECTED"), unsafe_allow_html=True)
-        st.dataframe(
-            pd.DataFrame([{"Start":g["start"],"End":g["end"],"Days":g["duration_days"]} for g in tl["gaps"]]),
-            use_container_width=True, hide_index=True,
+    # ── Timeline chart ─────────────────────────────────────────────────────────
+    if tl.get("figure"):
+        st.markdown(
+            '<div class="card" style="padding:0;overflow:hidden;">'
+            '<div style="padding:12px 16px 8px;border-bottom:1px solid var(--border-soft);'
+            'font-family:var(--f-mono);font-size:9px;letter-spacing:3px;color:var(--text-dim);'
+            'text-transform:uppercase;">ACTIVITY TIMELINE</div>',
+            unsafe_allow_html=True,
         )
+        st.plotly_chart(tl["figure"], use_container_width=True)
+        st.markdown('</div>', unsafe_allow_html=True)
 
-    # ── Anomaly flags ─────────────────────────────────────────────────────────
-    if tl["anomalies"]:
-        st.markdown('<hr class="divider">', unsafe_allow_html=True)
-        st.markdown(panel_hdr("T·05","ANOMALY FLAGS","CRITICAL"), unsafe_allow_html=True)
-        rows_html = "".join(
-            f'<div class="flag-row">'
-            f'<span class="ftag">{a["flag"]}</span>'
-            f'<span class="fmsg">{a["detail"]}</span>'
-            f'</div>'
-            for a in tl["anomalies"]
+    # ── Anomaly flag-cards ─────────────────────────────────────────────────────
+    if anomalies:
+        st.markdown(
+            '<div class="card" style="padding:0;overflow:hidden;margin-top:14px;">'
+            '<div style="padding:12px 16px 10px;border-bottom:1px solid var(--border-soft);'
+            'display:flex;justify-content:space-between;align-items:center;">'
+            '<div style="font-family:var(--f-mono);font-size:9px;letter-spacing:3px;'
+            'color:var(--text-dim);text-transform:uppercase;">ANOMALY FLAGS</div>'
+            f'<div style="font-family:var(--f-mono);font-size:9px;letter-spacing:2px;color:var(--critical);">{len(anomalies)} DETECTED</div>'
+            '</div>',
+            unsafe_allow_html=True,
         )
-        st.markdown(f'<div class="panel" style="padding:0;">{rows_html}</div>',
-                    unsafe_allow_html=True)
+        for a in anomalies[:10]:
+            flag    = (a.get("flag") or "ANOMALY")
+            detail  = (a.get("detail") or a.get("description") or "")[:90]
+            sev_raw = (a.get("severity") or "MEDIUM").upper()
+            sev_cls = "hi" if "HIGH" in sev_raw or "CRITICAL" in sev_raw else "md" if "MEDIUM" in sev_raw else "lo"
+            score   = a.get("score", "")
+            st.markdown(
+                f'<div class="flag-card {sev_cls}">'
+                f'<div class="sev">{sev_raw[:8]}</div>'
+                f'<div><div class="ttl">{flag[:50]}</div>'
+                f'<div class="sub">{detail}</div></div>'
+                + (f'<div class="score">{score}</div>' if score else '<div></div>') +
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+        st.markdown('</div>', unsafe_allow_html=True)
 
-    # ── All events expander ───────────────────────────────────────────────────
-    if tl["events"]:
-        with st.expander(f"All {len(tl['events'])} events", expanded=False):
-            st.dataframe(
-                pd.DataFrame([{
-                    "Date":    e["normalized"],
-                    "Source":  e["source"],
-                    "Type":    e.get("event_type","mention"),
-                    "Ambiguous": "Yes" if e.get("ambiguous") else "No",
-                    "Context": e.get("context","")[:70],
-                } for e in tl["events"]]),
-                use_container_width=True, hide_index=True,
+    # ── Activity gaps ──────────────────────────────────────────────────────────
+    if gaps:
+        st.markdown(
+            '<div class="card" style="padding:0;overflow:hidden;margin-top:14px;">'
+            '<div style="padding:12px 16px 10px;border-bottom:1px solid var(--border-soft);">'
+            '<div style="font-family:var(--f-mono);font-size:9px;letter-spacing:3px;'
+            'color:var(--text-dim);text-transform:uppercase;">ACTIVITY GAPS</div>'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+        gap_rows = ""
+        for g in gaps[:8]:
+            days = g.get("duration_days", 0)
+            sev  = "hi" if days > 90 else "md" if days > 30 else "lo"
+            gap_rows += (
+                f'<div class="flag-card {sev}" style="grid-template-columns:80px 1fr auto;">'
+                f'<div class="sev">{days}d GAP</div>'
+                f'<div><div class="ttl">{g.get("start","")[:10]} → {g.get("end","")[:10]}</div>'
+                f'<div class="sub">ACTIVITY VOID · {days} DAYS</div></div>'
+                f'<div></div>'
+                f'</div>'
+            )
+        st.markdown(gap_rows + '</div>', unsafe_allow_html=True)
+
+    # ── All events log ─────────────────────────────────────────────────────────
+    if events:
+        with st.expander(f"EVENT LOG — ALL {len(events)} ENTRIES", expanded=False):
+            hdr = (
+                '<div style="display:grid;grid-template-columns:120px 90px 1fr 100px;gap:12px;'
+                'padding:8px 14px;font-family:var(--f-mono);font-size:9px;letter-spacing:3px;'
+                'color:var(--text-dim);text-transform:uppercase;border-bottom:1px solid var(--border);'
+                'background:rgba(0,0,0,0.3);">DATE · TYPE · CONTEXT · SOURCE</div>'
+            )
+            rows = ""
+            for e in events[:60]:
+                etype = (e.get("event_type") or "MENTION").upper()[:12]
+                ctx   = (e.get("context") or "")[:80]
+                src   = (e.get("source") or "")[:18]
+                date  = (e.get("normalized") or "")[:16]
+                amb   = e.get("ambiguous", False)
+                rows += (
+                    f'<div style="display:grid;grid-template-columns:120px 90px 1fr 100px;gap:12px;'
+                    f'padding:7px 14px;border-bottom:1px solid var(--border-soft);'
+                    f'font-family:var(--f-mono);font-size:10px;'
+                    f'{"opacity:0.6;" if amb else ""}">'
+                    f'<span style="color:var(--text-dim);">{date}</span>'
+                    f'<span style="color:var(--purple-300);font-size:9px;">{etype}</span>'
+                    f'<span style="color:var(--text-primary);">{ctx}</span>'
+                    f'<span style="color:var(--text-secondary);">{src}</span>'
+                    f'</div>'
+                )
+            st.markdown(
+                f'<div class="card" style="padding:0;overflow:hidden;max-height:360px;overflow-y:auto;">'
+                f'{hdr}{rows}</div>',
+                unsafe_allow_html=True,
             )
 
-    st.markdown('<hr class="divider">', unsafe_allow_html=True)
+    st.markdown('<div style="margin-top:14px;"></div>', unsafe_allow_html=True)
     if st.button("RUN BEHAVIORAL ANALYSIS", key="behav_tl"): _run_behavioral()
     if st.session_state.behavioral_data: _render_behavioral(st.session_state.behavioral_data)
     _report_trigger_btn("OSINT")
@@ -2801,6 +3267,10 @@ def screen_reports():
     )
 
     if not rd and not person:
+        st.markdown(
+            '<div class="al-classification-strip">TS//SCI//NOFORN · INTELLIGENCE REPORT · NO ACTIVE CASE</div>',
+            unsafe_allow_html=True,
+        )
         st.info("No analysis yet. Run a search in SEARCH mode or upload documents in FUSION mode.")
         c1, c2 = st.columns(2)
         with c1:
@@ -2831,120 +3301,203 @@ def screen_reports():
     overall_confidence = secs.get("overall_confidence", 0)
     overall            = overall_confidence   # alias used in _conf_bar / _conf_color calls below
 
-    # ── Report metadata header ────────────────────────────────────────────────
-    from modules.ui_components import confidence_gauge, risk_badge as _ui_risk_badge
+    # ── Classification strip ───────────────────────────────────────────────────
+    st.markdown(
+        '<div class="al-classification-strip">TS//SCI//NOFORN · INTELLIGENCE REPORT · AUTHORIZED ACCESS ONLY</div>',
+        unsafe_allow_html=True,
+    )
+
+    # ── Report top header (4-column grid matching handoff) ─────────────────────
+    conf_c = "#16A34A" if overall >= 75 else "#D97706" if overall >= 50 else "#DC2626"
+    conf_lbl = "HIGH" if overall >= 75 else "MEDIUM" if overall >= 50 else "LOW"
     g_color = "#2563EB" if g_used else "#4B5563"
     g_lbl   = "GEMINI 2.5" if g_used else "LOCAL"
+    risk_r  = (st.session_state.agent_results or {}).get("risk", {})
+    risk_score = risk_r.get("risk_score", 0)
+    risk_level = risk_r.get("risk_level", "—")
+    rc = "#DC2626" if risk_score >= 70 else "#D97706" if risk_score >= 40 else "#16A34A"
+
+    # SVG confidence gauge arc
+    import math
+    angle = (overall_confidence / 100) * 251.2  # circumference ≈ 251.2 for r=40
+    gauge_svg = (
+        f'<svg viewBox="0 0 100 100" style="width:120px;height:120px;transform:rotate(-90deg);">'
+        f'<circle cx="50" cy="50" r="40" fill="none" stroke="rgba(123,47,190,0.15)" stroke-width="8"/>'
+        f'<circle cx="50" cy="50" r="40" fill="none" stroke="{conf_c}" stroke-width="8" '
+        f'stroke-dasharray="{angle:.1f} 251.2" stroke-linecap="round"/>'
+        f'</svg>'
+    )
+    gauge_html = (
+        f'<div class="gauge" style="width:120px;height:120px;">'
+        f'{gauge_svg}'
+        f'<div class="val">'
+        f'<div><div class="num" style="font-size:36px;color:{conf_c};">{overall_confidence}</div>'
+        f'<div class="lbl">CONFIDENCE</div>'
+        f'<div class="sub" style="color:{conf_c};font-size:8px;">{conf_lbl}</div></div>'
+        f'</div>'
+        f'</div>'
+    )
+
+    # Person data for meta-grid
+    person_data = person or {}
+    plats_confirmed = person_data.get("platforms_confirmed", [])
+    locs = person_data.get("location_stated", [])
+    emails = person_data.get("emails_found", [])
+    aliases = person_data.get("name_variants", [])
+
     st.markdown(
-        f'<div style="background:linear-gradient(180deg,rgba(16,0,32,0.88),rgba(10,0,21,0.90));'
-        f'border:1px solid rgba(123,47,190,0.28);border-left:3px solid #7B2FBE;padding:14px 18px;margin-bottom:12px;">'
-        f'<div style="display:flex;align-items:center;justify-content:space-between;">'
-        f'<div style="display:flex;align-items:center;gap:16px;">'
-        f'{confidence_gauge(overall_confidence)}'
-        f'<div>'
-        f'<div style="font-family:\'Rajdhani\',sans-serif;font-weight:600;font-size:22px;'
-        f'letter-spacing:2px;color:#F0EAD6;">{subject}</div>'
-        f'<div style="font-family:\'JetBrains Mono\',monospace;font-size:9px;letter-spacing:3px;'
-        f'color:#4B5563;margin-top:4px;">'
-        f'GENERATED: <span style="color:#9CA3AF;">{gen_at}</span>'
-        f'&nbsp;&nbsp;USER: <span style="color:#9CA3AF;">{uid}</span>'
-        f'&nbsp;&nbsp;MODE: <span style="color:#9CA3AF;">{mode}</span>'
-        f'&nbsp;&nbsp;ENGINE: <span style="color:{g_color};">{g_lbl}</span>'
+        f'<div class="report-top">'
+
+        # Col 1 — Subject
+        f'<div class="rt-subject">'
+        f'<div class="tag">INTELLIGENCE SUBJECT</div>'
+        f'<h1>{subject}</h1>'
+        f'<div class="meta">'
+        f'<span>CASE: {uid[:12].upper()}</span>'
+        f'<span>MODE: {mode}</span>'
+        f'<span>ENGINE: <span style="color:{g_color};">{g_lbl}</span></span>'
         f'</div>'
         f'</div>'
+
+        # Col 2 — Confidence gauge
+        f'<div style="display:flex;align-items:center;justify-content:center;">{gauge_html}</div>'
+
+        # Col 3 — Metadata grid
+        f'<div class="rt-meta-grid">'
+        f'<div class="k">GENERATED</div><div class="v">{gen_at[:16]}</div>'
+        f'<div class="k">PLATFORMS</div><div class="v">{len(plats_confirmed)}</div>'
+        f'<div class="k">LOCATIONS</div><div class="v">{len(locs)}</div>'
+        f'<div class="k">RISK LEVEL</div><div class="v" style="color:{rc};">{risk_level} · {risk_score}</div>'
         f'</div>'
-        f'<div style="font-family:\'JetBrains Mono\',monospace;font-size:9px;letter-spacing:3px;'
-        f'background:rgba(123,47,190,0.15);border:1px solid rgba(220,38,38,0.60);'
-        f'color:#DC2626;padding:3px 12px;text-transform:uppercase;">RESTRICTED</div>'
+
+        # Col 4 — Action buttons (rendered as HTML; actual download handled below)
+        f'<div class="rt-actions">'
+        f'<div class="btn" style="font-family:var(--f-mono);font-size:10px;letter-spacing:2px;'
+        f'padding:8px 14px;border:1px solid var(--border-active);color:var(--purple-100);'
+        f'background:rgba(123,47,190,0.12);text-transform:uppercase;text-align:center;">EXPORT PDF</div>'
+        f'<div class="btn" style="font-family:var(--f-mono);font-size:10px;letter-spacing:2px;'
+        f'padding:8px 14px;border:1px solid var(--border);color:var(--text-secondary);'
+        f'text-transform:uppercase;text-align:center;">SHARE</div>'
+        f'<div style="font-family:var(--f-mono);font-size:9px;letter-spacing:3px;'
+        f'padding:8px 14px;border:1px solid rgba(220,38,38,0.5);color:var(--critical);'
+        f'text-align:center;background:rgba(220,38,38,0.06);">RESTRICTED</div>'
         f'</div>'
+
         f'</div>',
         unsafe_allow_html=True,
     )
 
-    def _verified_section(num: str, title: str, content: str, confidence: int, items: list = None):
-        from modules.ui_components import report_section
-        items_html = ""
-        if items:
-            items_html = "".join(
-                f'<div style="font-family:\'JetBrains Mono\',monospace;font-size:11px;'
-                f'color:#9CA3AF;padding-left:12px;margin-top:3px;">· {item}</div>'
-                for item in items[:15]
+    # ── Functional action buttons ──────────────────────────────────────────────
+    ba1, ba2, ba3 = st.columns(3)
+    with ba1:
+        pdf_bytes = rd.get("pdf_bytes", b"")
+        if pdf_bytes:
+            st.download_button("DOWNLOAD PDF", data=pdf_bytes,
+                               file_name=rd.get("pdf_filename","report.pdf"),
+                               mime="application/pdf", use_container_width=True, key="dl_pdf_rp")
+    with ba2:
+        if st.button("REGENERATE", use_container_width=True, key="regen_rp"):
+            _generate_and_store(mode)
+    with ba3:
+        if st.button("NEW ANALYSIS", use_container_width=True, key="new_analysis_rp"):
+            st.session_state.active_screen = "fusion"; st.rerun()
+
+    # ── TOC navigation strip ───────────────────────────────────────────────────
+    _TOC_SECTIONS = [
+        ("01","SUBJECT IDENTITY"),("02","CONFIDENCE SCORE"),("03","PLATFORM PRESENCE"),
+        ("04","PUBLIC LOCATION DATA"),("05","NETWORK MAP"),("06","TIMELINE"),
+        ("07","BEHAVIORAL PATTERNS"),("08","KEY ASSOCIATIONS"),("09","ANOMALIES & FLAGS"),
+        ("10","DATA GAPS"),("11","SOURCE LOG"),("12","AI ENGINE NOTES"),
+        ("13","LINKED PROFILES"),("14","CROSS-PLATFORM"),("15","RISK ASSESSMENT"),
+        ("16","COMPLIANCE"),("17","NEXT STEPS"),("18","TACTICAL PLAN"),
+    ]
+    toc_items = "".join(
+        f'<div class="toc .li" style="display:inline-flex;gap:6px;align-items:center;'
+        f'padding:4px 10px;border:1px solid var(--border-soft);margin:2px;cursor:pointer;'
+        f'font-family:var(--f-mono);font-size:9px;letter-spacing:1px;color:var(--text-secondary);">'
+        f'<span style="color:var(--purple-500);">{num}</span>'
+        f'<span>{title}</span>'
+        f'</div>'
+        for num, title in _TOC_SECTIONS
+    )
+    st.markdown(
+        f'<div style="border-top:1px solid var(--border);border-bottom:1px solid var(--border);'
+        f'padding:10px 0;margin:14px 0;overflow-x:auto;white-space:nowrap;">'
+        f'{toc_items}</div>',
+        unsafe_allow_html=True,
+    )
+
+    # ── Section helpers (rewritten to use .sec-hd / .sec-bd CSS) ──────────────
+    def _sec(num: str, title: str, tag: str, tag_cls: str, body_html: str):
+        with st.expander(f"§{num} · {title}", expanded=True):
+            st.markdown(
+                f'<div class="sec-hd">'
+                f'<span style="display:flex;align-items:baseline;gap:10px;">'
+                f'<span class="n">§{num}</span>'
+                f'<span class="t">{title}</span>'
+                f'</span>'
+                f'<span class="tag {tag_cls}">{tag}</span>'
+                f'</div>'
+                f'<div class="sec-bd">{body_html}</div>',
+                unsafe_allow_html=True,
             )
-        body = (
-            f'<div style="font-family:\'JetBrains Mono\',monospace;font-size:12px;'
-            f'color:#F0EAD6;line-height:1.55;">{content}</div>{items_html}'
+
+    def _verified_section(num: str, title: str, content: str, confidence: int, items: list = None):
+        items_html = "".join(
+            f'<div class="note" style="padding-left:12px;margin-top:3px;">· {item}</div>'
+            for item in (items or [])[:15]
         )
-        st.markdown(report_section(
-            idx=f"§{num}", title=title, content=body,
-            label="VERIFIED DATA", label_color="#16A34A",
-        ), unsafe_allow_html=True)
+        body = f'<div class="note">{content}</div>{items_html}'
+        _sec(num, title, "VERIFIED DATA", "v", body)
 
     def _ai_section(num: str, title: str, content: str, confidence: int, flags: list = None):
-        from modules.ui_components import report_section
-        flags_html = ""
-        if flags:
-            flags_html = "".join(
-                f'<div style="font-family:\'JetBrains Mono\',monospace;font-size:11px;'
-                f'color:#D97706;padding-left:12px;margin-top:3px;">⚑ {f}</div>'
-                for f in flags[:10]
-            )
-        body = (
-            f'<div style="font-family:\'JetBrains Mono\',monospace;font-size:12px;'
-            f'color:#C084FC;line-height:1.55;">{content}</div>{flags_html}'
+        flags_html = "".join(
+            f'<div style="font-family:var(--f-mono);font-size:11px;color:var(--warning);'
+            f'padding-left:12px;margin-top:3px;">⚑ {f}</div>'
+            for f in (flags or [])[:10]
         )
-        st.markdown(report_section(
-            idx=f"§{num}", title=title, content=body,
-            label="AI ANALYSIS", label_color="#9D4EDD",
-        ), unsafe_allow_html=True)
+        body = f'<div class="note" style="color:var(--purple-100);">{content}</div>{flags_html}'
+        _sec(num, title, "AI ANALYSIS", "a", body)
 
     # ── Render all 12 sections ────────────────────────────────────────────────
     s1 = secs.get("subject_identity",{})
     _verified_section("01","SUBJECT IDENTITY", s1.get("content","Not found"), s1.get("confidence",0), s1.get("verified_items",[]))
 
-    # ── §02 CONFIDENCE SCORE — score + explanation + breakdown table ─────────
+    # ── §02 CONFIDENCE SCORE ──────────────────────────────────────────────────
     _raw_breakdown  = secs.get("confidence_breakdown", {})
     _conf_breakdown = _raw_breakdown if isinstance(_raw_breakdown, dict) else {}
     _conf_expl      = secs.get("confidence_explanation", "")
-
-    from modules.ui_components import report_section as _rpt_sec
-    _conf_color_val = "#16A34A" if overall >= 75 else "#D97706" if overall >= 50 else "#DC2626"
-    _conf_body = (
-        f'<div style="font-family:\'JetBrains Mono\',monospace;font-size:12px;'
-        f'color:{_conf_color_val};margin-bottom:8px;">'
-        f'Identity Confidence: <span style="font-size:22px;font-family:\'Rajdhani\',sans-serif;'
-        f'font-weight:600;">{overall}</span> / 100</div>'
-        + (f'<div style="font-family:\'JetBrains Mono\',monospace;font-size:11px;color:#9CA3AF;">{_conf_expl}</div>' if _conf_expl else "")
+    _conf_color_val = "var(--online)" if overall >= 75 else "var(--warning)" if overall >= 50 else "var(--critical)"
+    _bd_rows = "".join(
+        f'<div class="assoc" style="grid-template-columns:1fr 100px;">'
+        f'<span class="n">{k.replace("_"," ").title()}</span>'
+        f'<span style="color:{_conf_color_val};text-align:right;">{f"+{v}" if isinstance(v,(int,float)) and v > 0 else str(v)}</span>'
+        f'</div>'
+        for k, v in _conf_breakdown.items()
+    ) if _conf_breakdown else ""
+    _sec("02","OVERALL CONFIDENCE SCORE","CALCULATED","v",
+        f'<div class="note" style="color:{_conf_color_val};font-size:28px;font-family:var(--f-display);font-weight:600;">{overall} <span style="font-size:12px;color:var(--text-dim);">/ 100</span></div>'
+        + (f'<div class="note" style="margin-top:8px;">{_conf_expl}</div>' if _conf_expl else "")
+        + (_bd_rows or "")
     )
-    st.markdown(_rpt_sec("§02","OVERALL CONFIDENCE SCORE", _conf_body, label="CALCULATED", label_color="#9D4EDD"), unsafe_allow_html=True)
-    if _conf_breakdown:
-        _label_map = {
-            "base":                  "Base score",
-            "corroboration_bonus":   "Corroboration bonus",
-            "phones_bonus":          "Phone data bonus",
-            "timeline_bonus":        "Timeline richness bonus",
-            "graph_bonus":           "Graph density bonus",
-            "gap_penalty":           "Data gap penalty",
-            "contradiction_penalty": "Contradiction penalty",
-            "final_score":           "FINAL SCORE",
-        }
-        _table_rows = [
-            {
-                "Component": _label_map.get(k, k.replace("_", " ").title()),
-                "Score":     f"+{v}" if isinstance(v, (int, float)) and v > 0 else str(v),
-            }
-            for k, v in _conf_breakdown.items()
-        ]
-        st.table(_table_rows)
 
     s3 = secs.get("platform_presence",{})
-    _verified_section("03","PLATFORM PRESENCE", s3.get("content","Not found"), s3.get("confidence",0))
     plats_dict = s3.get("platforms",{})
+    plats_html = ""
     if plats_dict:
-        for plat, url in plats_dict.items():
-            if url and url != "Not found":
-                st.markdown(f'<div style="font-size:0.76rem;padding-left:0.8rem;">{_platform_badge(plat)} <a href="{url}" target="_blank" style="color:#7B2FBE;">{url[:55]}...</a></div>', unsafe_allow_html=True)
-            else:
-                st.markdown(f'<div style="font-size:0.76rem;padding-left:0.8rem;color:#4B5563;">{_platform_badge(plat)} Not found</div>', unsafe_allow_html=True)
+        plats_html = '<div class="plats">'
+        for plat, url in list(plats_dict.items())[:8]:
+            found = url and url != "Not found"
+            cls   = "found" if found else "missing"
+            plats_html += (
+                f'<div class="plat {cls}">'
+                f'<span class="name">{plat[:10]}</span>'
+                f'<span class="st">{"FOUND" if found else "NOT FOUND"}</span>'
+                f'</div>'
+            )
+        plats_html += "</div>"
+    _sec("03","PLATFORM PRESENCE","VERIFIED DATA","v",
+        f'<div class="note">{s3.get("content","Not found")}</div>{plats_html}')
 
     s4 = secs.get("public_location_data",{})
     _verified_section("04","PUBLIC LOCATION DATA", s4.get("content","Not found"), s4.get("confidence",0), s4.get("locations",[]))
@@ -2965,19 +3518,17 @@ def screen_reports():
     _verified_section("09","ANOMALIES AND FLAGS", s9.get("content","None detected"), 0, s9.get("flags",[]))
 
     s10 = secs.get("data_gaps",{})
-    st.markdown('<div class="report-section-verified"><div class="report-label-verified">DATA GAPS</div><div style="font-size:0.88rem;font-weight:700;color:#7B2FBE;margin-bottom:4px;">10. DATA GAPS</div></div>', unsafe_allow_html=True)
-    for item in s10.get("items",["None identified"])[:20]:
-        st.markdown(f'<div style="font-size:0.76rem;color:#4B5563;padding-left:0.8rem;">• {item}</div>', unsafe_allow_html=True)
+    _gap_items = s10.get("items",["None identified"])[:20]
+    _gaps_html = "".join(f'<div class="note" style="padding-left:10px;">· {g}</div>' for g in _gap_items)
+    _sec("10","DATA GAPS","ANALYSIS","v", _gaps_html or '<div class="note">None identified.</div>')
 
     s11 = secs.get("source_log",{})
-    with st.expander("11. SOURCE LOG", expanded=False):
-        src_urls = s11.get("urls",[])
-        for u in src_urls[:40]: st.markdown(f'<div style="font-size:0.74rem;color:#7B2FBE;">-> {u}</div>', unsafe_allow_html=True)
-        if not src_urls: st.markdown('<div style="color:#4B5563;font-size:0.8rem;">No URLs logged.</div>', unsafe_allow_html=True)
+    _src_urls = s11.get("urls",[])
+    _src_html = "".join(f'<div class="note" style="color:var(--purple-400);">→ {u}</div>' for u in _src_urls[:40])
+    _sec("11","SOURCE LOG","LOGGED","v", _src_html or '<div class="note" style="color:var(--text-dim);">No URLs logged.</div>')
 
     s12 = secs.get("ai_engine_notes",{})
     _ai_section("12","AI ENGINE NOTES", s12.get("content","Not available"), 0)
-    st.markdown(f'<div style="font-size:0.72rem;color:#4B5563;margin-top:-0.3rem;padding-left:0.5rem;">Model: {s12.get("model","Unknown")}</div>', unsafe_allow_html=True)
 
     # ── Linked Profiles ───────────────────────────────────────────────────────
     person         = st.session_state.person_profile or {}
@@ -3308,7 +3859,7 @@ def screen_reports():
 # ─────────────────────────────────────────────────────────────────────────────
 
 def screen_admin():
-    from modules.ui_components import hash_chain_panel, panel_hdr, log_row as _log_row
+    from modules.ui_components import hash_chain_panel, panel_hdr
     role = st.session_state.get("current_role","")
     if role != config.ROLE_ADMIN:
         st.markdown(
@@ -3320,6 +3871,27 @@ def screen_admin():
         return
 
     screen_header("ADMIN PANEL", "User management · Audit log · System status")
+    st.markdown(
+        '<div class="al-classification-strip">TS//SCI//NOFORN · ADMIN PANEL · OPERATOR ACCESS REQUIRED</div>',
+        unsafe_allow_html=True,
+    )
+
+    # ── Page header with operator info ──────────────────────────────────────────
+    import datetime
+    op_name = (st.session_state.current_user or "ADMIN").upper()
+    st.markdown(
+        f'<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0 16px;">'
+        f'<div>'
+        f'<div style="font-family:var(--f-display);font-weight:600;font-size:22px;letter-spacing:1px;">{op_name}</div>'
+        f'<div style="font-family:var(--f-mono);font-size:9px;letter-spacing:2px;color:var(--text-dim);margin-top:2px;">SYSTEM ADMINISTRATOR · FULL ACCESS</div>'
+        f'</div>'
+        f'<div style="text-align:right;">'
+        f'<div style="font-family:var(--f-mono);font-size:10px;letter-spacing:2px;color:var(--text-secondary);">{datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M")} UTC</div>'
+        f'<div class="status-pill active" style="margin-top:4px;"><span style="width:6px;height:6px;border-radius:50%;background:var(--online);display:inline-block;"></span> SESSION ACTIVE</div>'
+        f'</div>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
 
     tab_users, tab_audit, tab_status = st.tabs(["USER MANAGEMENT","AUDIT LOG","SYSTEM STATUS"])
 
@@ -3327,12 +3899,52 @@ def screen_admin():
     with tab_users:
         import pandas as pd
         users = get_all_users()
+
+        # Styled user table
+        _ROLE_CLS = {"admin": "admin", "analyst": "analyst", "officer": "officer", "viewer": "viewer"}
         if users:
-            df = pd.DataFrame(users)
-            df["status"] = df["is_active"].apply(lambda x: "Active" if x else "Locked")
-            df_display = df[["username","role","created_at","last_login","status"]].copy()
-            df_display.columns = ["Username","Role","Created","Last Login","Status"]
-            st.dataframe(df_display, use_container_width=True, hide_index=True)
+            user_rows_html = ""
+            for u in users:
+                uname   = u.get("username","—")
+                urole   = (u.get("role","viewer") or "viewer").lower()
+                active  = bool(u.get("is_active",1))
+                last_l  = (u.get("last_login") or "—")[:16]
+                ip      = (u.get("last_ip") or u.get("ip","—"))[:16]
+                pill_cls = "active" if active else "locked"
+                pill_lbl = "ACTIVE" if active else "LOCKED"
+                mfa      = u.get("mfa_enabled", False)
+                role_cls = _ROLE_CLS.get(urole, "viewer")
+                user_rows_html += (
+                    f'<div style="display:grid;grid-template-columns:30px 1.5fr 100px 90px 120px 120px 110px 70px auto;'
+                    f'gap:10px;align-items:center;padding:10px 16px;border-bottom:1px solid var(--border-soft);'
+                    f'font-family:var(--f-mono);font-size:11px;">'
+                    f'<span style="color:var(--text-dim);">☐</span>'
+                    f'<span style="color:var(--text-primary);letter-spacing:0.5px;">{uname}</span>'
+                    f'<span class="role-badge {role_cls}" style="font-family:var(--f-mono);font-size:9px;'
+                    f'letter-spacing:2px;padding:2px 8px;border:1px solid;text-transform:uppercase;">{urole}</span>'
+                    f'<span style="color:var(--text-dim);">—</span>'
+                    f'<span style="color:var(--text-secondary);">{last_l}</span>'
+                    f'<span style="color:var(--text-dim);">{ip}</span>'
+                    f'<span class="status-pill {pill_cls}"><span style="width:6px;height:6px;border-radius:50%;'
+                    f'background:{"var(--online)" if active else "var(--critical)"};display:inline-block;margin-right:4px;"></span>{pill_lbl}</span>'
+                    f'<span style="color:{"var(--online)" if mfa else "var(--text-dim)"};">{"MFA" if mfa else "—"}</span>'
+                    f'<span class="row-actions"></span>'
+                    f'</div>'
+                )
+            st.markdown(
+                f'<div class="card" style="padding:0;overflow:hidden;">'
+                f'<div style="display:grid;grid-template-columns:30px 1.5fr 100px 90px 120px 120px 110px 70px auto;'
+                f'gap:10px;padding:10px 16px;border-bottom:1px solid var(--border);'
+                f'font-family:var(--f-mono);font-size:9px;letter-spacing:3px;color:var(--text-dim);text-transform:uppercase;'
+                f'background:rgba(0,0,0,0.3);">'
+                f'<span></span><span>USER</span><span>ROLE</span><span>BADGE</span>'
+                f'<span>LAST LOGIN</span><span>IP</span><span>STATUS</span><span>MFA</span><span>ACTIONS</span>'
+                f'</div>'
+                f'{user_rows_html}'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+
         st.markdown('<hr class="divider">', unsafe_allow_html=True)
         st.markdown(panel_hdr("A·01","ADD USER","PROVISIONING"), unsafe_allow_html=True)
         cu1, cu2, cu3, cu4 = st.columns([2,2,1,1])
@@ -3385,6 +3997,8 @@ def screen_admin():
                           "LOGOUT","ADMIN_USER_CREATED","ADMIN_USER_DELETED",
                           "ADMIN_ROLE_CHANGE","ADMIN_PW_RESET","ADMIN_USER_LOCKED",
                           "ADMIN_USER_UNLOCKED","SESSION_EXPIRED"]
+
+        # Search toolbar
         af1,af2,af3,af4 = st.columns([2,2,2,2])
         with af1: u_flt  = st.selectbox("User filter",   all_users_list, key="al_uf", label_visibility="collapsed")
         with af2: a_flt  = st.selectbox("Action filter", action_types,   key="al_af", label_visibility="collapsed")
@@ -3399,31 +4013,104 @@ def screen_admin():
             date_to         = str(d_to)   if d_to   else None,
         )
         if logs:
-            rows = []
-            for l in logs:
-                detail_raw = l.get("detail","")
-                try:   detail_parsed = json.loads(detail_raw)
-                except: detail_parsed = detail_raw
-                if isinstance(detail_parsed, dict): detail_str = str(detail_parsed.get("query",detail_parsed.get("filename",detail_raw)))[:60]
-                else: detail_str = str(detail_parsed)[:60]
-                rows.append({"Timestamp":l["timestamp"],"User":l.get("username",""),"Action":l.get("event",""),"Detail":detail_str,"IP":l.get("ip","")})
-            df_log = pd.DataFrame(rows)
-            # Hash chain integrity panel
+            import pandas as pd, hashlib as _hl
+            # Hash chain integrity summary
             head_hash = f"{logs[0].get('id',0):04X}·{logs[-1].get('id',0):04X}"
-            st.markdown(hash_chain_panel(len(logs), head_hash, intact=True), unsafe_allow_html=True)
-            st.markdown("<br>", unsafe_allow_html=True)
-            st.dataframe(df_log, use_container_width=True, height=360, hide_index=True)
+            chain_anchor = _hl.sha256(f"{len(logs)}{head_hash}".encode()).hexdigest()[:12].upper()
+            st.markdown(
+                f'<div class="chain-summary">'
+                f'<div class="ch"><div class="k">ENTRIES</div><div class="v">{len(logs)}</div><div class="d">Total log records</div></div>'
+                f'<div class="ch"><div class="k">INTEGRITY</div><div class="v ok">VALID</div><div class="d">Chain intact</div></div>'
+                f'<div class="ch"><div class="k">CHAIN HEAD</div><div class="v" style="font-size:14px;">{head_hash}</div><div class="d">First · Last entry ID</div></div>'
+                f'<div class="ch"><div class="k">NEXT ANCHOR</div><div class="v" style="font-size:11px;">{chain_anchor}</div><div class="d">SHA-256 fragment</div></div>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+
+            # Filter chips
+            st.markdown(
+                '<div style="display:flex;gap:6px;margin:10px 0 6px;flex-wrap:wrap;">'
+                '<div class="chip on"><span class="d" style="background:var(--online);"></span>ALL</div>'
+                '<div class="chip">AUTH</div><div class="chip">INTEL</div>'
+                '<div class="chip">ADMIN</div><div class="chip">REPORT</div>'
+                '</div>',
+                unsafe_allow_html=True,
+            )
+
+            # Styled log table
+            _ACTION_TAG_ADM = {
+                "LOGIN":       ("AUTH",   "var(--online)",   "rgba(22,163,74,0.35)"),
+                "LOGOUT":      ("AUTH",   "var(--text-dim)", "rgba(75,85,99,0.3)"),
+                "SEARCH":      ("INTEL",  "var(--purple-300)","rgba(123,47,190,0.4)"),
+                "REPORT":      ("REPORT", "var(--teal)",     "rgba(13,148,136,0.4)"),
+                "FUSION":      ("FUSION", "var(--warning)",  "rgba(217,119,6,0.4)"),
+                "ADMIN":       ("ADMIN",  "var(--critical)", "rgba(220,38,38,0.4)"),
+                "FILE_UPLOAD": ("UPLOAD", "var(--purple-300)","rgba(123,47,190,0.4)"),
+            }
+            def _adm_tag(event: str):
+                for k, v in _ACTION_TAG_ADM.items():
+                    if event and k in event.upper():
+                        return v
+                return ("SYS", "var(--text-secondary)", "rgba(75,85,99,0.3)")
+
+            log_rows_html = ""
+            for row in logs[:100]:
+                ts     = (row.get("timestamp") or "")[:16]
+                user   = (row.get("username") or "—")[:14]
+                event  = (row.get("event") or row.get("action",""))
+                detail_raw = row.get("detail","") or row.get("details","")
+                try:   detail_p = json.loads(detail_raw)
+                except: detail_p = detail_raw
+                if isinstance(detail_p, dict): detail = str(detail_p.get("query", detail_p.get("filename", str(detail_p))))[:55]
+                else: detail = str(detail_p)[:55]
+                ip     = (row.get("ip") or row.get("ip_address","—"))[:18]
+                tag_lbl, tag_c, tag_bc = _adm_tag(event)
+                log_rows_html += (
+                    f'<div class="log-row admin">'
+                    f'<span class="ts">{ts}</span>'
+                    f'<span class="user">{user}</span>'
+                    f'<span style="font-family:var(--f-mono);font-size:9px;letter-spacing:2px;padding:2px 6px;'
+                    f'border:1px solid {tag_bc};color:{tag_c};text-align:center;">{tag_lbl}</span>'
+                    f'<span style="color:var(--text-primary);">{(event or "").replace("_"," ")[:22]}</span>'
+                    f'<span style="color:var(--text-secondary);">{detail}</span>'
+                    f'<span class="int ok">✓ VALID</span>'
+                    f'</div>'
+                )
+
+            st.markdown(
+                f'<div class="card" style="padding:0;overflow:hidden;">'
+                f'<div class="log-hdr">TIMESTAMP · USER · TAG · ACTION · DETAIL · INTEGRITY</div>'
+                f'<div style="max-height:400px;overflow-y:auto;">{log_rows_html}</div>'
+                f'<div class="pager">'
+                f'<span>SHOWING 1–{min(100,len(logs))} OF {len(logs)}</span>'
+                f'<div class="buttons">'
+                f'<button class="active">1</button>'
+                f'<button>2</button><button>3</button>'
+                f'</div>'
+                f'</div>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+
             st.markdown('<hr class="divider">', unsafe_allow_html=True)
             ec1, ec2 = st.columns(2)
             with ec1:
+                rows_exp = []
+                for l in logs:
+                    detail_raw = l.get("detail","") or l.get("details","")
+                    try:   detail_parsed = json.loads(detail_raw)
+                    except: detail_parsed = detail_raw
+                    if isinstance(detail_parsed, dict): detail_str = str(detail_parsed.get("query",detail_parsed.get("filename",detail_raw)))[:60]
+                    else: detail_str = str(detail_parsed)[:60]
+                    rows_exp.append({"Timestamp":l.get("timestamp",""),"User":l.get("username",""),"Action":l.get("event",""),"Detail":detail_str,"IP":l.get("ip","")})
+                df_log = pd.DataFrame(rows_exp)
                 csv_bytes = df_log.to_csv(index=False).encode()
                 st.download_button("EXPORT CSV", data=csv_bytes, file_name=f"aetherlens_audit_{datetime.datetime.utcnow().strftime('%Y%m%d')}.csv", mime="text/csv", use_container_width=True)
             with ec2:
                 if st.button("EXPORT PDF", use_container_width=True, key="audit_pdf"):
-                    from modules.report_generator import _build_pdf
                     st.info("Audit PDF export: use CSV export and attach to report.")
         else:
-            st.markdown('<div style="color:#4B5563;font-size:0.83rem;">No audit log entries match filters.</div>', unsafe_allow_html=True)
+            st.markdown('<div style="color:var(--text-dim);font-family:var(--f-mono);font-size:11px;padding:16px;">No audit log entries match filters.</div>', unsafe_allow_html=True)
 
     # ── SYSTEM STATUS ─────────────────────────────────────────────────────────
     with tab_status:
@@ -3464,43 +4151,60 @@ def screen_admin():
         else:
             bedrock_status = '<span class="status-err">NOT CONFIGURED</span>'
 
-        stat_cols = st.columns(3)
-        def _status_card(col, title, status_html, detail=""):
-            col.markdown(
-                f'<div style="background:linear-gradient(180deg,rgba(16,0,32,0.88),rgba(10,0,21,0.90));'
-                f'border:1px solid rgba(123,47,190,0.28);padding:12px 14px;">'
-                f'<div style="font-family:\'JetBrains Mono\',monospace;font-size:9px;letter-spacing:3px;'
-                f'color:#4B5563;text-transform:uppercase;">{title}</div>'
-                f'<div style="margin:6px 0;font-family:\'Rajdhani\',sans-serif;font-size:16px;font-weight:600;">{status_html}</div>'
-                f'<div style="font-family:\'JetBrains Mono\',monospace;font-size:9px;color:#4B5563;letter-spacing:1px;">{detail}</div>'
-                f'</div>',
-                unsafe_allow_html=True,
-            )
-        _status_card(stat_cols[0], "BEDROCK · CLAUDE SONNET 4", bedrock_status, f"Mumbai {config.AWS_REGION}")
-        _status_card(stat_cols[1], "GEMINI 2.5 FLASH",          gemini_status,  "Fallback · Entity resolution")
-        _status_card(stat_cols[2], "DATABASE",                  db_status,      str(config.DATABASE_PATH).split("\\")[-1])
+        # Engines grid
+        bedrock_ok_c = "var(--online)" if bedrock_ok else "var(--critical)"
+        gemini_ok_c  = "var(--online)" if gemini_live else ("var(--warning)" if gemini_ok else "var(--critical)")
+        db_ok_c      = "var(--online)" if stats.get("db_ok") else "var(--critical)"
+        bedrock_st_t = "ONLINE" if bedrock_ok else ("KEY LOADED" if config.bedrock_client else "NOT CONFIGURED")
+        gemini_st_t  = "ONLINE" if gemini_live else ("KEY LOADED" if gemini_ok else "NO KEY")
+        db_st_t      = "CONNECTED" if stats.get("db_ok") else "ERROR"
 
-        st.markdown("<br>", unsafe_allow_html=True)
-        num_cols = st.columns(4)
-        from modules.ui_components import stat_card as _sc
-        _sys_metrics = [
-            ("S·01","TOTAL USERS",    stats.get("users",0),       "#9D4EDD"),
-            ("S·02","SEARCHES RUN",   stats.get("searches",0),    "#2563EB"),
-            ("S·03","REPORTS",        stats.get("reports",0),     "#16A34A"),
-            ("S·04","FILES UPLOADED", stats.get("uploads",0),     "#D97706"),
-        ]
-        for col, (idx, lbl, val, c) in zip(num_cols, _sys_metrics):
-            col.markdown(_sc(idx, lbl, str(val), bar_pct=None, bar_color=c), unsafe_allow_html=True)
-
-        st.markdown("<br>", unsafe_allow_html=True)
-        last_ts   = stats.get("last_active","Never")
-        last_user = stats.get("last_user","")
         st.markdown(
-            f'<div style="font-family:\'JetBrains Mono\',monospace;font-size:10px;letter-spacing:1px;color:#4B5563;">'
-            f'LAST ACTIVITY: <span style="color:#9CA3AF;">{last_ts}</span>'
-            f' &nbsp; BY: <span style="color:#C084FC;">{last_user}</span></div>',
+            f'<div class="sys-grid">'
+
+            # Left column — engines
+            f'<div class="card" style="padding:0;overflow:hidden;">'
+            f'<div style="padding:12px 16px 8px;border-bottom:1px solid var(--border-soft);">'
+            f'<div style="font-family:var(--f-mono);font-size:9px;letter-spacing:3px;color:var(--text-dim);text-transform:uppercase;">ENGINE STATUS</div>'
+            f'</div>'
+            f'<div class="sys-row">'
+            f'<div><div class="lbl">BEDROCK · CLAUDE SONNET 4</div><div class="sub">AWS {config.AWS_REGION} · PRIMARY</div></div>'
+            f'<div class="val">—</div>'
+            f'<div class="st ok" style="color:{bedrock_ok_c};">{bedrock_st_t}</div>'
+            f'</div>'
+            f'<div class="sys-row">'
+            f'<div><div class="lbl">GEMINI 2.5 FLASH</div><div class="sub">Google AI · FALLBACK</div></div>'
+            f'<div class="val">—</div>'
+            f'<div class="st" style="color:{gemini_ok_c};">{gemini_st_t}</div>'
+            f'</div>'
+            f'<div class="sys-row">'
+            f'<div><div class="lbl">DATABASE</div><div class="sub">{str(config.DATABASE_PATH).split(chr(92))[-1][:24]}</div></div>'
+            f'<div class="val">—</div>'
+            f'<div class="st ok" style="color:{db_ok_c};">{db_st_t}</div>'
+            f'</div>'
+            f'</div>'
+
+            # Right column — KPIs
+            f'<div class="card" style="padding:0;overflow:hidden;">'
+            f'<div style="padding:12px 16px 8px;border-bottom:1px solid var(--border-soft);">'
+            f'<div style="font-family:var(--f-mono);font-size:9px;letter-spacing:3px;color:var(--text-dim);text-transform:uppercase;">PLATFORM KPIs</div>'
+            f'</div>'
+            f'<div class="kpis">'
+            f'<div class="kpi"><div style="font-family:var(--f-mono);font-size:9px;letter-spacing:3px;color:var(--text-dim);text-transform:uppercase;">TOTAL USERS</div><div class="v">{stats.get("users",0)}</div><div class="d">REGISTERED</div></div>'
+            f'<div class="kpi"><div style="font-family:var(--f-mono);font-size:9px;letter-spacing:3px;color:var(--text-dim);text-transform:uppercase;">SEARCHES RUN</div><div class="v">{stats.get("searches",0)}</div><div class="d">LIFETIME</div></div>'
+            f'<div class="kpi"><div style="font-family:var(--f-mono);font-size:9px;letter-spacing:3px;color:var(--text-dim);text-transform:uppercase;">REPORTS</div><div class="v">{stats.get("reports",0)}</div><div class="d">GENERATED</div></div>'
+            f'<div class="kpi"><div style="font-family:var(--f-mono);font-size:9px;letter-spacing:3px;color:var(--text-dim);text-transform:uppercase;">FILES UPLOADED</div><div class="v">{stats.get("uploads",0)}</div><div class="d">PROCESSED</div></div>'
+            f'</div>'
+            f'<div style="padding:10px 16px;border-top:1px solid var(--border-soft);font-family:var(--f-mono);font-size:9px;letter-spacing:1px;color:var(--text-dim);">'
+            f'LAST ACTIVITY: <span style="color:var(--text-secondary);">{stats.get("last_active","Never")}</span>'
+            f' &nbsp;·&nbsp; BY: <span style="color:var(--purple-300);">{stats.get("last_user","")}</span>'
+            f'</div>'
+            f'</div>'
+
+            f'</div>',
             unsafe_allow_html=True,
         )
+        st.markdown('<div style="margin-top:12px;"></div>', unsafe_allow_html=True)
         if st.button("REFRESH STATUS", key="refresh_status"): st.rerun()
 
 
@@ -3530,145 +4234,306 @@ def _risk_badge(score, level=""):
 # ─────────────────────────────────────────────────────────────────────────────
 
 def screen_command_center():
-    screen_header("COMMAND CENTER", "Intelligence operating system · Live profiles · Knowledge graph · Agent activity")
+    import datetime, hashlib
+    from modules.ui_components import panel_hdr
+    from modules.auth import get_audit_log
 
-    from modules.ui_components import stat_card, panel_hdr, panel, kv_row, log_row
+    username = (st.session_state.current_user or "OPERATOR").upper()
+    role     = (st.session_state.current_role or "ANALYST").upper()
+    agents   = st.session_state.agent_results or {}
     person   = st.session_state.person_profile
     ont_json = st.session_state.ontology_json
     ont_g    = st.session_state.ontology_graph
-    agents   = st.session_state.agent_results or {}
     profiles = st.session_state.active_profiles or []
-
-    # ── Top stat cards ─────────────────────────────────────────────────────────
     risk_r   = agents.get("risk", {})
     comp_r   = agents.get("compliance", {})
-    nodes    = (ont_json or {}).get("node_count", 0)
-    edges    = (ont_json or {}).get("edge_count", 0)
+
+    # Stable dispatch number derived from username (no randomness on rerun)
+    dispatch_num = int(hashlib.md5(username.encode()).hexdigest()[:4], 16) % 9000 + 1000
+    now_utc = datetime.datetime.utcnow()
+
+    # ── Classification strip ───────────────────────────────────────────────────
+    st.markdown(
+        '<div class="al-classification-strip">TS//SCI//NOFORN · AETHERLENS COMMAND CENTER · AUTHORIZED ACCESS ONLY</div>',
+        unsafe_allow_html=True,
+    )
+
+    # ── Greeting ───────────────────────────────────────────────────────────────
+    role_color = {"ADMIN": "var(--critical)", "ANALYST": "var(--purple-300)", "OFFICER": "var(--teal)"}.get(role, "var(--text-secondary)")
+    st.markdown(
+        f'<div class="greet">'
+        f'<h1>OPERATOR <span class="usr">{username}</span> · WELCOME</h1>'
+        f'<div style="text-align:right;">'
+        f'<div class="sub">DISPATCH #{dispatch_num}</div>'
+        f'<div style="font-family:var(--f-mono);font-size:9px;letter-spacing:2px;color:var(--text-dim);margin-top:2px;">'
+        f'{now_utc.strftime("%Y-%m-%d %H:%M")} UTC</div>'
+        f'</div>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
+    # ── Stat cards ─────────────────────────────────────────────────────────────
+    nodes = (ont_json or {}).get("node_count", 0)
+    edges = (ont_json or {}).get("edge_count", 0)
     risk_score = risk_r.get("risk_score", 0)
-    risk_level = risk_r.get("risk_level", "—")
     comp_score = comp_r.get("compliance_score", 100)
+
+    spark_heights = [18, 22, 14, 28, 20, 32, 18, 26, 30, 22, 28, 16]
+    spark_html = "".join(f'<i style="height:{h}px;"></i>' for h in spark_heights)
+
+    st.markdown(
+        f'<div class="status-grid" style="margin:16px 0 20px;">'
+
+        # Card 1 — BEDROCK ENGINE
+        f'<div class="card">'
+        f'<div style="display:flex;justify-content:space-between;align-items:flex-start;">'
+        f'<span style="font-family:var(--f-mono);font-size:9px;letter-spacing:3px;color:var(--text-dim);text-transform:uppercase;">BEDROCK ENGINE</span>'
+        f'<span style="display:inline-flex;align-items:center;gap:6px;font-family:var(--f-mono);font-size:9px;letter-spacing:2px;color:var(--online);">'
+        f'<span style="width:6px;height:6px;border-radius:50%;background:var(--online);box-shadow:0 0 6px var(--online);display:inline-block;"></span>ONLINE</span>'
+        f'</div>'
+        f'<div style="font-family:var(--f-display);font-weight:600;font-size:22px;color:var(--text-primary);letter-spacing:-0.3px;margin:8px 0 4px;">CLAUDE S4</div>'
+        f'<div style="font-family:var(--f-mono);font-size:9px;letter-spacing:2px;color:var(--text-dim);">AWS BEDROCK · US-EAST-1</div>'
+        f'</div>'
+
+        # Card 2 — ACTIVE SESSION
+        f'<div class="card">'
+        f'<div style="font-family:var(--f-mono);font-size:9px;letter-spacing:3px;color:var(--text-dim);text-transform:uppercase;margin-bottom:8px;">ACTIVE SESSION</div>'
+        f'<div style="font-family:var(--f-display);font-weight:600;font-size:22px;color:var(--text-primary);letter-spacing:-0.3px;">{username[:14]}</div>'
+        f'<div style="margin-top:6px;">'
+        f'<span class="role-badge {role.lower()}" style="font-family:var(--f-mono);font-size:9px;letter-spacing:2px;padding:2px 8px;border:1px solid;text-transform:uppercase;color:{role_color};">{role}</span>'
+        f'</div>'
+        f'</div>'
+
+        # Card 3 — SYSTEM STATUS
+        f'<div class="card">'
+        f'<div style="font-family:var(--f-mono);font-size:9px;letter-spacing:3px;color:var(--text-dim);text-transform:uppercase;margin-bottom:8px;">SYSTEM STATUS</div>'
+        f'<div style="font-family:var(--f-display);font-weight:600;font-size:22px;color:var(--online);letter-spacing:-0.3px;">NOMINAL</div>'
+        f'<div style="font-family:var(--f-mono);font-size:9px;letter-spacing:2px;color:var(--text-dim);margin-top:4px;">{nodes} NODES · {edges} EDGES</div>'
+        f'</div>'
+
+        # Card 4 — THROUGHPUT
+        f'<div class="card">'
+        f'<div style="font-family:var(--f-mono);font-size:9px;letter-spacing:3px;color:var(--text-dim);text-transform:uppercase;margin-bottom:8px;">THROUGHPUT</div>'
+        f'<div class="spark">{spark_html}</div>'
+        f'<div style="font-family:var(--f-mono);font-size:9px;letter-spacing:2px;color:var(--text-dim);margin-top:6px;">REQUESTS PER MIN</div>'
+        f'</div>'
+
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
+    # ── Two-column layout: activity log | workload KPIs + threat queue ─────────
+    audit_rows = []
+    try:
+        audit_rows = get_audit_log(limit=12)
+    except Exception:
+        pass
+
+    _ACTION_TAG = {
+        "LOGIN":            ("AUTH",    "var(--online)",    "rgba(22,163,74,0.35)"),
+        "LOGOUT":           ("AUTH",    "var(--text-dim)",  "rgba(75,85,99,0.4)"),
+        "SEARCH":           ("INTEL",   "var(--purple-300)","rgba(123,47,190,0.4)"),
+        "REPORT_BUILD":     ("REPORT",  "var(--teal)",      "rgba(13,148,136,0.4)"),
+        "FUSION_RUN":       ("FUSION",  "var(--warning)",   "rgba(217,119,6,0.4)"),
+        "ADMIN_USER_LOCKED":("ADMIN",   "var(--critical)",  "rgba(220,38,38,0.4)"),
+    }
+
+    def _action_tag(action: str):
+        for k, v in _ACTION_TAG.items():
+            if action and k in action:
+                return v
+        return ("SYS", "var(--text-secondary)", "rgba(75,85,99,0.3)")
+
+    log_rows_html = ""
+    for row in audit_rows:
+        ts      = (row.get("timestamp") or "")[:16]
+        user    = (row.get("username") or "—")[:12]
+        action  = row.get("action") or ""
+        details = (row.get("details") or "—")[:60]
+        ip      = (row.get("ip_address") or "—")[:18]
+        tag_lbl, tag_c, tag_bc = _action_tag(action)
+        action_short = action.replace("_", " ")[:18]
+        log_rows_html += (
+            f'<div class="log-row admin">'
+            f'<span class="ts">{ts}</span>'
+            f'<span class="user">{user}</span>'
+            f'<span style="font-family:var(--f-mono);font-size:9px;letter-spacing:2px;padding:2px 6px;'
+            f'border:1px solid {tag_bc};color:{tag_c};text-align:center;">{tag_lbl}</span>'
+            f'<span style="color:var(--text-primary);font-size:11px;">{action_short}</span>'
+            f'<span style="color:var(--text-dim);font-size:10px;">{details}</span>'
+            f'<span class="int ok">✓ VALID</span>'
+            f'</div>'
+        )
+    if not log_rows_html:
+        log_rows_html = (
+            '<div style="padding:24px 16px;text-align:center;font-family:var(--f-mono);'
+            'font-size:10px;letter-spacing:2px;color:var(--text-dim);">NO AUDIT LOG ENTRIES</div>'
+        )
+
+    # Build threat queue from risk factors
+    risk_factors = risk_r.get("risk_factors", [])
+    threat_html = ""
+    _sev_map = {"HIGH": ("hi", "CRITICAL"), "MEDIUM": ("md", "MEDIUM"), "LOW": ("lo", "LOW")}
+    for fac in risk_factors[:4]:
+        sev_key   = (fac.get("severity") or fac.get("level") or "LOW").upper()
+        sev_cls, sev_lbl = _sev_map.get(sev_key, ("lo", "LOW"))
+        factor    = (fac.get("factor") or "Unknown")[:40]
+        evidence  = (fac.get("evidence") or "")[:60]
+        src       = (fac.get("source") or "ANALYSIS ENGINE")[:22]
+        threat_html += (
+            f'<div class="threat">'
+            f'<div class="sev {sev_cls}">{sev_lbl}</div>'
+            f'<div class="body">'
+            f'<div class="title">{factor}</div>'
+            f'<div class="meta">{evidence or src}</div>'
+            f'</div>'
+            f'</div>'
+        )
+    if not threat_html:
+        threat_html = (
+            '<div style="padding:20px 16px;text-align:center;font-family:var(--f-mono);'
+            'font-size:10px;letter-spacing:2px;color:var(--text-dim);">NO ACTIVE THREATS · RUN AN ANALYSIS TO POPULATE</div>'
+        )
+
+    # KPI mini-tiles
+    risk_score = risk_r.get("risk_score", 0)
+    kpi_risk_c = "var(--critical)" if risk_score >= 70 else "var(--warning)" if risk_score >= 40 else "var(--online)"
     cleared    = comp_r.get("cleared_for_export", True)
+    patt_count = len(agents.get("patterns", {}).get("patterns_found", []))
+    steps_count = len(agents.get("next_steps", {}).get("next_steps", []))
+    kpi_tiles_html = (
+        f'<div class="kpi-row">'
+        f'<div class="kpi">'
+        f'<div style="font-family:var(--f-mono);font-size:9px;letter-spacing:3px;color:var(--text-dim);text-transform:uppercase;">RISK SCORE</div>'
+        f'<div class="v" style="color:{kpi_risk_c};">{risk_score}</div>'
+        f'</div>'
+        f'<div class="kpi">'
+        f'<div style="font-family:var(--f-mono);font-size:9px;letter-spacing:3px;color:var(--text-dim);text-transform:uppercase;">EXPORT</div>'
+        f'<div class="v" style="color:{"var(--online)" if cleared else "var(--critical)"};">{"OK" if cleared else "FLAG"}</div>'
+        f'</div>'
+        f'<div class="kpi">'
+        f'<div style="font-family:var(--f-mono);font-size:9px;letter-spacing:3px;color:var(--text-dim);text-transform:uppercase;">PATTERNS</div>'
+        f'<div class="v">{patt_count}</div>'
+        f'</div>'
+        f'<div class="kpi">'
+        f'<div style="font-family:var(--f-mono);font-size:9px;letter-spacing:3px;color:var(--text-dim);text-transform:uppercase;">PROFILES</div>'
+        f'<div class="v">{len(profiles)}</div>'
+        f'</div>'
+        f'</div>'
+    )
 
-    t1, t2, t3, t4 = st.columns(4)
-    with t1:
-        st.markdown(stat_card("C·01","ACTIVE PROFILES", str(len(profiles)),
-            meta_lines=[("STATUS","LIVE TRACKING")], bar_pct=min(len(profiles)*10,100)), unsafe_allow_html=True)
-    with t2:
-        st.markdown(stat_card("C·02","KNOWLEDGE GRAPH", str(nodes),
-            meta_lines=[("NODES",str(nodes)),("EDGES",str(edges))]), unsafe_allow_html=True)
-    with t3:
-        rc = "#DC2626" if risk_score >= 70 else "#D97706" if risk_score >= 40 else "#16A34A"
-        st.markdown(stat_card("C·03","RISK SCORE", str(risk_score),
-            meta_lines=[("LEVEL", risk_level)], bar_pct=risk_score, bar_color=rc), unsafe_allow_html=True)
-    with t4:
-        cc = "#16A34A" if cleared else "#DC2626"
-        st.markdown(stat_card("C·04","COMPLIANCE", f"{comp_score}%",
-            meta_lines=[("EXPORT", "CLEARED" if cleared else "FLAGGED")],
-            bar_pct=comp_score, bar_color=cc), unsafe_allow_html=True)
+    st.markdown(
+        f'<div class="cols">'
 
-    st.markdown('<hr class="divider">', unsafe_allow_html=True)
+        # ── Left: activity log ────────────────────────────────────────────────
+        f'<div class="card" style="padding:0;overflow:hidden;">'
+        f'<div style="padding:14px 16px 10px;border-bottom:1px solid var(--border-soft);display:flex;justify-content:space-between;align-items:center;">'
+        f'<div style="font-family:var(--f-mono);font-size:9px;letter-spacing:3px;color:var(--text-dim);text-transform:uppercase;">ACTIVITY LOG</div>'
+        f'<div style="font-family:var(--f-mono);font-size:9px;letter-spacing:2px;color:var(--online);">LIVE</div>'
+        f'</div>'
+        f'<div class="log-hdr">TIMESTAMP · USER · TAG · ACTION · DETAILS · INTEGRITY</div>'
+        f'<div style="max-height:340px;overflow-y:auto;">{log_rows_html}</div>'
+        f'</div>'
 
-    # ── Four panels ───────────────────────────────────────────────────────────
-    left_col, center_col, right_col = st.columns([1, 2, 1])
+        # ── Right: KPIs + threat queue ─────────────────────────────────────────
+        f'<div style="display:flex;flex-direction:column;gap:14px;">'
 
-    # PANEL 1 — ACTIVE INTELLIGENCE
-    with left_col:
-        st.markdown(panel_hdr("P·01","ACTIVE INTELLIGENCE","LIVE"), unsafe_allow_html=True)
-        if not profiles:
-            st.markdown(
-                '<div style="font-family:\'JetBrains Mono\',monospace;font-size:11px;'
-                'color:#4B5563;letter-spacing:1px;padding:12px 0;">No profiles built yet.<br>Run a search to populate.</div>',
-                unsafe_allow_html=True,
-            )
-        else:
-            for i, prof in enumerate(profiles[:15]):
-                rs   = prof.get("risk_score", 0)
-                rl   = prof.get("risk_level", "LOW")
-                name = prof.get("name", "Unknown")[:28]
-                plat = prof.get("platforms", 0)
-                upd  = prof.get("updated_at", "")
-                rc   = "#DC2626" if rs >= 70 else "#D97706" if rs >= 40 else "#16A34A"
+        f'<div class="card" style="padding:0;overflow:hidden;">'
+        f'<div style="padding:14px 16px 10px;border-bottom:1px solid var(--border-soft);">'
+        f'<div style="font-family:var(--f-mono);font-size:9px;letter-spacing:3px;color:var(--text-dim);text-transform:uppercase;">WORKLOAD KPIs</div>'
+        f'</div>'
+        f'{kpi_tiles_html}'
+        f'</div>'
+
+        f'<div class="card" style="padding:0;overflow:hidden;">'
+        f'<div style="padding:14px 16px 10px;border-bottom:1px solid var(--border-soft);display:flex;justify-content:space-between;align-items:center;">'
+        f'<div style="font-family:var(--f-mono);font-size:9px;letter-spacing:3px;color:var(--text-dim);text-transform:uppercase;">ACTIVE THREAT QUEUE</div>'
+        f'<div style="font-family:var(--f-mono);font-size:9px;letter-spacing:2px;color:var(--critical);">{len(risk_factors)} ACTIVE</div>'
+        f'</div>'
+        f'{threat_html}'
+        f'</div>'
+
+        f'</div>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
+    # ── Knowledge graph + entity detail (collapsible) ─────────────────────────
+    st.markdown('<div style="margin-top:18px;"></div>', unsafe_allow_html=True)
+    with st.expander("KNOWLEDGE GRAPH · ENTITY DETAIL", expanded=False):
+        left_col, center_col, right_col = st.columns([1, 2, 1])
+
+        with left_col:
+            st.markdown(panel_hdr("P·01","ACTIVE INTELLIGENCE","LIVE"), unsafe_allow_html=True)
+            if not profiles:
                 st.markdown(
-                    f'<div style="background:rgba(16,0,32,0.70);border:1px solid rgba(123,47,190,0.25);'
-                    f'padding:8px 12px;margin-bottom:4px;">'
-                    f'<div style="font-family:\'Rajdhani\',sans-serif;font-weight:600;font-size:15px;'
-                    f'letter-spacing:1px;color:#F0EAD6;">{name}</div>'
-                    f'<div style="display:flex;gap:8px;margin-top:4px;flex-wrap:wrap;align-items:center;">'
-                    f'<span style="font-family:\'JetBrains Mono\',monospace;font-size:9px;letter-spacing:2px;'
-                    f'border:1px solid {rc};color:{rc};padding:1px 6px;">{rl} · {rs}</span>'
-                    f'<span style="font-family:\'JetBrains Mono\',monospace;font-size:9px;color:#4B5563;">{plat} platforms</span>'
-                    f'<span style="font-family:\'JetBrains Mono\',monospace;font-size:9px;color:#4B5563;">{upd}</span>'
-                    f'</div></div>',
+                    '<div style="font-family:var(--f-mono);font-size:11px;color:var(--text-dim);'
+                    'letter-spacing:1px;padding:12px 0;">No profiles built yet.</div>',
                     unsafe_allow_html=True,
                 )
-                c1, c2 = st.columns(2)
-                with c1:
-                    if st.button("VIEW", key=f"cc_view_{i}", use_container_width=True):
-                        st.session_state.active_screen = "reports"; st.rerun()
-                with c2:
-                    if st.button("GRAPH", key=f"cc_graph_{i}", use_container_width=True):
-                        st.session_state.active_screen = "analysis_workbench"; st.rerun()
-
-    # PANEL 2 — KNOWLEDGE GRAPH
-    with center_col:
-        st.markdown(panel_hdr("P·02","KNOWLEDGE GRAPH","ONTOLOGY"), unsafe_allow_html=True)
-        # Filters
-        fc1, fc2 = st.columns(2)
-        with fc1:
-            filter_type = st.selectbox("Entity type", ["ALL","PERSON","LOCATION","EVENT","NETWORK","DEVICE"],
-                                        key="cc_filter_type_sel", label_visibility="collapsed")
-        with fc2:
-            min_risk = st.slider("Min risk", 0, 100, 0, key="cc_min_risk", label_visibility="collapsed")
-
-        if ont_g and ont_g.graph.number_of_nodes() > 0:
-            try:
-                fig = ont_g.to_plotly_figure(
-                    filter_type=None if filter_type == "ALL" else filter_type,
-                    min_risk=float(min_risk),
-                )
-                if fig:
-                    st.plotly_chart(fig, use_container_width=True)
-            except Exception as e:
-                st.markdown(f'<div style="color:#4B5563;font-size:0.8rem;">Graph render error: {e}</div>', unsafe_allow_html=True)
-        else:
-            st.markdown(
-                '<div style="background:#05000D;border:1px dashed rgba(123,47,190,0.25);'
-                'padding:2rem;text-align:center;font-family:\'JetBrains Mono\',monospace;'
-                'font-size:10px;letter-spacing:2px;color:#4B5563;">'
-                'NO ONTOLOGY DATA · RUN A SEARCH TO BUILD THE KNOWLEDGE GRAPH</div>',
-                unsafe_allow_html=True,
-            )
-
-    # PANEL 3 — ENTITY DETAIL
-    with right_col:
-        st.markdown(panel_hdr("P·03","ENTITY DETAIL","SELECTED"), unsafe_allow_html=True)
-        selected = st.session_state.get("selected_entity_id")
-        if selected and ont_g:
-            summary = ont_g.get_entity_summary(selected)
-            if summary:
-                ent = summary.get("entity", {})
-                st.markdown(f'**{ent.get("name","Unknown")}**')
-                st.markdown(f'Type: `{ent.get("entity_type","")}`')
-                st.markdown(f'Risk: {_risk_badge(ent.get("risk_score",0))}', unsafe_allow_html=True)
-                st.markdown(f'Confidence: {ent.get("confidence",0):.0f}%')
-                if ent.get("emails"):
-                    st.markdown(f'Emails: {", ".join(ent["emails"][:3])}')
-                if ent.get("locations"):
-                    st.markdown(f'Locations: {", ".join(str(l) for l in ent["locations"][:3])}')
-                conns = summary.get("connected_entities", [])
-                if conns:
-                    st.markdown(f'**Connections ({len(conns)})**')
-                    for c in conns[:8]:
-                        st.markdown(f'• {c.get("label","")} `{c.get("entity_type","")}`')
-                st.markdown('<hr class="divider">', unsafe_allow_html=True)
-                if st.button("BUILD FULL REPORT", use_container_width=True, key="cc_build_report"):
-                    st.session_state.active_screen = "reports"; st.rerun()
-                if st.button("ANALYSIS WORKBENCH", use_container_width=True, key="cc_wb"):
-                    st.session_state.active_screen = "analysis_workbench"; st.rerun()
-        else:
-            if not person:
-                st.markdown('<div style="color:#4B5563;font-size:0.8rem;">Run a search to see entity details.</div>', unsafe_allow_html=True)
             else:
+                for i, prof in enumerate(profiles[:8]):
+                    rs   = prof.get("risk_score", 0)
+                    rl   = prof.get("risk_level", "LOW")
+                    name = prof.get("name", "Unknown")[:26]
+                    rc   = "#DC2626" if rs >= 70 else "#D97706" if rs >= 40 else "#16A34A"
+                    st.markdown(
+                        f'<div style="background:rgba(16,0,32,0.70);border:1px solid rgba(123,47,190,0.25);'
+                        f'padding:6px 10px;margin-bottom:3px;font-family:var(--f-mono);font-size:11px;">'
+                        f'<span style="color:#F0EAD6;">{name}</span>'
+                        f'<span style="float:right;font-size:9px;border:1px solid {rc};color:{rc};padding:1px 5px;">{rl}</span>'
+                        f'</div>',
+                        unsafe_allow_html=True,
+                    )
+                    if st.button("VIEW REPORT", key=f"cc_view_{i}", use_container_width=True):
+                        st.session_state.active_screen = "reports"; st.rerun()
+
+        with center_col:
+            st.markdown(panel_hdr("P·02","KNOWLEDGE GRAPH","ONTOLOGY"), unsafe_allow_html=True)
+            fc1, fc2 = st.columns(2)
+            with fc1:
+                filter_type = st.selectbox("Entity type", ["ALL","PERSON","LOCATION","EVENT","NETWORK","DEVICE"],
+                                            key="cc_filter_type_sel", label_visibility="collapsed")
+            with fc2:
+                min_risk = st.slider("Min risk", 0, 100, 0, key="cc_min_risk", label_visibility="collapsed")
+            if ont_g and ont_g.graph.number_of_nodes() > 0:
+                try:
+                    fig = ont_g.to_plotly_figure(
+                        filter_type=None if filter_type == "ALL" else filter_type,
+                        min_risk=float(min_risk),
+                    )
+                    if fig:
+                        st.plotly_chart(fig, use_container_width=True)
+                except Exception as e:
+                    st.markdown(f'<div style="color:var(--text-dim);font-size:0.8rem;">Graph render error: {e}</div>', unsafe_allow_html=True)
+            else:
+                st.markdown(
+                    '<div style="background:#05000D;border:1px dashed rgba(123,47,190,0.25);'
+                    'padding:2rem;text-align:center;font-family:var(--f-mono);'
+                    'font-size:10px;letter-spacing:2px;color:var(--text-dim);">'
+                    'NO ONTOLOGY DATA · RUN A SEARCH TO BUILD THE KNOWLEDGE GRAPH</div>',
+                    unsafe_allow_html=True,
+                )
+
+        with right_col:
+            st.markdown(panel_hdr("P·03","ENTITY DETAIL","SELECTED"), unsafe_allow_html=True)
+            selected = st.session_state.get("selected_entity_id")
+            if selected and ont_g:
+                summary = ont_g.get_entity_summary(selected)
+                if summary:
+                    ent = summary.get("entity", {})
+                    st.markdown(f'**{ent.get("name","Unknown")}**')
+                    st.markdown(f'Type: `{ent.get("entity_type","")}`')
+                    st.markdown(f'Risk: {_risk_badge(ent.get("risk_score",0))}', unsafe_allow_html=True)
+                    st.markdown(f'Confidence: {ent.get("confidence",0):.0f}%')
+                    conns = summary.get("connected_entities", [])
+                    if conns:
+                        st.markdown(f'**Connections ({len(conns)})**')
+                        for c in conns[:6]:
+                            st.markdown(f'• {c.get("label","")} `{c.get("entity_type","")}`')
+                    if st.button("BUILD FULL REPORT", use_container_width=True, key="cc_build_report"):
+                        st.session_state.active_screen = "reports"; st.rerun()
+            elif person:
                 st.markdown(f'**{person.get("confirmed_name","Unknown")}**')
                 rs = risk_r.get("risk_score", 0)
                 rl = risk_r.get("risk_level", "")
@@ -3676,99 +4541,57 @@ def screen_command_center():
                 st.markdown(f'Confidence: {person.get("confidence_score",0):.0f}%')
                 plats = person.get("platforms_confirmed", [])
                 if plats:
-                    st.markdown(f'Platforms: {", ".join(plats[:6])}')
-                locs = person.get("location_stated", [])
-                if locs:
-                    st.markdown(f'Locations: {", ".join(str(l) for l in locs[:3])}')
-                emails = person.get("emails_found", [])
-                if emails:
-                    st.markdown(f'Emails: {", ".join(emails[:2])}')
-
-    # PANEL 4 — AGENT ACTIVITY FEED (bottom full-width)
-    st.markdown('<hr class="divider">', unsafe_allow_html=True)
-    st.markdown(panel_hdr("P·04","AGENT ACTIVITY FEED","LIVE LOG"), unsafe_allow_html=True)
-    _AGENT_COLORS = {
-        "RiskAgent":       "#DC2626",
-        "PatternAgent":    "#4B9FE1",
-        "NextStepAgent":   "#16A34A",
-        "ComplianceAgent": "#D97706",
-    }
-    try:
-        from modules.ai_agents import get_agent_activity_log
-        log = get_agent_activity_log(limit=50)
-    except Exception:
-        log = []
-
-    agent_filter = st.selectbox("Filter agent", ["ALL","RiskAgent","PatternAgent","NextStepAgent","ComplianceAgent"],
-                                 key="cc_agent_filter", label_visibility="collapsed")
-    feed_rows = [l for l in log if agent_filter == "ALL" or l.get("agent") == agent_filter]
-
-    if feed_rows:
-        _AGENT_TAG_MAP = {
-            "RiskAgent":       ("RISK",   "#DC2626", "rgba(220,38,38,0.4)"),
-            "PatternAgent":    ("PATTERN","#2563EB", "rgba(37,99,235,0.4)"),
-            "NextStepAgent":   ("NEXTSTEP","#16A34A","rgba(22,163,74,0.4)"),
-            "ComplianceAgent": ("COMPLY", "#D97706", "rgba(217,119,6,0.4)"),
-        }
-        feed_html = (
-            '<div style="background:#05000D;border:1px solid rgba(123,47,190,0.14);'
-            'max-height:200px;overflow-y:auto;">'
-        )
-        for entry in feed_rows[:30]:
-            ag    = entry.get("agent", "")
-            ts    = entry.get("run_at", "")[:16]
-            res   = entry.get("result", "")[:70]
-            uid_e = entry.get("user_id", "")
-            tag_lbl, tag_c, tag_bc = _AGENT_TAG_MAP.get(ag, (ag[:8], "#9CA3AF", "rgba(156,163,175,0.3)"))
-            feed_html += (
-                f'<div style="display:grid;grid-template-columns:100px 90px 80px 1fr auto;gap:10px;'
-                f'align-items:center;padding:6px 12px;border-bottom:1px solid rgba(123,47,190,0.10);'
-                f'font-family:\'JetBrains Mono\',monospace;font-size:10px;">'
-                f'<span style="color:#4B5563;">{ts}</span>'
-                f'<span style="color:#C084FC;">{ag[:14]}</span>'
-                f'<span style="font-size:8px;letter-spacing:2px;border:1px solid {tag_bc};'
-                f'color:{tag_c};padding:1px 5px;text-align:center;">{tag_lbl}</span>'
-                f'<span style="color:#F0EAD6;">{res}</span>'
-                f'<span style="color:#4B5563;font-size:9px;">[{uid_e}]</span>'
-                f'</div>'
-            )
-        feed_html += '</div>'
-        st.markdown(feed_html, unsafe_allow_html=True)
-    else:
-        st.markdown(
-            '<div style="font-family:\'JetBrains Mono\',monospace;font-size:11px;'
-            'color:#4B5563;letter-spacing:1px;padding:12px 0;">No agent activity recorded yet.</div>',
-            unsafe_allow_html=True,
-        )
-
-    # Quick-access AI agent panels
-    if agents:
-        st.markdown('<hr class="divider">', unsafe_allow_html=True)
-        a1, a2, a3, a4 = st.columns(4)
-        with a1:
-            st.markdown('<div style="font-size:0.72rem;color:#DC2626;font-weight:700;">RISK ASSESSMENT</div>', unsafe_allow_html=True)
-            if risk_r.get("risk_factors"):
-                for f in risk_r["risk_factors"][:3]:
-                    st.markdown(f'<div style="font-size:0.7rem;color:#9CA3AF;">• {f.get("factor","")}: <span style="color:#F0EAD6;">{f.get("evidence","")[:50]}</span></div>', unsafe_allow_html=True)
-        with a2:
-            st.markdown('<div style="font-size:0.72rem;color:#4B9FE1;font-weight:700;">PATTERNS DETECTED</div>', unsafe_allow_html=True)
-            patt = agents.get("patterns", {}).get("patterns_found", [])
-            for p in patt[:3]:
-                sig_color = "#DC2626" if p.get("significance") == "HIGH" else "#D97706" if p.get("significance") == "MEDIUM" else "#555"
-                st.markdown(f'<div style="font-size:0.7rem;color:{sig_color};">• {p.get("pattern_type","")}: <span style="color:#9CA3AF;">{p.get("description","")[:50]}</span></div>', unsafe_allow_html=True)
-        with a3:
-            st.markdown('<div style="font-size:0.72rem;color:#16A34A;font-weight:700;">NEXT STEPS</div>', unsafe_allow_html=True)
-            steps = agents.get("next_steps", {}).get("next_steps", [])
-            for s in steps[:3]:
-                st.markdown(f'<div style="font-size:0.7rem;color:#9CA3AF;">{s.get("step_number",".")}. {s.get("action","")[:60]}</div>', unsafe_allow_html=True)
-        with a4:
-            st.markdown('<div style="font-size:0.72rem;color:#D97706;font-weight:700;">COMPLIANCE</div>', unsafe_allow_html=True)
-            comp_flags = comp_r.get("flags", [])
-            if comp_flags:
-                for fl in comp_flags[:3]:
-                    st.markdown(f'<div style="font-size:0.7rem;color:#D97706;">⚑ {fl.get("concern","")[:60]}</div>', unsafe_allow_html=True)
+                    st.markdown(f'Platforms: {", ".join(plats[:4])}')
+                if st.button("ANALYSIS WORKBENCH", use_container_width=True, key="cc_wb"):
+                    st.session_state.active_screen = "analysis_workbench"; st.rerun()
             else:
-                st.markdown('<div style="font-size:0.7rem;color:#16A34A;">✓ No compliance flags</div>', unsafe_allow_html=True)
+                st.markdown('<div style="color:var(--text-dim);font-size:0.8rem;">Run a search to see entity details.</div>', unsafe_allow_html=True)
+
+    # ── Agent activity feed (collapsible) ─────────────────────────────────────
+    with st.expander("AGENT ACTIVITY FEED", expanded=False):
+        try:
+            from modules.ai_agents import get_agent_activity_log
+            log = get_agent_activity_log(limit=50)
+        except Exception:
+            log = []
+        _AGENT_TAG_MAP = {
+            "RiskAgent":       ("RISK",    "#DC2626", "rgba(220,38,38,0.4)"),
+            "PatternAgent":    ("PATTERN", "#2563EB", "rgba(37,99,235,0.4)"),
+            "NextStepAgent":   ("NEXTSTEP","#16A34A", "rgba(22,163,74,0.4)"),
+            "ComplianceAgent": ("COMPLY",  "#D97706", "rgba(217,119,6,0.4)"),
+        }
+        agent_filter = st.selectbox("Filter agent", ["ALL","RiskAgent","PatternAgent","NextStepAgent","ComplianceAgent"],
+                                     key="cc_agent_filter", label_visibility="collapsed")
+        feed_rows = [l for l in log if agent_filter == "ALL" or l.get("agent") == agent_filter]
+        if feed_rows:
+            feed_html = (
+                '<div style="background:#05000D;border:1px solid rgba(123,47,190,0.14);'
+                'max-height:220px;overflow-y:auto;">'
+                '<div class="log-hdr">TIMESTAMP · AGENT · TAG · RESULT · USER</div>'
+            )
+            for entry in feed_rows[:30]:
+                ag    = entry.get("agent", "")
+                ts    = entry.get("run_at", "")[:16]
+                res   = entry.get("result", "")[:70]
+                uid_e = entry.get("user_id", "")
+                tag_lbl, tag_c, tag_bc = _AGENT_TAG_MAP.get(ag, (ag[:8], "#9CA3AF", "rgba(156,163,175,0.3)"))
+                feed_html += (
+                    f'<div class="log-row admin">'
+                    f'<span class="ts">{ts}</span>'
+                    f'<span class="user">{ag[:14]}</span>'
+                    f'<span style="font-size:9px;letter-spacing:2px;border:1px solid {tag_bc};'
+                    f'color:{tag_c};padding:2px 6px;text-align:center;">{tag_lbl}</span>'
+                    f'<span style="color:var(--text-primary);grid-column:4/7;">{res}</span>'
+                    f'</div>'
+                )
+            feed_html += '</div>'
+            st.markdown(feed_html, unsafe_allow_html=True)
+        else:
+            st.markdown(
+                '<div style="font-family:var(--f-mono);font-size:11px;color:var(--text-dim);'
+                'letter-spacing:1px;padding:12px 0;">No agent activity recorded yet.</div>',
+                unsafe_allow_html=True,
+            )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -3776,169 +4599,321 @@ def screen_command_center():
 # ─────────────────────────────────────────────────────────────────────────────
 
 def screen_analysis_workbench():
-    screen_header("ANALYSIS WORKBENCH", "Deep entity analysis · Graph · Timeline · Agent outputs")
+    screen_header("ANALYSIS WORKBENCH", "Deep entity analysis · Knowledge graph · Timeline · Agent outputs")
+    st.markdown(
+        '<div class="al-classification-strip">TS//SCI//NOFORN · ANALYSIS WORKBENCH · DEEP ENTITY INTELLIGENCE</div>',
+        unsafe_allow_html=True,
+    )
     person   = st.session_state.person_profile
     ont_g    = st.session_state.ontology_graph
     agents   = st.session_state.agent_results or {}
+    tl       = st.session_state.timeline_data
 
     if not person and not ont_g:
         st.markdown(
-            '<div class="panel" style="text-align:center;padding:3rem 1rem;margin-top:1rem;">'
+            '<div class="card" style="text-align:center;padding:3rem 1rem;margin-top:1rem;">'
             '<div style="font-family:var(--f-mono);font-size:11px;color:var(--text-dim);'
             'letter-spacing:2px;">NO DATA · RUN A SEARCH FIRST TO POPULATE THE WORKBENCH</div>'
             '</div>',
             unsafe_allow_html=True,
         )
-        if st.button("GO TO SEARCH"): st.session_state.active_screen = "search"; st.rerun()
+        if st.button("GO TO SEARCH", key="wb_go_search"):
+            st.session_state.active_screen = "search"; st.rerun()
         return
 
     left, center, right = st.columns([1, 2, 1])
 
     # ── Left: entity list ──────────────────────────────────────────────────────
     with left:
-        from modules.ui_components import panel_hdr as _phdr
-        st.markdown(_phdr("W·01","ENTITIES","ONTOLOGY"), unsafe_allow_html=True)
+        _etype_colors = {
+            "PERSON":   "var(--purple-300)",
+            "LOCATION": "var(--teal)",
+            "DEVICE":   "var(--warning)",
+            "ORG":      "var(--online)",
+            "EVENT":    "var(--purple-100)",
+        }
+        nodes_n = ont_g.graph.number_of_nodes() if ont_g else 0
+        edges_n = ont_g.graph.number_of_edges() if ont_g else 0
+        st.markdown(
+            f'<div class="card" style="padding:0;overflow:hidden;">'
+            f'<div style="padding:12px 14px 8px;border-bottom:1px solid var(--border-soft);'
+            f'display:flex;justify-content:space-between;align-items:center;">'
+            f'<div style="font-family:var(--f-mono);font-size:9px;letter-spacing:3px;'
+            f'color:var(--text-dim);text-transform:uppercase;">ENTITY INDEX</div>'
+            f'<div style="font-family:var(--f-mono);font-size:9px;color:var(--purple-300);">'
+            f'{nodes_n}N · {edges_n}E</div>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
         if ont_g:
             for eid, ent in list(ont_g._entities.items())[:20]:
-                label = getattr(ent, "name", None) or getattr(ent, "identifier", None) or eid[:8]
-                etype = getattr(ent, "entity_type", "")
-                if st.button(f"{label[:22]} [{etype[:3]}]", key=f"wb_ent_{eid[:8]}", use_container_width=True):
+                label  = (getattr(ent, "name", None) or getattr(ent, "identifier", None) or eid[:8])[:22]
+                etype  = getattr(ent, "entity_type", "UNKNOWN")
+                ec     = _etype_colors.get(etype, "var(--text-secondary)")
+                is_sel = st.session_state.get("selected_entity_id") == eid
+                st.markdown(
+                    f'<div style="display:flex;align-items:center;gap:8px;padding:8px 14px;'
+                    f'border-bottom:1px solid var(--border-soft);'
+                    f'{"background:rgba(123,47,190,0.10);border-left:2px solid var(--purple-500);" if is_sel else ""}">'
+                    f'<span style="width:8px;height:8px;border-radius:50%;background:{ec};'
+                    f'display:inline-block;flex-shrink:0;"></span>'
+                    f'<span style="font-family:var(--f-mono);font-size:10px;color:var(--text-primary);'
+                    f'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{label}</span>'
+                    f'<span style="font-family:var(--f-mono);font-size:8px;color:{ec};letter-spacing:1px;">{etype[:4]}</span>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+                if st.button("SELECT", key=f"wb_ent_{eid[:8]}", use_container_width=True):
                     st.session_state.selected_entity_id = eid
                     st.rerun()
+        else:
+            st.markdown(
+                '<div style="padding:16px 14px;font-family:var(--f-mono);font-size:10px;'
+                'color:var(--text-dim);">No ontology data.</div>',
+                unsafe_allow_html=True,
+            )
+        st.markdown('</div>', unsafe_allow_html=True)
 
     # ── Center: graph / timeline / heatmap tabs ────────────────────────────────
     with center:
-        tab_graph, tab_timeline, tab_heatmap = st.tabs(["GRAPH", "TIMELINE", "HEATMAP"])
+        tab_graph, tab_timeline, tab_heatmap = st.tabs(["KNOWLEDGE GRAPH", "TIMELINE", "HEATMAP"])
+
         with tab_graph:
             if ont_g and ont_g.graph.number_of_nodes() > 0:
-                fig = ont_g.to_plotly_figure()
-                if fig:
-                    st.markdown('<div class="panel" style="padding:0;">', unsafe_allow_html=True)
-                    st.plotly_chart(fig, use_container_width=True)
-                    st.markdown('</div>', unsafe_allow_html=True)
+                try:
+                    filter_type = st.selectbox(
+                        "Filter entity type",
+                        ["ALL","PERSON","LOCATION","EVENT","NETWORK","DEVICE"],
+                        key="wb_filter_type", label_visibility="collapsed",
+                    )
+                    fig = ont_g.to_plotly_figure(
+                        filter_type=None if filter_type == "ALL" else filter_type,
+                    )
+                    if fig:
+                        st.markdown(
+                            '<div class="card" style="padding:0;overflow:hidden;">'
+                            '<div style="padding:10px 14px 8px;border-bottom:1px solid var(--border-soft);">'
+                            '<div style="font-family:var(--f-mono);font-size:9px;letter-spacing:3px;'
+                            'color:var(--text-dim);text-transform:uppercase;">ONTOLOGY GRAPH</div>'
+                            '</div>',
+                            unsafe_allow_html=True,
+                        )
+                        st.plotly_chart(fig, use_container_width=True)
+                        st.markdown('</div>', unsafe_allow_html=True)
+                except Exception as _ge:
+                    st.markdown(
+                        f'<div class="card" style="padding:14px;">'
+                        f'<div style="font-family:var(--f-mono);font-size:10px;color:var(--critical);">GRAPH ERROR · {_ge}</div>'
+                        f'</div>',
+                        unsafe_allow_html=True,
+                    )
             else:
                 st.markdown(
-                    '<div class="panel" style="text-align:center;padding:2rem;">'
-                    '<span style="font-family:var(--f-mono);font-size:10px;color:var(--text-dim);'
-                    'letter-spacing:2px;">NO GRAPH DATA AVAILABLE</span></div>',
+                    '<div class="card" style="text-align:center;padding:3rem;">'
+                    '<div style="font-family:var(--f-mono);font-size:10px;color:var(--text-dim);'
+                    'letter-spacing:2px;">NO GRAPH DATA AVAILABLE</div>'
+                    '<div style="font-family:var(--f-mono);font-size:9px;color:var(--text-dim);'
+                    'margin-top:8px;">Run a search or fusion analysis to build the knowledge graph.</div>'
+                    '</div>',
                     unsafe_allow_html=True,
                 )
+
         with tab_timeline:
-            tl = st.session_state.timeline_data
             if tl and tl.get("figure"):
-                st.markdown('<div class="panel" style="padding:0;">', unsafe_allow_html=True)
+                events_tl = tl.get("events", [])
+                gaps_tl   = tl.get("gaps", [])
+                anoms_tl  = tl.get("anomalies", [])
+                st.markdown(
+                    f'<div class="progress-summary" style="margin-bottom:12px;">'
+                    f'<div class="tile"><div class="k">EVENTS</div><div class="v">{len(events_tl)}</div></div>'
+                    f'<div class="tile"><div class="k">GAPS</div><div class="v" style="color:{"var(--warning)" if gaps_tl else "var(--online)"};">{len(gaps_tl)}</div></div>'
+                    f'<div class="tile"><div class="k">ANOMALIES</div><div class="v" style="color:{"var(--critical)" if anoms_tl else "var(--online)"};">{len(anoms_tl)}</div></div>'
+                    f'<div class="tile"><div class="k">SPAN START</div><div class="v" style="font-size:12px;">{(events_tl[0].get("normalized","")[:10] if events_tl else "—")}</div></div>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+                st.markdown(
+                    '<div class="card" style="padding:0;overflow:hidden;">'
+                    '<div style="padding:10px 14px 8px;border-bottom:1px solid var(--border-soft);">'
+                    '<div style="font-family:var(--f-mono);font-size:9px;letter-spacing:3px;'
+                    'color:var(--text-dim);text-transform:uppercase;">ACTIVITY TIMELINE</div>'
+                    '</div>',
+                    unsafe_allow_html=True,
+                )
                 st.plotly_chart(tl["figure"], use_container_width=True)
                 st.markdown('</div>', unsafe_allow_html=True)
+                # Anomaly flags inline
+                if anoms_tl:
+                    for a in anoms_tl[:4]:
+                        sev_raw = (a.get("severity") or "MEDIUM").upper()
+                        sev_cls = "hi" if "HIGH" in sev_raw or "CRITICAL" in sev_raw else "md" if "MEDIUM" in sev_raw else "lo"
+                        st.markdown(
+                            f'<div class="flag-card {sev_cls}" style="margin-top:4px;">'
+                            f'<div class="sev">{sev_raw[:8]}</div>'
+                            f'<div><div class="ttl">{(a.get("flag") or "ANOMALY")[:50]}</div>'
+                            f'<div class="sub">{(a.get("detail") or "")[:80]}</div></div>'
+                            f'<div></div></div>',
+                            unsafe_allow_html=True,
+                        )
             else:
                 st.markdown(
-                    '<div class="panel" style="text-align:center;padding:2rem;">'
-                    '<span style="font-family:var(--f-mono);font-size:10px;color:var(--text-dim);'
-                    'letter-spacing:2px;">NO TIMELINE DATA AVAILABLE</span></div>',
+                    '<div class="card" style="text-align:center;padding:3rem;">'
+                    '<div style="font-family:var(--f-mono);font-size:10px;color:var(--text-dim);'
+                    'letter-spacing:2px;">NO TIMELINE DATA AVAILABLE</div></div>',
                     unsafe_allow_html=True,
                 )
+
         with tab_heatmap:
-            st.markdown(
-                '<div class="panel" style="text-align:center;padding:2rem;">'
-                '<div style="font-family:var(--f-mono);font-size:10px;letter-spacing:2px;'
-                'color:var(--text-dim);margin-bottom:1rem;">OPEN TIMELINE HEATMAP SCREEN FOR CALENDAR VIEW</div>'
-                '</div>',
-                unsafe_allow_html=True,
-            )
-            if st.button("GO TO HEATMAP"): st.session_state.active_screen = "heatmap"; st.rerun()
+            if tl and tl.get("events"):
+                import pandas as pd
+                from collections import defaultdict
+                events_hm = tl.get("events", [])
+                parsed_hm = []
+                for ev in events_hm:
+                    try:
+                        d = pd.to_datetime(ev.get("normalized",""), errors="coerce")
+                        if pd.notna(d): parsed_hm.append(d)
+                    except Exception: pass
+
+                _DAYS = ["MON","TUE","WED","THU","FRI","SAT","SUN"]
+                day_hour = defaultdict(int)
+                for p in parsed_hm:
+                    day_hour[(p.weekday(), p.hour)] += 1
+                max_c = max(day_hour.values()) if day_hour else 1
+
+                def _hcls(n):
+                    if n == 0: return ""
+                    r = n / max_c
+                    return "l4" if r > 0.75 else "l3" if r > 0.5 else "l2" if r > 0.25 else "l1"
+
+                hr_hdr = "".join(f'<span style="text-align:center;font-size:8px;">{h:02d}</span>' for h in range(24))
+                ghml = f'<div class="heat"><div class="row-l"></div><div class="hour-row">{hr_hdr}</div>'
+                for dow, dlbl in enumerate(_DAYS):
+                    ghml += f'<div class="row-l">{dlbl}</div>'
+                    for hr in range(24):
+                        cnt = day_hour.get((dow, hr), 0)
+                        ghml += f'<div class="cell {_hcls(cnt)}" title="{cnt} events"></div>'
+                ghml += "</div>"
+
+                st.markdown(
+                    f'<div class="card" style="padding:0;overflow:hidden;">'
+                    f'<div style="padding:10px 14px 8px;border-bottom:1px solid var(--border-soft);">'
+                    f'<div style="font-family:var(--f-mono);font-size:9px;letter-spacing:3px;'
+                    f'color:var(--text-dim);text-transform:uppercase;">HOUR × DAY HEATMAP · {len(parsed_hm)} EVENTS MAPPED</div>'
+                    f'</div>'
+                    f'<div style="padding:16px;">{ghml}</div>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+                if st.button("OPEN FULL HEATMAP SCREEN", key="wb_hm_goto", use_container_width=True):
+                    st.session_state.active_screen = "heatmap"; st.rerun()
+            else:
+                st.markdown(
+                    '<div class="card" style="text-align:center;padding:3rem;">'
+                    '<div style="font-family:var(--f-mono);font-size:10px;color:var(--text-dim);'
+                    'letter-spacing:2px;">NO TIMELINE DATA FOR HEATMAP</div></div>',
+                    unsafe_allow_html=True,
+                )
 
     # ── Right: agent outputs ───────────────────────────────────────────────────
     with right:
-        st.markdown(_phdr("W·02","AI AGENT OUTPUTS","LIVE"), unsafe_allow_html=True)
         if agents:
-            # ── Risk agent panel ──────────────────────────────────────────────
+            # Risk
             r = agents.get("risk", {})
+            rs = r.get("risk_score", 0)
+            rl = r.get("risk_level", "—")
+            rc = "var(--critical)" if rs >= 70 else "var(--warning)" if rs >= 40 else "var(--online)"
             risk_factors = r.get("risk_factors", [])
-            factor_rows = "".join(
-                f'<div class="kv">'
-                f'<div class="k">{f.get("factor","—")[:18]}</div>'
-                f'<div class="v">{f.get("evidence","")[:90]}</div>'
-                f'</div>'
-                for f in risk_factors[:5]
-            ) if risk_factors else (
-                '<div style="font-family:var(--f-mono);font-size:10px;'
-                'color:var(--text-dim);padding:4px 0;">NO RISK FACTORS LOGGED</div>'
-            )
-            st.markdown(
-                f'{_phdr("W·03","RISK AGENT","SCORE")}'
-                f'<div class="panel" style="padding:10px 14px;">'
-                f'<div style="margin-bottom:8px;">{_risk_badge(r.get("risk_score",0), r.get("risk_level",""))}</div>'
-                f'{factor_rows}</div>',
-                unsafe_allow_html=True,
-            )
-
-            # ── Pattern agent panel ───────────────────────────────────────────
-            patterns = agents.get("patterns", {}).get("patterns_found", [])
-            pat_rows = "".join(
-                f'<div class="pat-row">'
-                f'<span class="ptag">{p.get("pattern_type","")[:14]}</span>'
-                f'<span class="pmsg">{p.get("description","")[:80]}</span>'
-                f'<span class="psig">{p.get("significance","")[:12]}</span>'
-                f'</div>'
-                for p in patterns[:5]
-            ) if patterns else (
-                '<div style="font-family:var(--f-mono);font-size:10px;'
-                'color:var(--text-dim);padding:4px 0;">NO PATTERNS DETECTED</div>'
-            )
-            st.markdown(
-                f'{_phdr("W·04","PATTERN AGENT","DETECTED")}'
-                f'<div class="panel" style="padding:0;">{pat_rows}</div>',
-                unsafe_allow_html=True,
-            )
-
-            # ── Next step agent panel ─────────────────────────────────────────
-            steps = agents.get("next_steps", {}).get("next_steps", [])
-            step_rows = "".join(
-                f'<div class="kv">'
-                f'<div class="k" style="min-width:52px;flex:0 0 52px;">STEP {s.get("step_number","")}</div>'
-                f'<div class="v">{s.get("action","")}'
-                + (f'<br/><span style="color:var(--text-dim);font-size:10px;">'
-                   f'{s.get("legal_basis","")[:70]}</span>'
-                   if s.get("legal_basis") else "") +
+            threat_rows = "".join(
+                f'<div class="threat">'
+                f'<div class="sev {"hi" if (f.get("severity","") or "").upper() in ("HIGH","CRITICAL") else "md"}">'
+                f'{(f.get("severity","MED") or "MED")[:3].upper()}</div>'
+                f'<div class="body">'
+                f'<div class="title">{f.get("factor","—")[:40]}</div>'
+                f'<div class="meta">{(f.get("evidence","") or "")[:60]}</div>'
                 f'</div></div>'
-                for s in steps[:5]
-            ) if steps else (
-                '<div style="font-family:var(--f-mono);font-size:10px;'
-                'color:var(--text-dim);padding:4px 0;">NO STEPS GENERATED</div>'
-            )
+                for f in risk_factors[:4]
+            ) or '<div style="padding:12px 14px;font-family:var(--f-mono);font-size:10px;color:var(--text-dim);">NO RISK FACTORS</div>'
+
             st.markdown(
-                f'{_phdr("W·05","NEXT STEPS","RECOMMENDED")}'
-                f'<div class="panel" style="padding:10px 14px;">{step_rows}</div>',
+                f'<div class="card" style="padding:0;overflow:hidden;margin-bottom:12px;">'
+                f'<div style="padding:10px 14px;border-bottom:1px solid var(--border-soft);'
+                f'display:flex;justify-content:space-between;align-items:center;">'
+                f'<div style="font-family:var(--f-mono);font-size:9px;letter-spacing:3px;color:var(--text-dim);">RISK AGENT</div>'
+                f'<div style="font-family:var(--f-display);font-weight:600;font-size:20px;color:{rc};">{rs}</div>'
+                f'</div>'
+                f'{threat_rows}</div>',
                 unsafe_allow_html=True,
             )
 
-            # ── Compliance agent panel ────────────────────────────────────────
-            c = agents.get("compliance", {})
-            cleared      = c.get("cleared_for_export")
-            status_color = "var(--online)" if cleared else "var(--critical)"
-            status_text  = "✓ CLEARED" if cleared else "⚑ FLAGGED"
-            comp_flags   = c.get("flags", [])
-            flag_rows = "".join(
-                f'<div class="flag-row">'
-                f'<span class="ftag">FLAG</span>'
-                f'<span class="fmsg">{fl.get("concern","")}</span>'
+            # Patterns
+            patterns = agents.get("patterns", {}).get("patterns_found", [])
+            pat_html = "".join(
+                f'<div style="padding:8px 14px;border-bottom:1px solid var(--border-soft);">'
+                f'<div style="font-family:var(--f-mono);font-size:9px;letter-spacing:2px;'
+                f'color:{"var(--critical)" if p.get("significance")=="HIGH" else "var(--warning)" if p.get("significance")=="MEDIUM" else "var(--text-dim)"};'
+                f'margin-bottom:3px;">{p.get("pattern_type","")[:20]}</div>'
+                f'<div style="font-family:var(--f-mono);font-size:10px;color:var(--text-secondary);">{p.get("description","")[:70]}</div>'
                 f'</div>'
-                for fl in comp_flags[:5]
+                for p in patterns[:4]
+            ) or '<div style="padding:12px 14px;font-family:var(--f-mono);font-size:10px;color:var(--text-dim);">NO PATTERNS</div>'
+            st.markdown(
+                f'<div class="card" style="padding:0;overflow:hidden;margin-bottom:12px;">'
+                f'<div style="padding:10px 14px;border-bottom:1px solid var(--border-soft);">'
+                f'<div style="font-family:var(--f-mono);font-size:9px;letter-spacing:3px;color:var(--text-dim);">PATTERN AGENT</div>'
+                f'</div>{pat_html}</div>',
+                unsafe_allow_html=True,
+            )
+
+            # Next steps
+            steps = agents.get("next_steps", {}).get("next_steps", [])
+            step_html = "".join(
+                f'<div class="step {"done" if i==0 else "active" if i==1 else "pending"}">'
+                f'<div class="num">0{s.get("step_number",i+1)}</div>'
+                f'<div><div class="t">{s.get("action","")[:36]}</div>'
+                f'<div class="d">{(s.get("legal_basis","") or "")[:50]}</div></div>'
+                f'<div class="state">{"DONE" if i==0 else "ACTIVE" if i==1 else "PENDING"}</div>'
+                f'<div class="timer">—</div>'
+                f'</div>'
+                for i, s in enumerate(steps[:4])
+            ) or '<div style="padding:12px 14px;font-family:var(--f-mono);font-size:10px;color:var(--text-dim);">NO STEPS</div>'
+            st.markdown(
+                f'<div class="card" style="padding:0;overflow:hidden;margin-bottom:12px;">'
+                f'<div style="padding:10px 14px;border-bottom:1px solid var(--border-soft);">'
+                f'<div style="font-family:var(--f-mono);font-size:9px;letter-spacing:3px;color:var(--text-dim);">NEXT STEPS</div>'
+                f'</div><div style="padding:0 14px;">{step_html}</div></div>',
+                unsafe_allow_html=True,
+            )
+
+            # Compliance
+            c = agents.get("compliance", {})
+            cleared = c.get("cleared_for_export")
+            sc_col  = "var(--online)" if cleared else "var(--critical)"
+            sc_txt  = "CLEARED" if cleared else "FLAGGED"
+            comp_flags = c.get("flags", [])
+            cf_html = "".join(
+                f'<div style="padding:6px 14px;border-bottom:1px solid var(--border-soft);'
+                f'font-family:var(--f-mono);font-size:10px;color:var(--warning);">⚑ {fl.get("concern","")[:60]}</div>'
+                for fl in comp_flags[:3]
             )
             st.markdown(
-                f'{_phdr("W·06","COMPLIANCE","STATUS")}'
-                f'<div class="panel" style="padding:10px 14px;">'
-                f'<div class="kv"><div class="k">SCORE</div>'
-                f'<div class="v"><span style="color:var(--text-primary);">'
-                f'{c.get("compliance_score",0)}%</span>'
-                f' &nbsp;<span style="color:{status_color};">{status_text}</span></div></div>'
+                f'<div class="card" style="padding:0;overflow:hidden;">'
+                f'<div style="padding:10px 14px;border-bottom:1px solid var(--border-soft);'
+                f'display:flex;justify-content:space-between;">'
+                f'<div style="font-family:var(--f-mono);font-size:9px;letter-spacing:3px;color:var(--text-dim);">COMPLIANCE</div>'
+                f'<div class="status-pill {("active" if cleared else "locked")}" style="color:{sc_col};">'
+                f'<span style="width:6px;height:6px;border-radius:50%;background:{sc_col};display:inline-block;margin-right:4px;"></span>'
+                f'{sc_txt}</div>'
                 f'</div>'
-                + (f'<div class="panel" style="padding:0;margin-top:4px;">{flag_rows}</div>'
-                   if flag_rows else ""),
+                f'<div style="padding:10px 14px;font-family:var(--f-display);font-weight:600;font-size:24px;color:{sc_col};">'
+                f'{c.get("compliance_score",0)}%</div>'
+                + cf_html +
+                f'</div>',
                 unsafe_allow_html=True,
             )
         else:
             st.markdown(
-                '<div class="panel" style="padding:1rem;">'
+                '<div class="card" style="padding:20px 14px;text-align:center;">'
                 '<div style="font-family:var(--f-mono);font-size:11px;color:var(--text-dim);'
                 'letter-spacing:1px;">RUN A SEARCH TO SEE AGENT OUTPUTS</div>'
                 '</div>',
@@ -3951,88 +4926,177 @@ def screen_analysis_workbench():
 # ─────────────────────────────────────────────────────────────────────────────
 
 def screen_heatmap():
-    screen_header("TIMELINE HEATMAP", "Calendar activity heatmap · GitHub contribution style · Purple intensity = activity")
-    from modules.ui_components import stat_card, panel_hdr
+    screen_header("TIMELINE HEATMAP", "Calendar activity heatmap · Hour×Day intensity grid · Purple = activity")
+    st.markdown(
+        '<div class="al-classification-strip">TS//SCI//NOFORN · BEHAVIOURAL HEATMAP · TEMPORAL PATTERN ANALYSIS</div>',
+        unsafe_allow_html=True,
+    )
     tl = st.session_state.timeline_data
     if not tl or not tl.get("events"):
         st.markdown(
-            '<div class="panel" style="text-align:center;padding:3rem 1rem;margin-top:1rem;">'
+            '<div class="card" style="text-align:center;padding:3rem 1rem;margin-top:1rem;">'
             '<div style="font-family:var(--f-mono);font-size:11px;color:var(--text-dim);'
             'letter-spacing:2px;">NO TIMELINE DATA · RUN A SEARCH FIRST</div>'
             '</div>',
             unsafe_allow_html=True,
         )
-        if st.button("GO TO SEARCH"): st.session_state.active_screen = "search"; st.rerun()
+        if st.button("GO TO SEARCH", key="hm_go"): st.session_state.active_screen = "search"; st.rerun()
         return
-    try:
-        import pandas as pd
-        import calplot
-        import matplotlib.pyplot as plt
-        import matplotlib
-        matplotlib.use("Agg")
 
-        events = tl.get("events", [])
-        dates = []
-        for ev in events:
-            raw = ev.get("normalized", "")
-            try:
-                d = pd.to_datetime(raw, errors="coerce")
-                if pd.notna(d):
-                    dates.append(d.date())
-            except Exception:
-                pass
-        if not dates:
+    import pandas as pd
+    events = tl.get("events", [])
+
+    # Parse dates
+    parsed = []
+    for ev in events:
+        raw = ev.get("normalized", "")
+        try:
+            d = pd.to_datetime(raw, errors="coerce")
+            if pd.notna(d):
+                parsed.append(d)
+        except Exception:
+            pass
+
+    unique_days  = len(set(p.date() for p in parsed))
+    total_events = len(events)
+
+    # ── Stat tiles ─────────────────────────────────────────────────────────────
+    st.markdown(
+        f'<div class="progress-summary" style="margin-bottom:18px;">'
+        f'<div class="tile"><div class="k">TOTAL EVENTS</div><div class="v">{total_events}</div></div>'
+        f'<div class="tile"><div class="k">ACTIVE DAYS</div><div class="v">{unique_days}</div></div>'
+        f'<div class="tile"><div class="k">PARSEABLE</div><div class="v">{len(parsed)}</div></div>'
+        f'<div class="tile"><div class="k">COVERAGE</div>'
+        f'<div class="v" style="font-size:14px;">{int(len(parsed)/max(total_events,1)*100)}%</div></div>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
+    # ── Hour × Day-of-week CSS heat grid ──────────────────────────────────────
+    from collections import defaultdict
+    _DAYS = ["MON","TUE","WED","THU","FRI","SAT","SUN"]
+    day_hour_counts = defaultdict(int)
+    for p in parsed:
+        key = (p.weekday(), p.hour)
+        day_hour_counts[key] += 1
+
+    max_count = max(day_hour_counts.values()) if day_hour_counts else 1
+
+    def _heat_cls(n):
+        if n == 0:   return ""
+        pct = n / max_count
+        if pct > 0.75: return "l4"
+        if pct > 0.50: return "l3"
+        if pct > 0.25: return "l2"
+        return "l1"
+
+    # Hour header row
+    hour_cells = "".join(
+        f'<span style="text-align:center;font-size:8px;">{h:02d}</span>'
+        for h in range(24)
+    )
+    grid_html = (
+        '<div class="heat" style="margin:4px 0;">'
+        f'<div class="row-l"></div>'
+        f'<div class="hour-row">{hour_cells}</div>'
+    )
+    for dow, day_lbl in enumerate(_DAYS):
+        grid_html += f'<div class="row-l">{day_lbl}</div>'
+        for hour in range(24):
+            cnt = day_hour_counts.get((dow, hour), 0)
+            cls = _heat_cls(cnt)
+            title = f"{cnt} events" if cnt else ""
+            grid_html += f'<div class="cell {cls}" title="{title}"></div>'
+    grid_html += "</div>"
+
+    st.markdown(
+        f'<div class="card" style="padding:0;overflow:hidden;margin-bottom:14px;">'
+        f'<div style="padding:12px 16px 10px;border-bottom:1px solid var(--border-soft);'
+        f'display:flex;justify-content:space-between;align-items:center;">'
+        f'<div style="font-family:var(--f-mono);font-size:9px;letter-spacing:3px;'
+        f'color:var(--text-dim);text-transform:uppercase;">HOUR × DAY ACTIVITY HEATMAP</div>'
+        f'<div style="display:flex;gap:8px;align-items:center;">'
+        f'<span style="font-family:var(--f-mono);font-size:8px;color:var(--text-dim);">LOW</span>'
+        f'<div style="width:10px;height:10px;background:rgba(123,47,190,0.22);"></div>'
+        f'<div style="width:10px;height:10px;background:rgba(123,47,190,0.45);"></div>'
+        f'<div style="width:10px;height:10px;background:rgba(157,78,221,0.75);"></div>'
+        f'<div style="width:10px;height:10px;background:var(--purple-300);"></div>'
+        f'<span style="font-family:var(--f-mono);font-size:8px;color:var(--text-dim);">HIGH</span>'
+        f'</div></div>'
+        f'<div style="padding:16px 18px;">{grid_html}</div>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
+    # ── Calendar heatmap (calplot, if available) ───────────────────────────────
+    if parsed:
+        try:
+            import calplot, matplotlib.pyplot as plt, matplotlib
+            matplotlib.use("Agg")
+            series = pd.Series(1, index=pd.DatetimeIndex(parsed)).resample("D").sum()
+            fig_cal, _ = calplot.calplot(
+                series, cmap="Purples", colorbar=False,
+                edgecolor="#0A0015", linewidth=0.5, figsize=(14, 3),
+            )
+            fig_cal.patch.set_facecolor("#05000D")
+            for axis in fig_cal.get_axes():
+                axis.set_facecolor("#05000D")
+                for spine in axis.spines.values():
+                    spine.set_edgecolor("rgba(123,47,190,0.15)")
+                axis.tick_params(colors="#4B5563", labelsize=7)
             st.markdown(
-                '<div class="panel" style="text-align:center;padding:2rem;">'
-                '<span style="font-family:var(--f-mono);font-size:10px;color:var(--text-dim);'
-                'letter-spacing:2px;">NO PARSEABLE DATES IN TIMELINE EVENTS</span></div>',
+                '<div class="card" style="padding:0;overflow:hidden;margin-bottom:14px;">'
+                '<div style="padding:12px 16px 8px;border-bottom:1px solid var(--border-soft);">'
+                '<div style="font-family:var(--f-mono);font-size:9px;letter-spacing:3px;'
+                'color:var(--text-dim);text-transform:uppercase;">CALENDAR HEATMAP</div>'
+                '</div>'
+                '<div style="padding:10px 16px;">',
                 unsafe_allow_html=True,
             )
-            return
+            st.pyplot(fig_cal)
+            st.markdown('</div></div>', unsafe_allow_html=True)
+            plt.close(fig_cal)
+        except ImportError:
+            pass
+        except Exception as _ce:
+            st.markdown(
+                f'<div class="card" style="padding:10px 14px;">'
+                f'<div style="font-family:var(--f-mono);font-size:10px;color:var(--critical);">'
+                f'CALENDAR ERROR · {_ce}</div></div>',
+                unsafe_allow_html=True,
+            )
 
-        # ── Stat row ──────────────────────────────────────────────────────────
-        unique_days = len(set(dates))
-        h1, h2 = st.columns(2)
-        with h1:
-            st.markdown(stat_card("H·01","EVENTS", str(len(events)),
-                meta_lines=[("TOTAL","TIMELINE EVENTS")]), unsafe_allow_html=True)
-        with h2:
-            st.markdown(stat_card("H·02","ACTIVE DAYS", str(unique_days),
-                meta_lines=[("DAYS","WITH ACTIVITY")]), unsafe_allow_html=True)
-
-        # ── Calendar heatmap ──────────────────────────────────────────────────
-        st.markdown(panel_hdr("H·03","ACTIVITY CALENDAR","PURPLE INTENSITY = FREQUENCY"), unsafe_allow_html=True)
-        series = pd.Series(1, index=pd.DatetimeIndex(dates)).resample("D").sum()
-        fig_cal, ax = calplot.calplot(series, cmap="Purples", colorbar=False,
-                                      edgecolor="#0A0015", figsize=(14, 3))
-        fig_cal.patch.set_facecolor("#05000D")
-        for axis in fig_cal.get_axes():
-            axis.set_facecolor("#05000D")
-            for spine in axis.spines.values():
-                spine.set_edgecolor("rgba(123,47,190,0.28)")
-            axis.tick_params(colors="#9CA3AF", labelsize=8)
-        st.markdown('<div class="panel" style="padding:12px;">', unsafe_allow_html=True)
-        st.pyplot(fig_cal)
-        st.markdown('</div>', unsafe_allow_html=True)
-        plt.close(fig_cal)
-
-        # ── Event log table ───────────────────────────────────────────────────
-        st.markdown('<hr class="divider">', unsafe_allow_html=True)
-        st.markdown(panel_hdr("H·04","EVENT LOG",f"SHOWING FIRST 30 OF {len(events)}"), unsafe_allow_html=True)
-        df_ev = pd.DataFrame([{
-            "Date":        ev.get("normalized",""),
-            "Description": ev.get("context","")[:100],
-            "Source":      ev.get("source",""),
-        } for ev in events[:30]])
-        st.dataframe(df_ev, use_container_width=True, hide_index=True)
-
-    except Exception as e:
+    # ── Event log ─────────────────────────────────────────────────────────────
+    st.markdown(
+        f'<div class="card" style="padding:0;overflow:hidden;">'
+        f'<div style="padding:12px 16px 8px;border-bottom:1px solid var(--border-soft);">'
+        f'<div style="font-family:var(--f-mono);font-size:9px;letter-spacing:3px;color:var(--text-dim);'
+        f'text-transform:uppercase;">EVENT LOG · FIRST {min(40,total_events)} OF {total_events}</div>'
+        f'</div>'
+        f'<div style="display:grid;grid-template-columns:130px 80px 1fr 100px;gap:10px;'
+        f'padding:8px 14px;font-family:var(--f-mono);font-size:9px;letter-spacing:3px;'
+        f'color:var(--text-dim);text-transform:uppercase;border-bottom:1px solid var(--border);'
+        f'background:rgba(0,0,0,0.3);">DATE · TYPE · DESCRIPTION · SOURCE</div>'
+        f'<div style="max-height:300px;overflow-y:auto;">',
+        unsafe_allow_html=True,
+    )
+    for ev in events[:40]:
+        etype = (ev.get("event_type") or "MENTION").upper()[:10]
+        ctx   = (ev.get("context") or "")[:80]
+        src   = (ev.get("source") or "")[:18]
+        date  = (ev.get("normalized") or "")[:16]
         st.markdown(
-            f'<div class="panel" style="padding:1rem;">'
-            f'<div style="font-family:var(--f-mono);font-size:10px;color:var(--critical);">'
-            f'HEATMAP ERROR · {e}</div></div>',
+            f'<div style="display:grid;grid-template-columns:130px 80px 1fr 100px;gap:10px;'
+            f'padding:7px 14px;border-bottom:1px solid var(--border-soft);'
+            f'font-family:var(--f-mono);font-size:10px;">'
+            f'<span style="color:var(--text-dim);">{date}</span>'
+            f'<span style="color:var(--purple-300);font-size:9px;">{etype}</span>'
+            f'<span style="color:var(--text-primary);">{ctx}</span>'
+            f'<span style="color:var(--text-secondary);">{src}</span>'
+            f'</div>',
             unsafe_allow_html=True,
         )
+    st.markdown('</div></div>', unsafe_allow_html=True)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
