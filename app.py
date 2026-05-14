@@ -1673,7 +1673,17 @@ def _run_pipeline_auto(target: dict, query: str, search_results: dict):
             st.session_state.ontology_graph  = twin
             st.session_state.ontology_json   = ont_json
 
-            # Build unified anomaly list from person BEFORE calling agents
+            # ── Keyword-inject flags from any uploaded docs BEFORE agents ────
+            try:
+                from modules.report_generator import inject_keyword_flags_from_docs
+                _osint_raw_docs = st.session_state.get("raw_documents") or []
+                inject_keyword_flags_from_docs(person, _osint_raw_docs)
+                print(f"[APP-OSINT] After keyword injection: "
+                      f"{len(person.get('anomaly_flags', []))} flags in person")
+            except Exception as _okfi_err:
+                print(f"[APP-OSINT] inject_keyword_flags non-fatal: {_okfi_err}")
+
+            # Build unified anomaly list from enriched person BEFORE agents run
             _osint_anomaly_strings = [
                 (f.get("flag", str(f)) if isinstance(f, dict) else str(f))
                 for f in (person.get("anomaly_flags", []) or [])
@@ -2647,11 +2657,21 @@ def screen_fusion():
         twin     = None
         ont_json = {}
 
-    # ── Inject rule_anomalies into person BEFORE agents run ──────────────────
-    # rule_anomalies = list of {"flag": str, "detail": str} dicts computed above.
-    # Merge them into primary_person["anomaly_flags"] so every agent sees them.
+    # ── Inject flags from doc text + rule_anomalies BEFORE agents run ────────
     if primary_person is None:
         primary_person = {}
+
+    # Step A: keyword scan across all ingested document text
+    # (CERT-In, IT Act, FEMA, DPDP, PMLA, NDPS, HAWALA, VPN, deletion, etc.)
+    try:
+        from modules.report_generator import inject_keyword_flags_from_docs
+        inject_keyword_flags_from_docs(primary_person, all_results)
+        print(f"[APP-FUSION] After keyword injection: "
+              f"{len(primary_person.get('anomaly_flags', []))} flags in person")
+    except Exception as _kfi_err:
+        print(f"[APP-FUSION] inject_keyword_flags non-fatal: {_kfi_err}")
+
+    # Step B: merge rule_anomalies (CDR / structural detections)
     _existing_flags = primary_person.get("anomaly_flags", []) or []
     _existing_texts = {
         (f.get("flag", str(f)) if isinstance(f, dict) else str(f)).lower()

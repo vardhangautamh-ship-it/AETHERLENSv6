@@ -831,10 +831,75 @@ def _call_gemini_report(payload_str: str) -> dict | None:
 # LOCAL FALLBACK SECTION BUILDER
 # ══════════════════════════════════════════════════════════════════════════════
 
-def build_platform_presence(person: dict) -> dict:
+def inject_keyword_flags_from_docs(person: dict, raw_documents: list) -> dict:
+    """
+    Scan raw document text for critical law-enforcement keywords and inject
+    the corresponding anomaly flags into person["anomaly_flags"].
+
+    CALL THIS BEFORE run_all_agents() so every agent receives the full flag
+    context — not after report generation where it is too late.
+
+    Mutates person in-place AND returns it.
+    """
+    _KW_MAP = [
+        (("CERT-IN", "CERTIN", "CERT IN", "COMPUTER EMERGENCY RESPONSE"),
+         "CERT-In inquiry confirmed"),
+        (("IT ACT", "INFORMATION TECHNOLOGY ACT", "SECTION 43", "SECTION 66", "SECTION 69"),
+         "IT Act violation flagged"),
+        (("DPDP", "DATA PROTECTION"),
+         "DPDP Act breach suspected"),
+        (("DELETED", "DELETION", "REPO_DELETE", "POST_DELETE", "MODEL_DELETE"),
+         "Evidence deletion confirmed"),
+        (("UNAUTHORISED", "UNAUTHORIZED"),
+         "Unauthorised access flagged"),
+        (("SCRAPING", "SCRAPED", "DATA SCRAPE"),
+         "Unauthorised data scraping flagged"),
+        (("DEPLOYED", "DEPLOYMENT", "MALWARE", "EXPLOIT"),
+         "Malicious deployment / exploit activity flagged"),
+        (("FEMA", "FOREIGN EXCHANGE", "USD", "INTERNATIONAL TRANSFER"),
+         "International financial transfer — FEMA 1999 may apply"),
+        (("PMLA", "MONEY LAUNDERING", "PROCEEDS OF CRIME"),
+         "PMLA 2002 flagged"),
+        (("NDPS", "NARCOTIC", "NCB"),
+         "NDPS / narcotic indicator"),
+        (("HAWALA",),
+         "HAWALA transfer flagged"),
+        (("VPN", "TOR BROWSER", "DARK WEB", "ONION"),
+         "VPN / anonymisation tool usage detected"),
+        (("NIGHT BURST", "0200 ", "0300 ", "0400 ", "02:00", "03:00", "04:00"),
+         "Night-time burst activity"),
+    ]
+    existing = person.get("anomaly_flags", []) or []
+    existing_text = " ".join(
+        (f.get("flag", str(f)) if isinstance(f, dict) else str(f)).upper()
+        for f in existing
+    )
+    injected = list(existing)
+    for doc in (raw_documents or []):
+        doc_text = str(
+            doc.get("full_text", "") or doc.get("raw_text", "") or
+            doc.get("text", "") or ""
+        ).upper()
+        if not doc_text.strip():
+            continue
+        for kws, label in _KW_MAP:
+            if label.upper() not in existing_text:
+                if any(kw.upper() in doc_text for kw in kws):
+                    injected.append({
+                        "flag":     label,
+                        "source":   "keyword-scan",
+                        "severity": "HIGH",
+                    })
+                    existing_text += " " + label.upper()
+    person["anomaly_flags"] = injected
+    return person
+
+
+def build_platform_presence(person: dict, search_results: dict = None) -> dict:
     """
     Build platform presence from ALL sources with case-insensitive dedup.
-    Sources: platforms_confirmed → usernames dict → confirmed_linked_profiles.
+    Sources: platforms_confirmed → usernames dict → confirmed_linked_profiles
+             → search_results keys (covers FUSION / doc-only cases).
     Normalises platform keys to title-case so "github"/"GitHub"/"GITHUB"
     all collapse to a single "Github" entry (no Section 03 duplicates).
     """
@@ -874,6 +939,23 @@ def build_platform_presence(person: dict) -> dict:
                 "url":      profile.get("url", ""),
                 "username": profile.get("username", ""),
             })
+
+    # From search_results dict (covers FUSION / doc-only cases where
+    # platforms_confirmed is empty because no web search was run).
+    # search_results keys are platform names; each value is the result dict.
+    if search_results and isinstance(search_results, dict):
+        for platform, result in search_results.items():
+            if not isinstance(result, dict):
+                continue
+            # Accept if there is a URL, username, or confidence > 0
+            if result.get("confidence", 0) > 0 or result.get("url") or result.get("username"):
+                _add(platform, {
+                    "status":   "CONFIRMED",
+                    "url":      result.get("url", "Not found"),
+                    "username": (
+                        result.get("username") or result.get("login") or "Not found"
+                    ),
+                })
 
     return platforms
 
@@ -1744,7 +1826,8 @@ def _build_sections_local(
     all_urls = _src_list()
 
     # ── Fix 1E: build platform presence from all sources ─────────────────────
-    plat_map = build_platform_presence(person)
+    # Pass search_results so FUSION / doc-only cases also get platform data
+    plat_map = build_platform_presence(person, search_results)
     plat_content = (
         f"[VERIFIED DATA] Confirmed on {len(plat_map)} platform(s): "
         f"{', '.join(plat_map.keys()) or 'None'}."
@@ -2024,39 +2107,9 @@ def _generate_report_inner(
     person = dict(person or {})   # local shallow copy — don't mutate caller's dict
 
     # ── Inject keyword-derived flags from raw document text ───────────────────
-    # Ensures risk agent and next-step agent always see critical flags even when
-    # structured anomaly_flags are sparse (e.g. first-run before AI has run).
-    _KEYWORD_FLAGS_INJECT = [
-        (("CERT-IN", "CERT-In", "CERTIN", "COMPUTER EMERGENCY RESPONSE"),
-         "CERT-In inquiry confirmed"),
-        (("IT ACT", "INFORMATION TECHNOLOGY ACT", "SECTION 43", "SECTION 66", "SECTION 69"),
-         "IT Act violation flagged"),
-        (("DPDP", "DATA PROTECTION"),
-         "DPDP Act breach suspected"),
-        (("DELETED", "DELETION", "REPO_DELETE", "POST_DELETE", "MODEL_DELETE"),
-         "Evidence deletion confirmed"),
-        (("UNAUTHORISED", "UNAUTHORIZED"),
-         "Unauthorised access flagged"),
-        (("SCRAPING", "SCRAPED", "DATA SCRAPE"),
-         "Unauthorised data scraping flagged"),
-        (("DEPLOYED", "DEPLOYMENT", "MALWARE", "EXPLOIT"),
-         "Malicious deployment / exploit activity flagged"),
-        (("FEMA", "FOREIGN EXCHANGE", "USD", "INTERNATIONAL TRANSFER"),
-         "International financial transfer — FEMA 1999 may apply"),
-    ]
-    _existing_flag_text = " ".join(
-        (f.get("flag", str(f)) if isinstance(f, dict) else str(f)).upper()
-        for f in person.get("anomaly_flags", [])
-    )
-    _injected_flags = list(person.get("anomaly_flags", []))
-    for doc in (raw_documents or []):
-        _doc_text = str(doc.get("full_text", "") or doc.get("raw_text", "")).upper()
-        for _kws, _label in _KEYWORD_FLAGS_INJECT:
-            if _label.upper() not in _existing_flag_text:
-                if any(kw.upper() in _doc_text for kw in _kws):
-                    _injected_flags.append(_label)
-                    _existing_flag_text += " " + _label.upper()
-    person["anomaly_flags"] = _injected_flags
+    # Uses the shared inject_keyword_flags_from_docs() so agents and report
+    # always operate on the same enriched flag set.
+    inject_keyword_flags_from_docs(person, raw_documents)
 
     try:
         _raw_graph    = (graph_data or {}).get("graph")
@@ -2270,8 +2323,9 @@ def _generate_report_inner(
     # Fix 1D: rebuild source log from actual documents
     if raw_documents:
         sections["source_log"] = {"items": build_source_log(raw_documents, search_results)}
-    # Fix 1E: rebuild platform presence from all sources
-    plat_map = build_platform_presence(person)
+    # Fix 1E: rebuild platform presence from all sources (pass search_results
+    # so FUSION / doc-only cases also pick up platform data)
+    plat_map = build_platform_presence(person, search_results)
     if plat_map and (not sections.get("platform_presence") or not sections["platform_presence"].get("platforms")):
         sections["platform_presence"] = {
             "content": f"[VERIFIED DATA] Confirmed on {len(plat_map)} platform(s): {', '.join(plat_map.keys())}.",
