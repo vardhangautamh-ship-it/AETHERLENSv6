@@ -1988,6 +1988,53 @@ _FILE_ICONS = {".csv": "📊", ".xlsx": "📊", ".xls": "📊",
                ".pdf": "📄", ".txt": "📝", ".text": "📝"}
 
 
+def detect_file_contamination(file_list: list) -> dict:
+    """
+    Detect mixed-case file uploads (e.g. GhostWire + Jupiter files together).
+
+    Mixing files from different investigations contaminates entity resolution:
+    the resolver tries to merge identities from completely unrelated subjects,
+    producing nonsense confidence scores and polluted anomaly flags.
+
+    Args:
+        file_list: List of filenames (str) or staged file dicts with a "name" key.
+
+    Returns:
+        {"contamination_detected": bool, "message": str (optional),
+         "recommendation": str (optional), "case_prefixes": set (optional)}
+    """
+    # Normalise: accept either plain filename strings or staged-file dicts
+    names = [
+        f.get("name", "") if isinstance(f, dict) else str(f)
+        for f in file_list
+    ]
+
+    prefixes: set = set()
+    for name in names:
+        n = name.lower().strip()
+        if n.startswith("ghostwire"):
+            prefixes.add("GHOSTWIRE")
+        elif n.startswith("jup"):
+            prefixes.add("JUPITER")
+        # Extend here for future case prefixes as needed
+
+    if len(prefixes) > 1:
+        prefix_list = ", ".join(sorted(prefixes))
+        return {
+            "contamination_detected": True,
+            "case_prefixes":          prefixes,
+            "message": (
+                f"⚠ Mixed case files detected: {prefix_list}. "
+                "Files from different investigations may pollute entity resolution and produce unreliable results."
+            ),
+            "recommendation": (
+                "Process files from only one investigation / case at a time for accurate results. "
+                "Use the × button to remove files from other cases before analysing."
+            ),
+        }
+    return {"contamination_detected": False}
+
+
 def _fusion_reset():
     """Clear all fusion state and return to upload screen."""
     for k in ["fusion_staged", "fusion_assets_staged", "assets_data", "raw_documents",
@@ -2439,6 +2486,22 @@ def screen_fusion():
         unsafe_allow_html=True,
     )
 
+    # ── Case contamination check ──────────────────────────────────────────────
+    # Run BEFORE ingestion so the analyst can abort if needed.
+    _contamination = detect_file_contamination(staged)
+    _contamination_warnings: list = []
+    if _contamination.get("contamination_detected"):
+        st.warning(
+            _contamination["message"] + "\n\n" + _contamination.get("recommendation", ""),
+            icon="⚠️",
+        )
+        _contamination_warnings.append(_contamination["message"])
+        print(
+            f"[FUSION] Contamination detected — case prefixes: "
+            f"{_contamination.get('case_prefixes', set())}"
+        )
+    # ─────────────────────────────────────────────────────────────────────────
+
     all_ents:     list = []
     all_rels:     list = []
     all_tl_events: list = []
@@ -2703,9 +2766,15 @@ def screen_fusion():
         f" anomalies={len(_existing_flags)}"
     )
     try:
+        _agent_report = {
+            "person":   primary_person,
+            "anomalies": _all_anomaly_strings,
+        }
+        if _contamination_warnings:
+            _agent_report["warnings"] = _contamination_warnings
         ag_res = _orch.run_all_agents(
             ont_json,
-            {"person": primary_person, "anomalies": _all_anomaly_strings},
+            _agent_report,
             "FUSION",
             uid,
             assets_data=assets_dicts if assets_dicts else None,
@@ -2753,6 +2822,7 @@ def screen_fusion():
         "total_relationships":  graph_summ.get("edges", 0),
         "anomalies_flagged":    len(rule_anomalies),
         "resolution_method":    primary_method,
+        "warnings":             _contamination_warnings,
     }
     print("[FUSION 9] All data stored. fusion_analysed=True")
     print("[FUSION 10] Navigating to report screen via fusion results view...")
@@ -2790,6 +2860,10 @@ def _fusion_show_results():
         )
 
     st.markdown(rows_html + '</div>', unsafe_allow_html=True)
+
+    # ── Contamination warning (persisted from analysis run) ───────────────────
+    for _warn in summ.get("warnings", []):
+        st.warning(_warn, icon="⚠️")
 
     # Action buttons
     c1, c2, c3 = st.columns(3)
