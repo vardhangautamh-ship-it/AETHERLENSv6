@@ -135,7 +135,10 @@ def _local_fallback(subject_data: dict) -> dict:
             f"International contact detected: {len(intl)} foreign numbers"
         )
 
-    # Legal/financial risk signals
+    # Legal/financial risk signals — only genuine threat indicators, not passive noise.
+    # Spam-received flags (offers@, newsletter@, alerts@) are explicitly excluded here;
+    # analyze_behavioral_patterns() handles the spam-vs-signal distinction below.
+    _SPAM_SKIP = ("offers@", "newsletter@", "alerts@", "spam -", "unsubscribe")
     for flag in flags:
         # Normalise dict flags to plain text before keyword matching and storage.
         # anomaly_flags contains {"flag":..., "source":..., "severity":...} dicts from
@@ -145,6 +148,9 @@ def _local_fallback(subject_data: dict) -> dict:
             if isinstance(flag, dict) else str(flag)
         )
         f_lower = flag_text.lower()
+        # Skip inbound spam noise
+        if any(sk in f_lower for sk in _SPAM_SKIP):
+            continue
         if any(k in f_lower for k in ["pmla", "prevention of money laundering"]):
             patterns.append("Active PMLA proceedings — financial crime indicator")
             assessment["behavioral_flags"].append(flag_text[:100])
@@ -157,6 +163,27 @@ def _local_fallback(subject_data: dict) -> dict:
         elif any(k in f_lower for k in ["night", "2am", "1am", "00:", "01:"]):
             patterns.append("Nocturnal activity pattern confirmed — late-night communications detected")
             assessment["behavioral_flags"].append(flag_text[:100])
+
+    # ── Clean signal pass via analyze_behavioral_patterns ────────────────────
+    # Pull timeline, phones, and emails from the person dict and run the
+    # noise-aware function.  Merge any additional flags it finds that aren't
+    # already in the assessment.
+    _timeline = (
+        safe_list(person.get("account_timeline"))
+        or safe_list(person.get("timeline"))
+        or safe_list(person.get("communication_log"))
+    )
+    _phones = phones   # already extracted above
+    _emails = safe_list(person.get("emails_found", []))
+    _abp = analyze_behavioral_patterns(_timeline, _phones, _emails, subject_data)
+    _existing_flags = {f.lower() for f in assessment["behavioral_flags"]}
+    for _f in _abp.get("behavioral_flags", []):
+        if _f.lower() not in _existing_flags:
+            assessment["behavioral_flags"].append(_f)
+            _existing_flags.add(_f.lower())
+    # Expose night_activity_score and spam_exposure_level on the assessment
+    assessment["night_activity_score"] = _abp.get("night_activity_score", 0)
+    assessment["spam_exposure_level"]  = _abp.get("spam_exposure_level", "moderate")
 
     # Geographic pattern
     if len(locations) >= 2:
@@ -379,6 +406,88 @@ def detect_rule_based_anomalies(structured_rows: list) -> list:
     return anomalies
 
 
+def analyze_behavioral_patterns(
+    timeline: list,
+    phones: list,
+    emails: list,
+    report_data: dict,
+) -> dict:
+    """
+    Clean signal-vs-noise behavioral analysis.
+
+    Separates *genuine* behavioral signals (night-burst activity, burner-phone
+    diversity, VPN use) from *passive noise* (receiving marketing spam,
+    newsletter/alert emails that the subject did not send).
+
+    Args:
+        timeline:    List of timeline event strings or dicts (account_timeline,
+                     communication logs, etc.)
+        phones:      List of phone number strings found for the subject.
+        emails:      List of email address strings found for the subject.
+        report_data: Top-level report dict — checked for vpn_usage_detected.
+
+    Returns:
+        {
+            "behavioral_flags":    [str, ...],   # only genuine signals
+            "night_activity_score": int,          # count of night-burst events
+            "spam_exposure_level":  str,          # "high" | "moderate"
+        }
+    """
+    flags: list = []
+    night_bursts: int = 0
+    spam_received_count: int = 0
+
+    for event in timeline:
+        text = str(event).lower()
+
+        # Signal: subject was *active* during late-night/early-morning hours
+        if any(kw in text for kw in ("23:", "00:", "01:", "02:", "03:", "04:")):
+            night_bursts += 1
+
+        # Noise: inbound spam / marketing / automated alerts — sender-side tokens,
+        # not subject-initiated activity.  Do NOT count as a threat flag on its own.
+        if any(kw in text for kw in ("spam -", "offers@", "alerts@", "newsletter@")):
+            spam_received_count += 1
+
+    # ── Genuine signals ───────────────────────────────────────────────────────
+    if night_bursts >= 5:
+        flags.append(
+            "Late night / night-time burst activity detected across multiple sources"
+        )
+
+    # Multiple distinct phones → possible burner/secondary number strategy
+    unique_phones = list({str(p).strip() for p in phones if p})
+    if len(unique_phones) >= 5:
+        flags.append(
+            "Multiple phone numbers in use (possible burner/secondary numbers)"
+        )
+
+    # Spam exposure only flagged when *extreme* volume co-occurs with night ops —
+    # correlation is meaningful, isolated spam receipt is not.
+    if spam_received_count > 15 and night_bursts >= 4:
+        flags.append(
+            "High volume of spam exposure — possible operational correlation"
+        )
+
+    # VPN / anonymisation — check both top-level and nested person dict
+    person_sub = report_data.get("person", {}) if isinstance(report_data, dict) else {}
+    vpn_detected = (
+        report_data.get("vpn_usage_detected")
+        or person_sub.get("vpn_usage_detected")
+        if isinstance(report_data, dict) else False
+    )
+    if vpn_detected:
+        flags.append(
+            "VPN / anonymisation tool usage detected during activity windows"
+        )
+
+    return {
+        "behavioral_flags":     flags,
+        "night_activity_score": night_bursts,
+        "spam_exposure_level":  "high" if spam_received_count > 12 else "moderate",
+    }
+
+
 @defensive(fallback=(
     {
         "timezone_probable": "Not determined", "timezone_confidence": 0,
@@ -526,6 +635,34 @@ def _analyze_inner(subject_data: dict, structured_rows: list = None) -> tuple[di
                 rule_strs = [f"{a['flag']}: {a['detail']}" for a in rule_anomalies]
                 existing  = parsed.get("behavioral_flags", [])
                 parsed["behavioral_flags"] = rule_strs + [f for f in existing if f not in rule_strs]
+            # ── Clean signal pass: remove spam-noise, add genuine signals ────
+            # Strip AI-generated flags that are clearly spam-received noise
+            _SPAM_NOISE_KW = (
+                "spam received", "marketing email", "newsletter received",
+                "promotional email", "received spam", "spam exposure",
+                "offers@", "newsletter@", "alerts@",
+            )
+            parsed["behavioral_flags"] = [
+                bf for bf in parsed.get("behavioral_flags", [])
+                if not any(kw in str(bf).lower() for kw in _SPAM_NOISE_KW)
+            ]
+            # Augment with clean signals from analyze_behavioral_patterns
+            _person = subject_data.get("person", subject_data)
+            _timeline = (
+                safe_list(_person.get("account_timeline"))
+                or safe_list(_person.get("timeline"))
+                or safe_list(_person.get("communication_log"))
+            )
+            _phones = safe_list(_person.get("phones_found", []))
+            _emails = safe_list(_person.get("emails_found", []))
+            _abp = analyze_behavioral_patterns(_timeline, _phones, _emails, subject_data)
+            _existing = {f.lower() for f in parsed["behavioral_flags"]}
+            for _f in _abp.get("behavioral_flags", []):
+                if _f.lower() not in _existing:
+                    parsed["behavioral_flags"].append(_f)
+                    _existing.add(_f.lower())
+            parsed["night_activity_score"] = _abp.get("night_activity_score", 0)
+            parsed["spam_exposure_level"]  = _abp.get("spam_exposure_level", "moderate")
             parsed["rule_anomalies"] = rule_anomalies
             return parsed, engine_tag
 
