@@ -574,44 +574,50 @@ def generate_pdf(
             story.append(KeepTogether(render_tactical_plan(content)))
             continue
 
-        # ── Section 03 — Platform Presence: clean deduped renderer ─────────────
+        # ── Section 03 — Platform Presence ──────────────────────────────────────
         if key == "platform_presence":
             block = []
-            block.append(Paragraph(_safe(title), _STYLES["section_header"]))
+            block.append(Paragraph("03. PLATFORM PRESENCE", _STYLES["section_header"]))
             block.append(_hr())
-            raw_plat = report_data.get("platform_presence") or report_data.get("confirmed_platforms")
 
-            # Normalise to dict — _sections_to_pdf_data always produces a dict,
-            # but a direct generate_pdf() call may pass a string content summary.
-            if isinstance(raw_plat, str) and raw_plat.strip():
-                # Render the string summary as-is and skip per-platform loop
-                block.append(Paragraph(_safe(raw_plat), _STYLES["verified"]))
-            elif isinstance(raw_plat, dict) and raw_plat:
-                # Skip structural/non-platform keys (e.g. "query", "total", "results")
-                _non_platform_keys = {"query", "total", "results", "errors", "content",
-                                      "confidence", "platforms", "status"}
+            platforms = (
+                report_data.get("platform_presence") or
+                report_data.get("confirmed_platforms") or
+                {}
+            )
+
+            if platforms and isinstance(platforms, dict):
                 seen: set = set()
-                rendered = 0
-                for platform, data in raw_plat.items():
-                    pkey = str(platform).lower().replace(" ", "").replace("_", "")
-                    if pkey in _non_platform_keys or pkey in seen:
+                rendered  = 0
+                for platform, data in platforms.items():
+                    # Skip structural meta-keys that are not platform entries
+                    plat_key = (
+                        str(platform).lower()
+                        .replace(" ", "").replace("_", "").replace("-", "")
+                    )
+                    if plat_key in seen:
                         continue
-                    seen.add(pkey)
-                    # data can be a rich dict (from build_platform_presence)
-                    # or a plain string "url | @handle" (from _sections_to_pdf_data)
+                    seen.add(plat_key)
+
                     if isinstance(data, dict):
-                        handle     = data.get("username") or data.get("handle") or "Not found"
-                        url        = data.get("url", "")
-                        conf       = "CONFIRMED" if data.get("confirmed", True) else "UNVERIFIED"
-                        handle_str = f"@{handle}" if handle and not handle.startswith("@") else handle
-                        line = f"• {platform.upper()}: {handle_str}"
-                        if url and url != "Not found":
-                            line += f" — {url}"
-                        line += f" [{conf}]"
+                        handle = (
+                            data.get("handle") or
+                            data.get("username") or
+                            "@unknown"
+                        )
+                        if not handle.startswith("@") and handle != "@unknown":
+                            handle = f"@{handle}"
+                        label = "CONFIRMED" if data.get("confirmed", True) else "DETECTED"
+                        line  = f"• {platform.upper()}: {handle} — {label}"
+                    elif isinstance(data, str) and data.strip():
+                        # Legacy string format "url | @handle | status"
+                        line = f"• {platform.upper()}: {_safe(data)}"
                     else:
-                        line = f"• {platform.upper()}: {_safe(str(data))}"
+                        continue
+
                     block.append(Paragraph(line, _STYLES["verified"]))
                     rendered += 1
+
                 if rendered == 0:
                     block.append(Paragraph(
                         "[VERIFIED DATA] No confirmed public platform accounts found.",
@@ -622,6 +628,7 @@ def generate_pdf(
                     "[VERIFIED DATA] No confirmed public platform accounts found.",
                     _STYLES["verified"],
                 ))
+
             block.append(Spacer(1, 4 * mm))
             story.append(KeepTogether(block))
             continue
@@ -957,6 +964,18 @@ def build_platform_presence(person: dict, search_results: dict = None) -> dict:
                 "url":      profile.get("url", ""),
                 "username": profile.get("username", ""),
             })
+
+    # From join_dates dict — the timeline uses this as its platform source.
+    # Even when usernames/platforms_confirmed are empty after local fallback,
+    # join_dates keys tell us which platforms were found in the documents.
+    for platform, jd in person.get("join_dates", {}).items():
+        if not platform or not isinstance(platform, str):
+            continue
+        _add(platform, {
+            "status":   "CONFIRMED",
+            "url":      person.get("profile_urls", {}).get(platform, "Not found"),
+            "username": person.get("usernames", {}).get(platform, "Not found"),
+        })
 
     # From search_results dict (covers FUSION / doc-only cases where
     # platforms_confirmed is empty because no web search was run).
@@ -1850,8 +1869,14 @@ def _build_sections_local(
         f"[VERIFIED DATA] Confirmed on {len(plat_map)} platform(s): "
         f"{', '.join(plat_map.keys()) or 'None'}."
     )
+    # Store as dict values (not strings) so the Section 03 renderer can access
+    # handle/url/confirmed keys directly without isinstance gymnastics.
     plat_dict = {
-        p: f"{v.get('url','Not found')} | @{v.get('username','?')} | {v.get('status','?')}"
+        p: {
+            "handle":    v.get("username", "Not found"),
+            "url":       v.get("url", "Not found"),
+            "confirmed": v.get("status", "CONFIRMED") == "CONFIRMED",
+        }
         for p, v in plat_map.items()
     }
 
@@ -2345,13 +2370,25 @@ def _generate_report_inner(
     if raw_documents:
         sections["source_log"] = {"items": build_source_log(raw_documents, search_results)}
     # Fix 1E: rebuild platform presence from all sources (pass search_results
-    # so FUSION / doc-only cases also pick up platform data)
+    # so FUSION / doc-only cases also pick up platform data from join_dates).
+    # Always overwrite when plat_map is non-empty so we guarantee dict values
+    # (not the "url | @handle" strings that Gemini sometimes writes).
     plat_map = build_platform_presence(person, search_results)
-    if plat_map and (not sections.get("platform_presence") or not sections["platform_presence"].get("platforms")):
+    if plat_map:
         sections["platform_presence"] = {
-            "content": f"[VERIFIED DATA] Confirmed on {len(plat_map)} platform(s): {', '.join(plat_map.keys())}.",
+            "content":    (
+                f"[VERIFIED DATA] Confirmed on {len(plat_map)} platform(s): "
+                f"{', '.join(plat_map.keys())}."
+            ),
             "confidence": min(len(plat_map) * 20, 90),
-            "platforms": {p: f"{v.get('url','Not found')} | @{v.get('username','?')}" for p, v in plat_map.items()},
+            "platforms": {
+                p: {
+                    "handle":    v.get("username", "Not found"),
+                    "url":       v.get("url", "Not found"),
+                    "confirmed": v.get("status", "CONFIRMED") == "CONFIRMED",
+                }
+                for p, v in plat_map.items()
+            },
         }
 
     # Section 18 — Tactical Operation Plan (always runs — no assets gate)
