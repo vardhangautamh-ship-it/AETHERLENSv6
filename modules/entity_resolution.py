@@ -447,30 +447,76 @@ _IMPOSSIBLE_NAME_WORDS = {
 }
 
 
+# Noise tokens that appear in spam-SMS labels, campus/location noise,
+# and financial-offer message subjects that must never become the main subject.
+_NOISE_SUBJECT_TOKENS = {
+    "manesar", "campus", "gurugram", "gurgaon", "noida", "chandigarh",
+    "spam", "credit", "loan", "insurance", "emi",
+    "job", "delivery", "otp", "fraud", "offer", "bill",
+    "mutual", "fund", "electricity", "personal", "car",
+    "notification", "attempt", "reels", "apply", "winner",
+    "cashback", "reward", "prize", "discount", "voucher",
+}
+
+
 def is_bad_subject_name(candidate, raw_documents=None) -> bool:
     """
     Return True if `candidate` is clearly a filename, test artifact,
-    platform artifact, or document-title that should never be a subject.
+    platform artifact, location label, spam/noise token, or document-title
+    that should never become the main subject.
+
+    Checks (in order):
+      1. Null / too-short / multiline
+      2. Pure digits / symbols
+      3. Noise subject tokens (spam labels, campus/location names, financial offers)
+      4. Exact-match known-bad literals (@spam, reels, manesar campus, etc.)
+      5. Platform-suffix / doubled-name artifact
+      6. Any token is a known social-platform word
+      7. Impossible-name words (Academic, Report, Procedure, etc.)
+      8. Role-title prefix (Officer, Inspector, etc.)
+      9. Filename skip-pattern blocklist
+     10. Matches an uploaded filename stem
     """
     if not candidate:
         return True
     s = str(candidate).strip()
     if "\n" in s or "\r" in s or len(s) < 3:
         return True
+
     if re.match(r'^[\d\s\-_]+$', s):
         return True
+
     sl = s.lower()
-    # Platform-suffix / doubled-name artifact check
+
+    # ── Check 3: noise subject tokens ────────────────────────────────────────
+    # Single-token match is enough — "Manesar Campus Gurugram" is clearly noise.
+    words = [w.strip(".:,()[]") for w in s.split()]
+    if any(w.lower() in _NOISE_SUBJECT_TOKENS for w in words):
+        return True
+
+    # ── Check 4: exact-match known-bad literals ───────────────────────────────
+    _KNOWN_BAD = {
+        "@spam", "reels", "unknown", "student name", "manesar campus",
+        "spam message", "delivery attempt", "otp verification",
+    }
+    if sl in _KNOWN_BAD:
+        return True
+    if sl.startswith("spam") or sl.endswith("campus") or sl.endswith("gurugram"):
+        return True
+
+    # ── Check 5: platform-suffix / doubled-name artifact ─────────────────────
     if _is_name_with_suffix(s, sl) or _is_platform_suffix(s, sl):
         return True
-    # Any token that is a known platform word → artifact
-    words = [w.strip(".:,()[]") for w in s.split()]
+
+    # ── Check 6: any token is a social-platform word ─────────────────────────
     if any(w.lower() in _PLATFORM_TOKEN_SET for w in words):
         return True
-    # Impossible-name words (Academic, Report, Procedure, etc.)
+
+    # ── Check 7: impossible-name words ───────────────────────────────────────
     if any(w.lower() in _IMPOSSIBLE_NAME_WORDS for w in words):
         return True
-    # Role title at start (Officer, Inspector, etc.)
+
+    # ── Check 8: role-title prefix ────────────────────────────────────────────
     _ROLE_TITLES = {
         "officer", "constable", "inspector", "sub-inspector", "sub_inspector",
         "si", "dsp", "sp", "ips", "asi", "pi", "psi",
@@ -478,12 +524,14 @@ def is_bad_subject_name(candidate, raw_documents=None) -> bool:
     }
     if words and words[0].lower().rstrip(".:,") in _ROLE_TITLES:
         return True
-    # Filename skip-pattern blocklist
+
+    # ── Check 9: filename skip-pattern blocklist ──────────────────────────────
     c_lower = sl.replace(" ", "_").replace("-", "_")
     for pattern in FILENAME_SKIP_PATTERNS:
         if pattern in c_lower:
             return True
-    # Match against uploaded filenames
+
+    # ── Check 10: matches an uploaded filename stem ───────────────────────────
     for doc in (raw_documents or []):
         fname = (doc.get("filename", "") or doc.get("name", "")).lower()
         for ext in (".csv", ".pdf", ".txt", ".xlsx", ".xls", ".json"):
@@ -493,6 +541,7 @@ def is_bad_subject_name(candidate, raw_documents=None) -> bool:
             continue
         if c_lower == fname or (len(fname) > 4 and fname in c_lower):
             return True
+
     return False
 
 
