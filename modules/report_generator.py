@@ -575,22 +575,22 @@ def generate_pdf(
             continue
 
         # ── Section 03 — Platform Presence ──────────────────────────────────────
-        if key == "platform_presence":
+        if key == "platform_presence" or key == "confirmed_platforms":
             block = []
             block.append(Paragraph("03. PLATFORM PRESENCE", _STYLES["section_header"]))
             block.append(_hr())
 
             platforms = (
-                report_data.get("platform_presence") or
-                report_data.get("confirmed_platforms") or
-                {}
+                report_data.get("platform_presence", {}) or
+                report_data.get("confirmed_platforms", {}) or
+                report_data.get("platforms", {})
             )
 
             if platforms and isinstance(platforms, dict):
                 seen: set = set()
-                rendered  = 0
                 for platform, data in platforms.items():
-                    # Skip structural meta-keys that are not platform entries
+                    if not isinstance(data, dict):
+                        continue
                     plat_key = (
                         str(platform).lower()
                         .replace(" ", "").replace("_", "").replace("-", "")
@@ -599,30 +599,18 @@ def generate_pdf(
                         continue
                     seen.add(plat_key)
 
-                    if isinstance(data, dict):
-                        handle = (
-                            data.get("handle") or
-                            data.get("username") or
-                            "@unknown"
-                        )
-                        if not handle.startswith("@") and handle != "@unknown":
-                            handle = f"@{handle}"
-                        label = "CONFIRMED" if data.get("confirmed", True) else "DETECTED"
-                        line  = f"• {platform.upper()}: {handle} — {label}"
-                    elif isinstance(data, str) and data.strip():
-                        # Legacy string format "url | @handle | status"
-                        line = f"• {platform.upper()}: {_safe(data)}"
+                    handle = (
+                        data.get("handle") or
+                        data.get("username") or
+                        data.get("account", "@unknown")
+                    )
+                    if handle and handle != "@unknown" and not str(handle).startswith("@"):
+                        handle = f"@{handle}"
+                    if data.get("confirmed", True):
+                        line = f"• {platform.upper()}: {handle} — CONFIRMED"
                     else:
-                        continue
-
+                        line = f"• {platform.upper()}: {handle} — DETECTED"
                     block.append(Paragraph(line, _STYLES["verified"]))
-                    rendered += 1
-
-                if rendered == 0:
-                    block.append(Paragraph(
-                        "[VERIFIED DATA] No confirmed public platform accounts found.",
-                        _STYLES["verified"],
-                    ))
             else:
                 block.append(Paragraph(
                     "[VERIFIED DATA] No confirmed public platform accounts found.",
@@ -920,11 +908,64 @@ def inject_keyword_flags_from_docs(person: dict, raw_documents: list) -> dict:
     return person
 
 
-def build_platform_presence(person: dict, search_results: dict = None) -> dict:
+# Regex patterns for extracting platform handles from raw document text.
+# Each tuple: (compiled_pattern, canonical_platform_name, url_template_or_empty)
+# Used by build_platform_presence() as a last-resort source when all structured
+# fields (platforms_confirmed, usernames, join_dates) are empty.
+import re as _re
+_PLATFORM_HANDLE_PATTERNS = [
+    # GitHub — URL form: github.com/username  or  "GitHub: username"
+    (_re.compile(r'github\.com/([A-Za-z0-9][A-Za-z0-9_-]{0,38})(?:[/?#\s,\)]|$)', _re.I),
+     "GitHub", "https://github.com/{u}"),
+    (_re.compile(r'\bgithub\b[:\s]+@?([A-Za-z0-9][A-Za-z0-9_-]{1,38})(?=\s|$|[,;])', _re.I),
+     "GitHub", "https://github.com/{u}"),
+    # Instagram — URL or @handle context
+    (_re.compile(r'instagram\.com/([A-Za-z0-9_.]{1,30})(?:[/?#\s,\)]|$)', _re.I),
+     "Instagram", "https://instagram.com/{u}"),
+    (_re.compile(r'\binstagram\b[:\s]+@?([A-Za-z0-9_.]{1,30})(?=\s|$|[,;])', _re.I),
+     "Instagram", ""),
+    # Hugging Face
+    (_re.compile(r'huggingface\.co/([A-Za-z0-9_-]{1,39})(?:[/?#\s,\)]|$)', _re.I),
+     "Hugging Face", "https://huggingface.co/{u}"),
+    (_re.compile(r'(?:hugging\s*face|hf)[:\s]+@?([A-Za-z0-9_-]{1,39})(?=\s|$|[,;])', _re.I),
+     "Hugging Face", ""),
+    # Telegram
+    (_re.compile(r't\.me/([A-Za-z0-9_]{5,32})(?:[/?#\s,\)]|$)', _re.I),
+     "Telegram", "https://t.me/{u}"),
+    (_re.compile(r'\btelegram\b[:\s]+@?([A-Za-z0-9_]{5,32})(?=\s|$|[,;])', _re.I),
+     "Telegram", ""),
+    # Twitter / X
+    (_re.compile(r'(?:twitter\.com|x\.com)/([A-Za-z0-9_]{1,15})(?:[/?#\s,\)]|$)', _re.I),
+     "Twitter", "https://twitter.com/{u}"),
+    (_re.compile(r'\btwitter\b[:\s]+@?([A-Za-z0-9_]{1,15})(?=\s|$|[,;])', _re.I),
+     "Twitter", ""),
+    # LinkedIn
+    (_re.compile(r'linkedin\.com/in/([A-Za-z0-9_-]{2,50})(?:[/?#\s,\)]|$)', _re.I),
+     "LinkedIn", "https://linkedin.com/in/{u}"),
+    (_re.compile(r'\blinkedin\b[:\s]+@?([A-Za-z0-9_-]{2,50})(?=\s|$|[,;])', _re.I),
+     "LinkedIn", ""),
+    # Reddit
+    (_re.compile(r'reddit\.com/u(?:ser)?/([A-Za-z0-9_-]{3,20})(?:[/?#\s,\)]|$)', _re.I),
+     "Reddit", "https://reddit.com/u/{u}"),
+    # YouTube
+    (_re.compile(r'youtube\.com/@?([A-Za-z0-9_-]{3,30})(?:[/?#\s,\)]|$)', _re.I),
+     "YouTube", "https://youtube.com/@{u}"),
+]
+
+
+def build_platform_presence(person: dict, search_results: dict = None,
+                             raw_documents: list = None) -> dict:
     """
     Build platform presence from ALL sources with case-insensitive dedup.
-    Sources: platforms_confirmed → usernames dict → confirmed_linked_profiles
-             → search_results keys (covers FUSION / doc-only cases).
+    Sources (checked in order):
+      1. platforms_confirmed list
+      2. usernames dict
+      3. confirmed_linked_profiles
+      4. join_dates keys (same source the timeline uses)
+      5. search_results dict (keyed by platform name)
+      6. raw_documents text — regex scan for github.com/handle, instagram.com/handle,
+         huggingface.co/handle, etc.  This is the last-resort source for FUSION
+         cases where Bedrock/Gemini entity resolution didn't extract structured fields.
     Normalises platform keys to title-case so "github"/"GitHub"/"GITHUB"
     all collapse to a single "Github" entry (no Section 03 duplicates).
     """
@@ -939,7 +980,7 @@ def build_platform_presence(person: dict, search_results: dict = None) -> dict:
             _seen[key] = canonical
             platforms[canonical] = entry
 
-    # From confirmed platforms list
+    # ── Source 1: confirmed platforms list ────────────────────────────────────
     for p in person.get("platforms_confirmed", []):
         _add(p, {
             "status":   "CONFIRMED",
@@ -947,7 +988,7 @@ def build_platform_presence(person: dict, search_results: dict = None) -> dict:
             "username": person.get("usernames", {}).get(p, "Not found"),
         })
 
-    # From usernames dict (catches cases like Telegram not in platforms_confirmed)
+    # ── Source 2: usernames dict ──────────────────────────────────────────────
     for platform, username in person.get("usernames", {}).items():
         _add(platform, {
             "status":   "CONFIRMED",
@@ -955,7 +996,7 @@ def build_platform_presence(person: dict, search_results: dict = None) -> dict:
             "username": str(username),
         })
 
-    # From confirmed linked profiles
+    # ── Source 3: confirmed linked profiles ───────────────────────────────────
     for profile in person.get("confirmed_linked_profiles", []):
         p = profile.get("platform", "")
         if p:
@@ -965,9 +1006,7 @@ def build_platform_presence(person: dict, search_results: dict = None) -> dict:
                 "username": profile.get("username", ""),
             })
 
-    # From join_dates dict — the timeline uses this as its platform source.
-    # Even when usernames/platforms_confirmed are empty after local fallback,
-    # join_dates keys tell us which platforms were found in the documents.
+    # ── Source 4: join_dates keys (same data source as the timeline) ──────────
     for platform, jd in person.get("join_dates", {}).items():
         if not platform or not isinstance(platform, str):
             continue
@@ -977,22 +1016,40 @@ def build_platform_presence(person: dict, search_results: dict = None) -> dict:
             "username": person.get("usernames", {}).get(platform, "Not found"),
         })
 
-    # From search_results dict (covers FUSION / doc-only cases where
-    # platforms_confirmed is empty because no web search was run).
-    # search_results keys are platform names; each value is the result dict.
+    # ── Source 5: search_results dict ────────────────────────────────────────
     if search_results and isinstance(search_results, dict):
         for platform, result in search_results.items():
             if not isinstance(result, dict):
                 continue
-            # Accept if there is a URL, username, or confidence > 0
             if result.get("confidence", 0) > 0 or result.get("url") or result.get("username"):
                 _add(platform, {
                     "status":   "CONFIRMED",
                     "url":      result.get("url", "Not found"),
-                    "username": (
-                        result.get("username") or result.get("login") or "Not found"
-                    ),
+                    "username": result.get("username") or result.get("login") or "Not found",
                 })
+
+    # ── Source 6: raw document text — regex scan (FUSION last-resort) ─────────
+    # When Bedrock/Gemini entity resolution fails to return structured platform
+    # fields, the handles are still present in the document text as URLs or
+    # "Platform: handle" patterns.  Scan once and inject into plat_map.
+    if raw_documents and not platforms:
+        # Only scan if all structured sources above returned nothing, to avoid
+        # false-positive handle extraction from unrelated text.
+        combined_text = "\n".join(
+            str(doc.get("raw_text", "") or doc.get("full_text", "") or doc.get("text", ""))
+            for doc in raw_documents
+        )
+        if combined_text.strip():
+            for pat, plat_name, url_tpl in _PLATFORM_HANDLE_PATTERNS:
+                m = pat.search(combined_text)
+                if m:
+                    uname = m.group(1).strip().rstrip("/")
+                    if uname:
+                        _add(plat_name, {
+                            "status":   "CONFIRMED",
+                            "url":      url_tpl.format(u=uname) if url_tpl else "Not found",
+                            "username": uname,
+                        })
 
     return platforms
 
@@ -1863,8 +1920,9 @@ def _build_sections_local(
     all_urls = _src_list()
 
     # ── Fix 1E: build platform presence from all sources ─────────────────────
-    # Pass search_results so FUSION / doc-only cases also get platform data
-    plat_map = build_platform_presence(person, search_results)
+    # Pass search_results AND raw_documents so the regex last-resort scan
+    # can extract handles from document text when Bedrock returns empty fields.
+    plat_map = build_platform_presence(person, search_results, raw_documents or [])
     plat_content = (
         f"[VERIFIED DATA] Confirmed on {len(plat_map)} platform(s): "
         f"{', '.join(plat_map.keys()) or 'None'}."
@@ -2369,11 +2427,10 @@ def _generate_report_inner(
     # Fix 1D: rebuild source log from actual documents
     if raw_documents:
         sections["source_log"] = {"items": build_source_log(raw_documents, search_results)}
-    # Fix 1E: rebuild platform presence from all sources (pass search_results
-    # so FUSION / doc-only cases also pick up platform data from join_dates).
-    # Always overwrite when plat_map is non-empty so we guarantee dict values
-    # (not the "url | @handle" strings that Gemini sometimes writes).
-    plat_map = build_platform_presence(person, search_results)
+    # Fix 1E: rebuild platform presence from all sources (search_results +
+    # raw_documents text regex scan as last resort for FUSION doc-only cases).
+    # Always overwrite when plat_map is non-empty so we guarantee dict values.
+    plat_map = build_platform_presence(person, search_results, raw_documents or [])
     if plat_map:
         sections["platform_presence"] = {
             "content":    (
