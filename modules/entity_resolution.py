@@ -456,6 +456,8 @@ _NOISE_SUBJECT_TOKENS = {
     "mutual", "fund", "electricity", "personal", "car",
     "notification", "attempt", "reels", "apply", "winner",
     "cashback", "reward", "prize", "discount", "voucher",
+    # Phase 0 additions: financial/marketing noise tokens from GhostWire stress test
+    "bank", "alert", "newsletter", "promo", "marketing",
 }
 
 
