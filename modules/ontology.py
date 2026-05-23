@@ -2166,11 +2166,21 @@ def build_digital_twin(all_data_sources: dict, raw_documents: list = None) -> On
                 continue
 
         # ── PlatformAccountEntity nodes (Phase 0.5) ───────────────────────────
+        # Handles that are noise / spam tokens are skipped entirely.
+        _HANDLE_NOISE = {
+            "spam", "reels", "offers", "alerts", "newsletter", "promo",
+            "marketing", "notification", "otp", "fraud", "credit", "loan",
+            "insurance", "winner", "cashback", "reward", "prize", "discount",
+            "voucher", "delivery", "apply", "emi", "bill",
+        }
         profile_urls = person.get("profile_urls", {})
         usernames    = person.get("usernames", {})
         for platform, url in profile_urls.items():
             try:
                 handle = usernames.get(platform, "")
+                handle_lc = str(handle).lstrip("@").lower()
+                if handle_lc in _HANDLE_NOISE or any(tok in handle_lc for tok in _HANDLE_NOISE):
+                    continue
                 pa_ent = PlatformAccountEntity(
                     platform       = str(platform),
                     handle         = str(handle),

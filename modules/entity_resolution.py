@@ -435,6 +435,8 @@ _IMPOSSIBLE_NAME_WORDS = {
     "regulation", "ordinance", "amendment", "clause", "article",
     "law", "laws", "jurisprudence", "legislation", "jurisdiction",
     "tribunal", "constitution",
+    # Investigation / inquiry labels — never a person's name
+    "cyber", "incident", "inquiry", "investigation", "operation",
     # Document / data labels
     "report", "profile", "document", "file", "record", "log",
     "data", "dataset", "entry", "form", "sheet", "table",
@@ -458,6 +460,9 @@ _NOISE_SUBJECT_TOKENS = {
     "cashback", "reward", "prize", "discount", "voucher",
     # Phase 0 additions: financial/marketing noise tokens from GhostWire stress test
     "bank", "alert", "newsletter", "promo", "marketing",
+    # Investigation / operation titles that pollute subject name selection
+    "cyber", "incident", "inquiry", "ghostwire", "jupiter", "sector",
+    "operation", "case", "document", "investigation",
 }
 
 
@@ -547,6 +552,58 @@ def is_bad_subject_name(candidate, raw_documents=None) -> bool:
     return False
 
 
+def resolve_primary_subject(entities: list, person_object: dict) -> dict:
+    """
+    Strong primary subject name selection with aggressive noise rejection.
+
+    Priority order:
+      1. confirmed_name already present in person_object (trust the caller)
+      2. PersonEntity names extracted from documents
+      3. Last-resort: first entity name that clears a lightweight check
+
+    Returns a dict with confirmed_name, name_variants, resolution_method.
+    """
+    _BAD_WORDS = {"incident", "inquiry", "cyber", "case", "file", "document",
+                  "ghostwire", "jupiter", "operation", "sector", "investigation"}
+
+    candidates: list[tuple[str, int]] = []
+
+    # 1. Honour confirmed_name already set by caller
+    if person_object.get("confirmed_name"):
+        name = person_object["confirmed_name"].strip()
+        if not is_bad_subject_name(name):
+            candidates.append((name, 100))
+
+    # 2. PersonEntity names extracted from documents
+    for entity in entities:
+        if entity.get("type") == "PersonEntity" and entity.get("name"):
+            name = entity["name"].strip()
+            if not is_bad_subject_name(name):
+                candidates.append((name, 80))
+
+    # 3. Fallback: first entity name that passes a lightweight word-level check
+    if not candidates:
+        for entity in entities:
+            if entity.get("type") == "PersonEntity" and entity.get("name"):
+                name = entity["name"].strip()
+                words_lc = {w.lower() for w in name.split()}
+                if len(name) > 4 and not words_lc & _BAD_WORDS:
+                    candidates.append((name, 60))
+                    break
+
+    if candidates:
+        candidates.sort(key=lambda x: x[1], reverse=True)
+        best_name = candidates[0][0]
+    else:
+        best_name = "Unknown Subject"
+
+    return {
+        "confirmed_name": best_name,
+        "name_variants": [best_name],
+        "resolution_method": "entity_resolution_v2",
+    }
+
+
 _ENTITY_SKIP = [
     "field officer report", "field intelligence note", "intelligence report",
     "background profile document", "surveillance log", "activity log",
@@ -555,6 +612,9 @@ _ENTITY_SKIP = [
     "field officer unit", "observer", "section", "page", "not found",
     "unknown", "confirmed", "unconfirmed", "case ref", "source",
     "ed mum", "ncb ggn", "ncb mum",
+    # Operation / investigation title noise (GhostWire / Jupiter style)
+    "in cyber incident inquiry", "cyber incident inquiry", "cyber incident",
+    "ghostwire", "jupiter", "operation ghostwire", "operation jupiter",
 ]
 
 
