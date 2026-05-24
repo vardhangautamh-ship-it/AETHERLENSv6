@@ -2156,6 +2156,14 @@ def _process_single_file(fbs, fname, uid, declared, pb, status_el):
 
     pb.progress(100)
     status_el.text("Complete")
+
+    # Sanitise the per-file person object before it becomes the primary_person
+    try:
+        from modules.entity_resolution import clean_person_object as _cpo_file
+        _cpo_file(person)
+    except Exception:
+        pass
+
     return result, person, method, ents, rels, tl, behavioral_data, structured_rows, primary_subject
 
 
@@ -2805,6 +2813,16 @@ def screen_fusion():
     time.sleep(0.3)
     linking_pb.empty()
     linking_status.empty()
+
+    # ── FINAL CLEAN: sanitise person object before storing in session_state ───
+    # Runs after ALL resolution / graph / agent steps — last gate before PDF.
+    if primary_person:
+        try:
+            from modules.entity_resolution import clean_person_object as _cpo_fusion
+            _cpo_fusion(primary_person)
+            print(f"[FUSION CLEAN] Final name: {primary_person.get('confirmed_name','?')!r}")
+        except Exception as _cle:
+            print(f"[FUSION CLEAN] non-fatal: {_cle}")
 
     st.success("✓ All documents linked and analysed")
 

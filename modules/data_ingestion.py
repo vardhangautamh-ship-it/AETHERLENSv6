@@ -181,6 +181,9 @@ NAME_STOPWORDS = {
     # Traffic / legal violation terms that appear capitalised in challan CSVs
     # and match the name regex (e.g. "Speeding", "Overloading")
     "Speeding", "Overspeed", "Overloading", "Violation", "Challan",
+    # Operation / investigation title words — never part of a human name
+    "Cyber", "Incident", "Inquiry", "Investigation", "Operation",
+    "Ghostwire", "Jupiter", "Sector", "Case",
 }
 
 # Values that look like names but are actually sheet/column/metadata labels

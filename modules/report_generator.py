@@ -2184,6 +2184,13 @@ def generate_report(
                        generated_at, gemini_used, bedrock_used, subject, mode, user_id.
     """
     import traceback as _tb
+    # Sanitise before we even read confirmed_name for logging / fallback
+    try:
+        from modules.entity_resolution import clean_person_object as _cpo_outer
+        person = dict(person or {})
+        _cpo_outer(person)
+    except Exception:
+        person = dict(person or {})
     generated_at = datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
     subject      = (person or {}).get("confirmed_name", "Unknown")
     print(f"[REPORT] generate_report() starting for: {subject}")
@@ -2232,6 +2239,15 @@ def _generate_report_inner(
     # corrected name.  Only overrides when entity resolution did not
     # already produce a confirmed non-unknown name.
     person = dict(person or {})   # local shallow copy — don't mutate caller's dict
+
+    # ── GATE 0: sanitise person object before ANY processing ─────────────────
+    # This is the final backstop — runs regardless of which pipeline path
+    # produced the person dict. Cleans confirmed_name, usernames, platforms.
+    try:
+        from modules.entity_resolution import clean_person_object as _cpo
+        _cpo(person)
+    except Exception as _cpe:
+        print(f"[REPORT] clean_person_object non-fatal: {_cpe}")
 
     # ── Inject keyword-derived flags from raw document text ───────────────────
     # Uses the shared inject_keyword_flags_from_docs() so agents and report

@@ -604,6 +604,70 @@ def resolve_primary_subject(entities: list, person_object: dict) -> dict:
     }
 
 
+# ── Handle noise tokens (never valid social-media handles) ───────────────────
+_NOISE_HANDLE_TOKENS: frozenset = frozenset({
+    "spam", "reels", "offers", "alerts", "newsletter", "promo",
+    "marketing", "notification", "otp", "fraud", "credit", "loan",
+    "insurance", "winner", "cashback", "reward", "prize", "discount",
+    "voucher", "delivery", "apply", "emi", "bill",
+    "not found", "not_found", "unknown", "none", "null",
+})
+
+
+def clean_person_object(person: dict) -> dict:
+    """
+    Centralised, aggressive sanitisation of a person dict — call at every
+    pipeline exit point so noise can NEVER reach report generation.
+
+    Mutates and returns the same dict.
+
+    Cleans:
+      • confirmed_name / name    — rejected via is_bad_subject_name()
+      • usernames dict           — noise handles removed
+      • platforms_confirmed list — platforms whose handle was noise removed
+      • confirmed_linked_profiles — profiles with noise handles removed
+    """
+    if not isinstance(person, dict):
+        return person
+
+    # ── confirmed_name / name ─────────────────────────────────────────────────
+    cn = (person.get("confirmed_name") or "").replace("\n", " ").strip()
+    if cn and is_bad_subject_name(cn):
+        print(f"[CLEAN_PERSON] Rejected noise name: {cn!r}")
+        person["confirmed_name"] = "Unknown Subject"
+        person["name"]           = "Unknown Subject"
+
+    # ── usernames dict ────────────────────────────────────────────────────────
+    noisy_platforms: set = set()
+    clean_unames: dict   = {}
+    for plat, handle in list((person.get("usernames") or {}).items()):
+        h = str(handle).lstrip("@").lower().strip()
+        if not h or h in _NOISE_HANDLE_TOKENS or any(t in h for t in _NOISE_HANDLE_TOKENS if t):
+            noisy_platforms.add(plat.lower())
+            print(f"[CLEAN_PERSON] Rejected handle {handle!r} for {plat}")
+        else:
+            clean_unames[plat] = handle
+    person["usernames"] = clean_unames
+
+    # ── platforms_confirmed: drop platforms whose handle was noise ────────────
+    if noisy_platforms:
+        person["platforms_confirmed"] = [
+            p for p in (person.get("platforms_confirmed") or [])
+            if p.lower() not in noisy_platforms
+        ]
+
+    # ── confirmed_linked_profiles ─────────────────────────────────────────────
+    clean_profiles = []
+    for profile in (person.get("confirmed_linked_profiles") or []):
+        h = str(profile.get("username", "")).lstrip("@").lower().strip()
+        if h and (h in _NOISE_HANDLE_TOKENS or any(t in h for t in _NOISE_HANDLE_TOKENS if t)):
+            continue
+        clean_profiles.append(profile)
+    person["confirmed_linked_profiles"] = clean_profiles
+
+    return person
+
+
 _ENTITY_SKIP = [
     "field officer report", "field intelligence note", "intelligence report",
     "background profile document", "surveillance log", "activity log",
