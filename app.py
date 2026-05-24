@@ -2089,7 +2089,13 @@ def _process_single_file(fbs, fname, uid, declared, pb, status_el):
             n["value"] for n in entities.get("names", [])[:10]
             if n["value"] not in skip and not _is_bad(n["value"])
         ]
-        primary_subject = names_list[0] if names_list else fname.rsplit(".", 1)[0]
+        if names_list:
+            primary_subject = names_list[0]
+        else:
+            # Filename stem is the last resort — reject if it contains noise tokens
+            # (underscore-joined stems like "GHOSTWIRE_CDR" need word-splitting on _ too)
+            stem = fname.rsplit(".", 1)[0].replace("_", " ").replace("-", " ")
+            primary_subject = stem if not _is_bad(stem) else ""
 
     status_el.text("Extracting entities...")
     pb.progress(35)
@@ -2618,16 +2624,23 @@ def screen_fusion():
 
     # Validate primary subject against graph — prevents a location or org node
     # that dominated entity extraction from masquerading as the subject.
+    from modules.entity_resolution import is_bad_subject_name as _is_bad_graph
     graph_subject = get_primary_subject(merged_ents, G_full)
-    if graph_subject and graph_subject != "Unknown Subject":
+    if graph_subject and graph_subject != "Unknown Subject" and not _is_bad_graph(graph_subject):
         person = primary_person or {}
         current_name = person.get("confirmed_name", "")
-        if not current_name or current_name == "Unknown Subject":
+        if not current_name or current_name in ("Unknown Subject", "Unknown", ""):
             # No confirmed name yet — take the graph's top person
             if primary_person:
                 primary_person["confirmed_name"] = graph_subject
             primary_subject_name = graph_subject
             print(f"[FUSION 5b] Subject corrected by graph: {graph_subject!r}")
+        elif _is_bad_graph(current_name):
+            # Current name is noise — override with the clean graph subject
+            if primary_person:
+                primary_person["confirmed_name"] = graph_subject
+            primary_subject_name = graph_subject
+            print(f"[FUSION 5b] Noise name {current_name!r} replaced by graph: {graph_subject!r}")
         else:
             print(f"[FUSION 5b] Graph primary: {graph_subject!r} | entity resolution: {current_name!r}")
 

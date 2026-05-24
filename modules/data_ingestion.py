@@ -213,6 +213,9 @@ DOCUMENT_SKIP_LIST = [
     "field officer unit", "observer", "section", "page", "not found",
     "unknown", "confirmed", "unconfirmed", "case ref", "source",
     "ed mum", "ncb ggn", "ncb mum",
+    # Operation / case title words — never part of a person's name
+    "cyber", "incident", "inquiry", "investigation", "operation",
+    "ghostwire", "jupiter", "sector", "document",
 ]
 
 PLACE_SKIP_LIST = [

@@ -969,11 +969,34 @@ def build_platform_presence(person: dict, search_results: dict = None,
     Normalises platform keys to title-case so "github"/"GitHub"/"GITHUB"
     all collapse to a single "Github" entry (no Section 03 duplicates).
     """
+    # Handles that are spam / noise labels — never show as confirmed accounts.
+    _NOISE_HANDLES = {
+        "spam", "reels", "offers", "alerts", "newsletter", "promo",
+        "marketing", "notification", "otp", "fraud", "credit", "loan",
+        "insurance", "winner", "cashback", "reward", "prize", "discount",
+        "voucher", "delivery", "apply", "emi", "bill",
+        "not found", "not_found", "unknown", "none",
+    }
+
+    def _is_noise_handle(h: str) -> bool:
+        if not h or str(h).strip() in ("", "Not found", "Not public"):
+            return True
+        lc = str(h).lstrip("@").lower().strip()
+        if not lc:
+            return True
+        # Exact match first, then substring (only for non-empty tokens)
+        if lc in _NOISE_HANDLES:
+            return True
+        return any(tok and tok in lc for tok in _NOISE_HANDLES)
+
     # _seen maps normalised-lowercase key → canonical display name
     _seen: dict = {}
     platforms: dict = {}
 
     def _add(raw_name: str, entry: dict):
+        uname = entry.get("username", "")
+        if _is_noise_handle(uname):
+            return
         key = raw_name.strip().lower()
         if key and key not in _seen:
             canonical = raw_name.strip().title()
@@ -2233,6 +2256,18 @@ def _generate_report_inner(
                 person["name"] = person.get("confirmed_name", current_name)
     except Exception as _gpe:
         print(f"[REPORT] get_primary_subject non-fatal: {_gpe}")
+
+    # Hard guard: reject any noise name that slipped through earlier stages.
+    # This runs AFTER all graph/entity-resolution overrides so it is the final word.
+    try:
+        from modules.entity_resolution import is_bad_subject_name as _is_bad_final
+        _cn = person.get("confirmed_name", "") or ""
+        if _cn and _is_bad_final(_cn):
+            print(f"[REPORT] Final guard: rejecting noise name {_cn!r}")
+            person["confirmed_name"] = "Unknown Subject"
+            person["name"]           = "Unknown Subject"
+    except Exception:
+        pass
 
     subject      = (person or {}).get("confirmed_name", "Unknown")
     gemini_ok    = bool(config.GEMINI_API_KEY and config.GEMINI_API_KEY != "your_gemini_key_here")
