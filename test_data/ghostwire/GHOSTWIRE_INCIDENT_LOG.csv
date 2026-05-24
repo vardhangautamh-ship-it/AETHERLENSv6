@@ -1,0 +1,4 @@
+case_name,subject,operation,date,type,severity,notes
+In Cyber Incident Inquiry,In Cyber Incident Inquiry,GhostWire,2026-01-10,CERT-In Report,HIGH,Unauthorised access to government servers confirmed
+In Cyber Incident Inquiry,In Cyber Incident Inquiry,GhostWire,2026-01-12,IT Act Section 66,HIGH,Evidence of malicious deployment
+In Cyber Incident Inquiry,In Cyber Incident Inquiry,GhostWire,2026-01-14,DPDP Breach,MEDIUM,Data exfiltration from protected systems
