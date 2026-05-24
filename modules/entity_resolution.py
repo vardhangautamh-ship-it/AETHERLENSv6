@@ -181,7 +181,7 @@ def _local_resolve(query: str, search_results: dict) -> dict:
         person["data_gaps"].append("No search results available")
         return person
 
-    person["confirmed_name"] = query
+    person["confirmed_name"] = query if not is_bad_subject_name(query) else "Unknown Subject"
     sources_seen = set()
     urls = {}
     bios = {}
@@ -949,7 +949,7 @@ def _local_resolve_from_rows(subject_name: str, structured_rows: list, filename:
     person = _new_person()
     # Strip newline artifacts from text extraction (e.g. "Zafar Ahmed Khan\nCase")
     clean_subject = (subject_name or "").replace("\n", " ").replace("\r", " ").strip()
-    person["confirmed_name"]   = clean_subject or "Unknown"
+    person["confirmed_name"]   = (clean_subject if clean_subject and not is_bad_subject_name(clean_subject) else "Unknown")
     person["data_sources"]     = [filename] if filename else []
     person["confidence_score"] = 30 if subject_name else 5
 
@@ -1115,13 +1115,24 @@ def resolve_entity_from_multiple_docs(raw_documents: list) -> tuple[dict, str]:
 
     method_used = "local-multidoc"
     if ai_person:
-        # Overlay AI-extracted fields (but keep row-derived safety fields)
+        # Overlay AI-extracted fields (but keep row-derived safety fields).
+        # Skip confirmed_name and usernames — both are handled explicitly below.
+        _SKIP_IN_OVERLAY = {"confirmed_name", "usernames"}
         for key, default in EMPTY_PERSON.items():
+            if key in _SKIP_IN_OVERLAY:
+                continue
             if key in ai_person and ai_person[key]:
                 person[key] = ai_person[key]
+        # confirmed_name: noise-checked write
         cn = ai_person.get("confirmed_name", "").replace("\n", " ").replace("\r", " ").strip()
         if cn and not is_bad_subject_name(cn, raw_documents):
             person["confirmed_name"] = cn
+        # usernames: strip noise handles before merging
+        ai_unames = ai_person.get("usernames") or {}
+        for plat, handle in ai_unames.items():
+            h = str(handle).lstrip("@").lower().strip()
+            if h and h not in _NOISE_HANDLE_TOKENS and not any(t in h for t in _NOISE_HANDLE_TOKENS if t):
+                person["usernames"][plat] = handle
         person["data_sources"] = all_sources
         method_used = ai_method
         print(f"[RESOLVE] AI engine accepted: {method_used}")
