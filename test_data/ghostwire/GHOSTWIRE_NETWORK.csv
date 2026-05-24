@@ -1,0 +1,5 @@
+person,relationship,known_associate,phone,location,risk_level
+Arjun Mehta,colleague,Rajan Iyer,+919823456789,Gurugram,HIGH
+Arjun Mehta,contact,Unknown Entity A,+971501234567,Dubai UAE,HIGH
+Arjun Mehta,employer,NexaTech Solutions,,Cyber City Gurugram,MEDIUM
+Arjun Mehta,financial_contact,Unknown Entity B,+12125550100,New York USA,HIGH

@@ -1,0 +1,13 @@
+field,value
+subject_name,Arjun Mehta
+alias,ArjunM
+dob,1991-03-15
+nationality,Indian
+occupation,Software Engineer
+employer,NexaTech Solutions
+location,Cyber City Gurugram
+case_ref,GW-2026-001
+operation,In Cyber Incident Inquiry
+flag,[FLAG] CERT-In inquiry confirmed
+flag,[FLAG] IT Act violation flagged
+flag,[FLAG] Unauthorised access to classified systems

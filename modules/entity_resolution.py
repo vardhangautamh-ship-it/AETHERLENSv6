@@ -181,7 +181,7 @@ def _local_resolve(query: str, search_results: dict) -> dict:
         person["data_gaps"].append("No search results available")
         return person
 
-    person["confirmed_name"] = query
+    person["confirmed_name"] = query if not is_bad_subject_name(query) else "Unknown Subject"
     sources_seen = set()
     urls = {}
     bios = {}
@@ -435,6 +435,8 @@ _IMPOSSIBLE_NAME_WORDS = {
     "regulation", "ordinance", "amendment", "clause", "article",
     "law", "laws", "jurisprudence", "legislation", "jurisdiction",
     "tribunal", "constitution",
+    # Investigation / inquiry labels — never a person's name
+    "cyber", "incident", "inquiry", "investigation", "operation",
     # Document / data labels
     "report", "profile", "document", "file", "record", "log",
     "data", "dataset", "entry", "form", "sheet", "table",
@@ -456,6 +458,11 @@ _NOISE_SUBJECT_TOKENS = {
     "mutual", "fund", "electricity", "personal", "car",
     "notification", "attempt", "reels", "apply", "winner",
     "cashback", "reward", "prize", "discount", "voucher",
+    # Phase 0 additions: financial/marketing noise tokens from GhostWire stress test
+    "bank", "alert", "newsletter", "promo", "marketing",
+    # Investigation / operation titles that pollute subject name selection
+    "cyber", "incident", "inquiry", "ghostwire", "jupiter", "sector",
+    "operation", "case", "document", "investigation",
 }
 
 
@@ -545,6 +552,122 @@ def is_bad_subject_name(candidate, raw_documents=None) -> bool:
     return False
 
 
+def resolve_primary_subject(entities: list, person_object: dict) -> dict:
+    """
+    Strong primary subject name selection with aggressive noise rejection.
+
+    Priority order:
+      1. confirmed_name already present in person_object (trust the caller)
+      2. PersonEntity names extracted from documents
+      3. Last-resort: first entity name that clears a lightweight check
+
+    Returns a dict with confirmed_name, name_variants, resolution_method.
+    """
+    _BAD_WORDS = {"incident", "inquiry", "cyber", "case", "file", "document",
+                  "ghostwire", "jupiter", "operation", "sector", "investigation"}
+
+    candidates: list[tuple[str, int]] = []
+
+    # 1. Honour confirmed_name already set by caller
+    if person_object.get("confirmed_name"):
+        name = person_object["confirmed_name"].strip()
+        if not is_bad_subject_name(name):
+            candidates.append((name, 100))
+
+    # 2. PersonEntity names extracted from documents
+    for entity in entities:
+        if entity.get("type") == "PersonEntity" and entity.get("name"):
+            name = entity["name"].strip()
+            if not is_bad_subject_name(name):
+                candidates.append((name, 80))
+
+    # 3. Fallback: first entity name that passes a lightweight word-level check
+    if not candidates:
+        for entity in entities:
+            if entity.get("type") == "PersonEntity" and entity.get("name"):
+                name = entity["name"].strip()
+                words_lc = {w.lower() for w in name.split()}
+                if len(name) > 4 and not words_lc & _BAD_WORDS:
+                    candidates.append((name, 60))
+                    break
+
+    if candidates:
+        candidates.sort(key=lambda x: x[1], reverse=True)
+        best_name = candidates[0][0]
+    else:
+        best_name = "Unknown Subject"
+
+    return {
+        "confirmed_name": best_name,
+        "name_variants": [best_name],
+        "resolution_method": "entity_resolution_v2",
+    }
+
+
+# ── Handle noise tokens (never valid social-media handles) ───────────────────
+_NOISE_HANDLE_TOKENS: frozenset = frozenset({
+    "spam", "reels", "offers", "alerts", "newsletter", "promo",
+    "marketing", "notification", "otp", "fraud", "credit", "loan",
+    "insurance", "winner", "cashback", "reward", "prize", "discount",
+    "voucher", "delivery", "apply", "emi", "bill",
+    "not found", "not_found", "unknown", "none", "null",
+})
+
+
+def clean_person_object(person: dict) -> dict:
+    """
+    Centralised, aggressive sanitisation of a person dict — call at every
+    pipeline exit point so noise can NEVER reach report generation.
+
+    Mutates and returns the same dict.
+
+    Cleans:
+      • confirmed_name / name    — rejected via is_bad_subject_name()
+      • usernames dict           — noise handles removed
+      • platforms_confirmed list — platforms whose handle was noise removed
+      • confirmed_linked_profiles — profiles with noise handles removed
+    """
+    if not isinstance(person, dict):
+        return person
+
+    # ── confirmed_name / name ─────────────────────────────────────────────────
+    cn = (person.get("confirmed_name") or "").replace("\n", " ").strip()
+    if cn and is_bad_subject_name(cn):
+        print(f"[CLEAN_PERSON] Rejected noise name: {cn!r}")
+        person["confirmed_name"] = "Unknown Subject"
+        person["name"]           = "Unknown Subject"
+
+    # ── usernames dict ────────────────────────────────────────────────────────
+    noisy_platforms: set = set()
+    clean_unames: dict   = {}
+    for plat, handle in list((person.get("usernames") or {}).items()):
+        h = str(handle).lstrip("@").lower().strip()
+        if not h or h in _NOISE_HANDLE_TOKENS or any(t in h for t in _NOISE_HANDLE_TOKENS if t):
+            noisy_platforms.add(plat.lower())
+            print(f"[CLEAN_PERSON] Rejected handle {handle!r} for {plat}")
+        else:
+            clean_unames[plat] = handle
+    person["usernames"] = clean_unames
+
+    # ── platforms_confirmed: drop platforms whose handle was noise ────────────
+    if noisy_platforms:
+        person["platforms_confirmed"] = [
+            p for p in (person.get("platforms_confirmed") or [])
+            if p.lower() not in noisy_platforms
+        ]
+
+    # ── confirmed_linked_profiles ─────────────────────────────────────────────
+    clean_profiles = []
+    for profile in (person.get("confirmed_linked_profiles") or []):
+        h = str(profile.get("username", "")).lstrip("@").lower().strip()
+        if h and (h in _NOISE_HANDLE_TOKENS or any(t in h for t in _NOISE_HANDLE_TOKENS if t)):
+            continue
+        clean_profiles.append(profile)
+    person["confirmed_linked_profiles"] = clean_profiles
+
+    return person
+
+
 _ENTITY_SKIP = [
     "field officer report", "field intelligence note", "intelligence report",
     "background profile document", "surveillance log", "activity log",
@@ -553,6 +676,9 @@ _ENTITY_SKIP = [
     "field officer unit", "observer", "section", "page", "not found",
     "unknown", "confirmed", "unconfirmed", "case ref", "source",
     "ed mum", "ncb ggn", "ncb mum",
+    # Operation / investigation title noise (GhostWire / Jupiter style)
+    "in cyber incident inquiry", "cyber incident inquiry", "cyber incident",
+    "ghostwire", "jupiter", "operation ghostwire", "operation jupiter",
 ]
 
 
@@ -823,7 +949,7 @@ def _local_resolve_from_rows(subject_name: str, structured_rows: list, filename:
     person = _new_person()
     # Strip newline artifacts from text extraction (e.g. "Zafar Ahmed Khan\nCase")
     clean_subject = (subject_name or "").replace("\n", " ").replace("\r", " ").strip()
-    person["confirmed_name"]   = clean_subject or "Unknown"
+    person["confirmed_name"]   = (clean_subject if clean_subject and not is_bad_subject_name(clean_subject) else "Unknown")
     person["data_sources"]     = [filename] if filename else []
     person["confidence_score"] = 30 if subject_name else 5
 
@@ -989,13 +1115,24 @@ def resolve_entity_from_multiple_docs(raw_documents: list) -> tuple[dict, str]:
 
     method_used = "local-multidoc"
     if ai_person:
-        # Overlay AI-extracted fields (but keep row-derived safety fields)
+        # Overlay AI-extracted fields (but keep row-derived safety fields).
+        # Skip confirmed_name and usernames — both are handled explicitly below.
+        _SKIP_IN_OVERLAY = {"confirmed_name", "usernames"}
         for key, default in EMPTY_PERSON.items():
+            if key in _SKIP_IN_OVERLAY:
+                continue
             if key in ai_person and ai_person[key]:
                 person[key] = ai_person[key]
+        # confirmed_name: noise-checked write
         cn = ai_person.get("confirmed_name", "").replace("\n", " ").replace("\r", " ").strip()
         if cn and not is_bad_subject_name(cn, raw_documents):
             person["confirmed_name"] = cn
+        # usernames: strip noise handles before merging
+        ai_unames = ai_person.get("usernames") or {}
+        for plat, handle in ai_unames.items():
+            h = str(handle).lstrip("@").lower().strip()
+            if h and h not in _NOISE_HANDLE_TOKENS and not any(t in h for t in _NOISE_HANDLE_TOKENS if t):
+                person["usernames"][plat] = handle
         person["data_sources"] = all_sources
         method_used = ai_method
         print(f"[RESOLVE] AI engine accepted: {method_used}")

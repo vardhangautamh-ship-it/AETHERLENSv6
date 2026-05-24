@@ -742,7 +742,13 @@ def get_primary_subject(entities: list, graph: nx.DiGraph) -> str:
       2. Degree centrality as tie-breaker when counts are equal
       3. First entity in the list whose type == "person"
       4. "Unknown Subject" if nothing qualifies
+
+    All candidates are validated through is_bad_subject_name to prevent
+    operation titles, file stems, or noise strings from masquerading as
+    the primary subject.
     """
+    from modules.entity_resolution import is_bad_subject_name as _is_bad
+
     person_scores: dict = {}
 
     try:
@@ -752,19 +758,22 @@ def get_primary_subject(entities: list, graph: nx.DiGraph) -> str:
 
     for node, data in graph.nodes(data=True):
         if data.get("node_type") == "person":
+            label = data.get("label", node)
+            if _is_bad(label):
+                continue
             mention_count = data.get("mention_count", 0)
             centrality    = degree_centrality.get(node, 0)
-            # Composite: mention_count is primary signal, centrality breaks ties
             person_scores[node] = (mention_count, centrality)
 
     if person_scores:
-        return max(person_scores, key=person_scores.get)
+        best_node = max(person_scores, key=person_scores.get)
+        return graph.nodes[best_node].get("label", best_node)
 
-    # Fallback: entities list (pre-graph data) — first person-type entry
+    # Fallback: entities list (pre-graph data) — first clean person-type entry
     for e in (entities or []):
         if e.get("type") == "person" or e.get("node_type") == "person":
             name = e.get("name") or e.get("label") or e.get("id", "")
-            if name:
+            if name and not _is_bad(name):
                 return name
 
     return "Unknown Subject"

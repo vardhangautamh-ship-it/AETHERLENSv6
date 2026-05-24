@@ -1,0 +1,5 @@
+subject,transaction_date,amount_inr,type,counterparty,flag,notes
+Arjun Mehta,2026-01-05,150000,HAWALA,Unknown overseas entity,[FLAG] HAWALA transfer detected,Undocumented international transfer
+Arjun Mehta,2026-01-07,80000,CASH_WITHDRAWAL,ATM Sector 29 Gurugram,[FLAG] PMLA flagged,Large cash withdrawal
+Arjun Mehta,2026-01-09,220000,WIRE_TRANSFER,UAE account +97150XXXXXXX,[FLAG] FEMA violation suspected,International debit USD
+Arjun Mehta,2026-01-11,60000,CRYPTO,Bitcoin exchange,[FLAG] ED indicator present,Crypto to cash conversion
