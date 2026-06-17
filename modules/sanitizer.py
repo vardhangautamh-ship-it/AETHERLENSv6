@@ -46,6 +46,53 @@ def safe_str(val, default: str = "") -> str:
         return default
 
 
+def normalize_name_key(val) -> str:
+    """
+    Canonical comparison key for a name/label: collapse all internal whitespace
+    to single spaces, strip the ends, and casefold.
+
+    Use ONLY for counting / identity comparison — never for display.  Two strings
+    that differ only in case or whitespace (e.g. "Arjun Mehta", "ARJUN MEHTA",
+    "Arjun  Mehta") produce the same key.  Pure, deterministic, no side effects.
+    """
+    s = safe_str(val)
+    if not s:
+        return ""
+    return re.sub(r"\s+", " ", s).strip().casefold()
+
+
+def most_common_by_key(values, key_fn=normalize_name_key):
+    """
+    Frequency-count `values` aggregated by a normalized key so case/whitespace
+    variants are counted together, while preserving a human-readable display
+    form for each key.
+
+    Returns a list of (display_value, count) ordered by descending count, with
+    ties broken by first appearance (deterministic / reproducible).  The
+    display_value is the most frequent original spelling for that key (ties →
+    first seen).
+    """
+    from collections import OrderedDict
+    key_counts:   "OrderedDict[str,int]" = OrderedDict()
+    key_displays: dict = {}
+    for v in values:
+        k = key_fn(v)
+        if not k:
+            continue
+        key_counts[k] = key_counts.get(k, 0) + 1
+        disp_str = safe_str(v)
+        disp_map = key_displays.setdefault(k, OrderedDict())
+        disp_map[disp_str] = disp_map.get(disp_str, 0) + 1
+    out = []
+    for k, cnt in key_counts.items():
+        disp_map  = key_displays[k]
+        best_disp = max(disp_map.items(), key=lambda kv: kv[1])[0]  # ties → first seen
+        out.append((best_disp, cnt))
+    # Stable sort on -count keeps first-appearance order among equal counts.
+    out.sort(key=lambda x: -x[1])
+    return out
+
+
 def safe_int(val, default: int = 0) -> int:
     """Convert any value to int safely."""
     try:

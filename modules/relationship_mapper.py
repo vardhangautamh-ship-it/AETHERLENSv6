@@ -779,11 +779,58 @@ def get_primary_subject(entities: list, graph: nx.DiGraph) -> str:
     return "Unknown Subject"
 
 
-def graph_summary(G: nx.DiGraph, subject_name: str = "") -> dict:
-    """Return basic graph statistics including filtered key associations."""
+def detect_boilerplate_locations(raw_documents: list, threshold: float = 0.8) -> set:
+    """
+    Return the set of normalized LOCATION strings that appear in >= `threshold`
+    fraction of source documents (Fix 5 — cross-file boilerplate suppression).
+
+    These are institutional-address / shared-header strings (e.g. a campus
+    address printed on every file) that inflate graph centrality and drown real
+    signal.  Only location-type strings are considered, so the subject — a
+    person who also appears in most files — is NEVER suppressed by this filter.
+
+    Pure and deterministic: same documents → same set every run.
+    """
+    docs = [d for d in (raw_documents or []) if isinstance(d, dict)]
+    n = len(docs)
+    if n < 2:
+        return set()
+
+    doc_count: dict = {}
+    for d in docs:
+        seen_in_doc: set = set()
+        for loc in (d.get("locations") or []):
+            val = loc.get("value", loc) if isinstance(loc, dict) else loc
+            k = str(val).strip().lower()
+            if len(k) > 3:
+                seen_in_doc.add(k)
+        for row in (d.get("structured_rows") or []):
+            if not isinstance(row, dict):
+                continue
+            for col, val in row.items():
+                if any(t in str(col).lower() for t in ("location", "city", "place", "area", "address")):
+                    k = str(val).strip().lower()
+                    if len(k) > 3:
+                        seen_in_doc.add(k)
+        for k in seen_in_doc:
+            doc_count[k] = doc_count.get(k, 0) + 1
+
+    cutoff = max(2, int(round(threshold * n)))
+    return {k for k, c in doc_count.items() if c >= cutoff}
+
+
+def graph_summary(G: nx.DiGraph, subject_name: str = "", boilerplate: set = None) -> dict:
+    """
+    Return basic graph statistics including filtered key associations.
+
+    `boilerplate`: optional set of normalized location labels (from
+    detect_boilerplate_locations) that are excluded from top_nodes so shared
+    institutional addresses do not dominate the ranking (Fix 5).
+    """
     if len(G.nodes) == 0:
         return {"nodes": 0, "edges": 0, "density": 0.0, "top_nodes": [], "top_associations": []}
 
+    boilerplate = boilerplate or set()
     density = nx.density(G)
     try:
         degree_centrality = nx.degree_centrality(G)
@@ -794,6 +841,9 @@ def graph_summary(G: nx.DiGraph, subject_name: str = "") -> dict:
             lbl       = G.nodes[n].get("label", n)
             ntype     = G.nodes[n].get("node_type", "unknown")
             lbl_lower = lbl.lower()
+            # Fix 5: drop cross-file boilerplate location nodes from the ranking.
+            if ntype == "location" and lbl_lower in boilerplate:
+                continue
             if lbl_lower not in seen_labels or c > seen_labels[lbl_lower]["centrality"]:
                 seen_labels[lbl_lower] = {
                     "id":        n,

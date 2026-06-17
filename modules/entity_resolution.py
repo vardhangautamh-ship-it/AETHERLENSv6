@@ -10,7 +10,10 @@ import datetime
 import requests
 
 import config
-from modules.sanitizer import safe_str, safe_list, safe_int, safe_phone, defensive
+from modules.sanitizer import (
+    safe_str, safe_list, safe_int, safe_phone, defensive,
+    most_common_by_key, normalize_name_key,
+)
 
 # ── Person Object schema ───────────────────────────────────────────────────────
 
@@ -668,6 +671,84 @@ def clean_person_object(person: dict) -> dict:
     return person
 
 
+# ── Deterministic platform extraction (Fix 1) ────────────────────────────────
+# Column-name vocabularies for structured-row platform detection.  Lower-cased,
+# matched case-insensitively against each row's keys.
+_PLATFORM_COL_NAMES = frozenset({"platform", "site", "service", "network", "social", "social_media"})
+_HANDLE_COL_NAMES   = frozenset({"username", "handle", "user", "account", "screen_name",
+                                  "userid", "user_id", "user_name", "account_name"})
+_URL_COL_NAMES      = frozenset({"url", "link", "profile", "profile_url", "profile_link"})
+_STATUS_COL_NAMES   = frozenset({"status", "state", "verification", "verified", "confirmed"})
+# Status values that mean "this is a real, confirmed account of the subject".
+_CONFIRMED_STATUS_VALUES = frozenset({"confirmed", "verified", "active", "ok", "true", "yes", "valid"})
+
+
+def extract_platforms_from_rows(raw_documents: list) -> dict:
+    """
+    Deterministic, AI-free platform / username extraction from structured rows.
+
+    Reads any row that carries a platform column plus a username/handle column
+    (e.g. social-media CSV exports).  A row is kept only when:
+      • a status column, if present, is one of _CONFIRMED_STATUS_VALUES, AND
+      • the handle is not a noise token (_NOISE_HANDLE_TOKENS).
+
+    This guarantees that §03 (Platform Presence) and the subject's handles are
+    populated with or without the LLM — fulfilling the "keep AI + add rules"
+    decision.  Pure and reproducible: same rows → same output every run.
+
+    Returns:
+        {
+          "platforms_confirmed": [sorted platform names],
+          "usernames":           {platform: handle},
+          "confirmed_linked_profiles": [{platform, username, url}, ...],
+        }
+    """
+    platforms: dict = {}   # platform_display -> {"handle": str, "url": str}
+
+    for doc in safe_list(raw_documents):
+        if not isinstance(doc, dict):
+            continue
+        for row in safe_list(doc.get("structured_rows", [])):
+            if not isinstance(row, dict):
+                continue
+            lc = {str(k).lower().strip(): k for k in row.keys()}
+
+            def _col(names):
+                for n in names:
+                    if n in lc:
+                        return safe_str(row.get(lc[n], ""))
+                return ""
+
+            plat   = _col(_PLATFORM_COL_NAMES).strip()
+            handle = _col(_HANDLE_COL_NAMES).strip()
+            if not plat or not handle:
+                continue
+
+            status = _col(_STATUS_COL_NAMES).strip().lower()
+            if status and status not in _CONFIRMED_STATUS_VALUES:
+                continue   # explicitly non-confirmed (e.g. SPAM) → skip
+
+            h = handle.lstrip("@").lower().strip()
+            if not h or h in _NOISE_HANDLE_TOKENS or any(t in h for t in _NOISE_HANDLE_TOKENS if t):
+                continue   # noise handle (@reels, @spam, …) → skip
+
+            url = _col(_URL_COL_NAMES).strip()
+            if plat.lower() not in {p.lower() for p in platforms}:
+                platforms[plat] = {"handle": handle.lstrip("@"), "url": url}
+
+    plat_list = sorted(platforms.keys())
+    usernames = {p: platforms[p]["handle"] for p in plat_list}
+    linked = [
+        {"platform": p, "username": platforms[p]["handle"], "url": platforms[p]["url"]}
+        for p in plat_list if platforms[p]["url"]
+    ]
+    return {
+        "platforms_confirmed":       plat_list,
+        "usernames":                 usernames,
+        "confirmed_linked_profiles": linked,
+    }
+
+
 _ENTITY_SKIP = [
     "field officer report", "field intelligence note", "intelligence report",
     "background profile document", "surveillance log", "activity log",
@@ -1041,8 +1122,9 @@ def resolve_entity_from_multiple_docs(raw_documents: list) -> tuple[dict, str]:
                 if val:
                     all_names.append(val)
         if all_names:
-            from collections import Counter
-            for name, _ in Counter(all_names).most_common():
+            # Aggregate by normalized key (case + whitespace) so variants of one
+            # name vote together instead of splitting the count (Fix 3).
+            for name, _ in most_common_by_key(all_names):
                 if not any(s in name.lower() for s in _ENTITY_SKIP) and len(name) > 5 \
                         and not is_bad_subject_name(name, raw_documents):
                     primary_name = name
@@ -1136,6 +1218,32 @@ def resolve_entity_from_multiple_docs(raw_documents: list) -> tuple[dict, str]:
         person["data_sources"] = all_sources
         method_used = ai_method
         print(f"[RESOLVE] AI engine accepted: {method_used}")
+
+    # ── Deterministic platform/username extraction (Fix 1) ───────────────────
+    # Runs with or without the AI; unions into (never overwrites) AI-found data
+    # so §03 and the subject's handles are populated even when the LLM is off.
+    det_plat = extract_platforms_from_rows(raw_documents)
+    if det_plat["platforms_confirmed"]:
+        existing_plats = {p.lower(): p for p in safe_list(person.get("platforms_confirmed", []))}
+        for p in det_plat["platforms_confirmed"]:
+            existing_plats.setdefault(p.lower(), p)
+        person["platforms_confirmed"] = sorted(existing_plats.values())
+    person.setdefault("usernames", {})
+    for plat, handle in det_plat["usernames"].items():
+        if not any(ep.lower() == plat.lower() for ep in person["usernames"]):
+            person["usernames"][plat] = handle
+    person.setdefault("confirmed_linked_profiles", [])
+    _seen_links = {
+        (safe_str(l.get("platform", "")).lower(), safe_str(l.get("username", "")).lower())
+        for l in person["confirmed_linked_profiles"] if isinstance(l, dict)
+    }
+    for l in det_plat["confirmed_linked_profiles"]:
+        _k = (l["platform"].lower(), l["username"].lower())
+        if _k not in _seen_links:
+            person["confirmed_linked_profiles"].append(l)
+            _seen_links.add(_k)
+    if det_plat["platforms_confirmed"]:
+        print(f"[RESOLVE] Deterministic platforms: {det_plat['platforms_confirmed']}")
 
     # Permanent: comprehensive phone extraction across all sources
     all_phones = extract_all_phones(raw_documents)
@@ -1550,9 +1658,14 @@ def detect_all_conflicts(
             names_by_source[fname] = parsed
 
     seen_variants: set = set()
+    _primary_key = normalize_name_key(primary_name)
     for source, names in names_by_source.items():
         for name in names:
-            if name == primary_name or name in seen_variants:
+            # Case/whitespace-insensitive self-exclusion: "ARJUN MEHTA" is the
+            # SAME identity as "Arjun Mehta" and must never raise a false
+            # NAME_CONFLICT against the primary (Fix 4).
+            if normalize_name_key(name) == _primary_key \
+                    or normalize_name_key(name) in seen_variants:
                 continue
             name_parts = set(name.lower().split())
             overlap    = primary_parts & name_parts
@@ -1591,7 +1704,7 @@ def detect_all_conflicts(
                 if _skip:
                     continue
 
-                seen_variants.add(name)
+                seen_variants.add(normalize_name_key(name))
                 conflicts.append({
                     "type":     "NAME_CONFLICT",
                     "flag":     (
