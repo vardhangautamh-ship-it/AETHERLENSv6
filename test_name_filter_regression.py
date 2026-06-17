@@ -64,7 +64,7 @@ TRUE_NOISE = [
     "test_data",
     "val1",
     "anpr_log",
-    "GHOSTWIRE",
+    "Operation GhostWire",   # caught by the generic 'operation' word, not a literal
     "Source A",
     "Empty Data",
     "Electricity Bill",     # 'electricity' token still catches bill-spam

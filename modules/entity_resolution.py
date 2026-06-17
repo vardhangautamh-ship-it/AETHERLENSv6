@@ -473,10 +473,31 @@ _NOISE_SUBJECT_TOKENS = {
     "cashback", "reward", "prize", "discount", "voucher",
     # Phase 0 additions: financial/marketing noise tokens from GhostWire stress test
     "bank", "alert", "newsletter", "promo", "marketing",
-    # Investigation / operation titles that pollute subject name selection
-    "cyber", "incident", "inquiry", "ghostwire", "jupiter", "sector",
+    # Investigation / operation titles that pollute subject name selection.
+    # NOTE: generic words only — operation CODENAMES (GhostWire, Jupiter, Trident,
+    # …) are caught structurally via "operation X" here + the filename-stem match
+    # (Check 10), not by hardcoding individual codenames.
+    "cyber", "incident", "inquiry", "sector",
     "operation", "case", "document", "investigation",
 }
+
+
+# Org / role "function" words that a real human name never ENDS in. Used by a
+# structural rule (not a brand blocklist): a multi-token candidate whose final
+# token is one of these is a "Brand + Function" sender label — e.g. "Acme
+# Billing", "Globex Notifications", "Initech Helpdesk" — regardless of the brand,
+# so it generalises to vendors never seen before.
+_ORG_FUNCTION_SUFFIXES = frozenset({
+    "billing", "invoice", "invoices", "receipt", "receipts",
+    "payment", "payments", "payout", "payouts", "refund", "refunds",
+    "subscription", "subscriptions", "order", "orders", "purchase", "purchases",
+    "support", "helpdesk", "notification", "notifications",
+    "alert", "alerts", "update", "updates", "newsletter",
+    "admin", "accounts", "mailer", "noreply", "donotreply",
+    "reminders", "reminder", "unsubscribe", "team", "teams",
+})
+# NOTE: deliberately excludes real-surname collisions (Sales, Service, Care, Bell,
+# News) — the goal is brand-sender labels, not to reject people.
 
 
 # Transactional / spam-category words that mean a "location" string is really a
@@ -561,6 +582,13 @@ def is_bad_subject_name(candidate, raw_documents=None) -> bool:
     if any(w.lower() in _IMPOSSIBLE_NAME_WORDS for w in words):
         return True
 
+    # ── Check 7b: "Brand + Function" sender label (structural, brand-agnostic) ─
+    # A real person's name never ends in an org/role function word. This catches
+    # vendor sender labels for brands we have never enumerated — "Acme Billing",
+    # "Globex Notifications", "Initech Helpdesk" — without a per-brand blocklist.
+    if len(words) >= 2 and words[-1].lower().rstrip(".:,") in _ORG_FUNCTION_SUFFIXES:
+        return True
+
     # ── Check 8: role-title prefix ────────────────────────────────────────────
     _ROLE_TITLES = {
         "officer", "constable", "inspector", "sub-inspector", "sub_inspector",
@@ -613,7 +641,7 @@ def resolve_primary_subject(entities: list, person_object: dict) -> dict:
     Returns a dict with confirmed_name, name_variants, resolution_method.
     """
     _BAD_WORDS = {"incident", "inquiry", "cyber", "case", "file", "document",
-                  "ghostwire", "jupiter", "operation", "sector", "investigation"}
+                  "operation", "sector", "investigation"}
 
     candidates: list[tuple[str, int]] = []
 
@@ -813,9 +841,9 @@ _ENTITY_SKIP = [
     "field officer unit", "observer", "section", "page", "not found",
     "unknown", "confirmed", "unconfirmed", "case ref", "source",
     "ed mum", "ncb ggn", "ncb mum",
-    # Operation / investigation title noise (GhostWire / Jupiter style)
+    # Operation / investigation title noise — generic phrases only (no hardcoded
+    # codenames; "operation <codename>" is caught by the generic 'operation' word).
     "in cyber incident inquiry", "cyber incident inquiry", "cyber incident",
-    "ghostwire", "jupiter", "operation ghostwire", "operation jupiter",
 ]
 
 
