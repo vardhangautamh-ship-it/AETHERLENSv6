@@ -290,7 +290,12 @@ def extract_subject_name(text: str) -> str | None:
                 return candidate
 
     # PRIORITY 2 — Frequency analysis
-    candidates = _NAME_FREQ_RE.findall(text)
+    # Skip form-field captions ("Student Name:", "Account Holder:") — a capitalised
+    # phrase immediately followed by ':' or '|' is a label, not the subject.
+    candidates = [
+        m.group(1) for m in _NAME_FREQ_RE.finditer(text)
+        if text[m.end():m.end() + 4].lstrip()[:1] not in (":", "|")
+    ]
     filtered = [
         n for n in candidates
         if not any(s in n.lower() for s in DOCUMENT_SKIP_LIST)
@@ -586,6 +591,14 @@ def _extract_names(text: str) -> list[dict]:
     for m in RE_NAME.finditer(text):
         raw   = m.group().strip()
         words = raw.split()
+        # Structural caption guard: a capitalised phrase immediately followed by
+        # ':' or '|' is a FORM-FIELD CAPTION ("Student Name:", "Account Holder:",
+        # "Father's Name:", "Nominee:") — never the person. The actual value
+        # follows the caption and is captured as its own match, so dropping the
+        # caption keeps the name. This removes the whole class of label noise
+        # without enumerating individual label words.
+        if text[m.end():m.end() + 4].lstrip()[:1] in (":", "|"):
+            continue
         # Filter stopwords and short single words
         if any(w in NAME_STOPWORDS for w in words):
             continue
