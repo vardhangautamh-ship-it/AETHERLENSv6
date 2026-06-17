@@ -378,7 +378,7 @@ FILENAME_SKIP_PATTERNS = [
     # Location/infrastructure strings that are never valid person names
     "point", "link", "bridge", "sea", "worli", "bandra", "nariman",
     "tower", "plaza", "mall", "junction", "station", "airport",
-    "highway", "flyover", "naka", "park", "garden", "sector",
+    "highway", "flyover", "naka", "garden", "sector",
     # Legal/academic subject-category strings that are never person names
     "procedure", "jurisprudence", "legislation", "ordinance",
     "constitution", "amendment", "tribunal", "jurisdiction",
@@ -434,9 +434,9 @@ _IMPOSSIBLE_NAME_WORDS = {
     "department", "faculty", "division", "programme", "program",
     "college", "school", "university", "institute", "board",
     # Legal / procedural
-    "procedure", "proceedings", "act", "bill", "code", "statute",
+    "procedure", "proceedings", "act", "code", "statute",
     "regulation", "ordinance", "amendment", "clause", "article",
-    "law", "laws", "jurisprudence", "legislation", "jurisdiction",
+    "jurisprudence", "legislation", "jurisdiction",
     "tribunal", "constitution",
     # Investigation / inquiry labels — never a person's name
     "cyber", "incident", "inquiry", "investigation", "operation",
@@ -457,7 +457,7 @@ _IMPOSSIBLE_NAME_WORDS = {
 _NOISE_SUBJECT_TOKENS = {
     "manesar", "campus", "gurugram", "gurgaon", "noida", "chandigarh",
     "spam", "credit", "loan", "insurance", "emi",
-    "job", "delivery", "otp", "fraud", "offer", "bill",
+    "job", "delivery", "otp", "fraud", "offer",
     "mutual", "fund", "electricity", "personal", "car",
     "notification", "attempt", "reels", "apply", "winner",
     "cashback", "reward", "prize", "discount", "voucher",
@@ -536,9 +536,20 @@ def is_bad_subject_name(candidate, raw_documents=None) -> bool:
         return True
 
     # ── Check 9: filename skip-pattern blocklist ──────────────────────────────
-    c_lower = sl.replace(" ", "_").replace("-", "_")
+    # Match on TOKEN boundaries, never naked substrings. A candidate is a
+    # filename/artifact only when one of its delimited tokens IS a skip pattern
+    # (e.g. "anpr_log", "test_data", "val1_record"). Naked substring matching
+    # wrongly rejected real human names: 'val' in 'Torvalds'/'Sandoval', 'park'
+    # in the surname 'Park', 'naka' in 'Tanaka', 'sea' in 'Sean', 'bridge' in
+    # 'Bridges'/'Bridget'. Multi-segment patterns (those containing '_') keep
+    # substring matching, since they can never be a substring of a real name.
+    c_lower     = sl.replace(" ", "_").replace("-", "_")
+    name_tokens = set(re.split(r"[_\s\-.]+", c_lower))
     for pattern in FILENAME_SKIP_PATTERNS:
-        if pattern in c_lower:
+        if "_" in pattern:
+            if pattern in c_lower:
+                return True
+        elif pattern in name_tokens:
             return True
 
     # ── Check 10: matches an uploaded filename stem ───────────────────────────
