@@ -152,6 +152,48 @@ check("§08 drops isolated 'Hugging Face'/'Big Billion Days'/'Wallet Recharge'/'
       not any(x in a2 for x in ["Hugging Face", "Big Billion Days", "Wallet Recharge", "Current"]))
 
 print("\n" + "=" * 72)
+print("PART F — report #3: 'The Nodal Officer' letter-addressee label")
+print("=" * 72)
+# GHOSTWIRE_04_certin_inquiry.txt is a legal letter "To, The Nodal Officer, CERT-In..."
+# The addressee role must never win as subject.
+role_noise = [
+    "The Nodal Officer", "The Inspector General", "The Director General",
+    "The Registrar", "The Commissioner", "The Superintendent",
+    "The Secretary", "The Chairman", "The Principal",
+    "Officer Mehta",           # role-prefix case
+    "Nodal Officer",           # no article, role suffix
+]
+for n in role_noise:
+    check(f"reject role label {n!r}", is_bad_subject_name(n))
+
+# Real personal names with these words in them must NOT be rejected.
+ok_names = ["Harshvardhan Gautam", "Rajan Iyer", "Priya Sharma",
+            "Linus Torvalds", "Bill Gates"]
+for n in ok_names:
+    check(f"keep real name {n!r}", not is_bad_subject_name(n))
+
+# End-to-end: AI returns 'The Nodal Officer', resolver keeps real person.
+ai_nodal = json.dumps({"confirmed_name": "The Nodal Officer", "platforms_confirmed": []})
+with mock.patch.object(ER, "_call_bedrock_for_fusion", return_value=ai_nodal), \
+     mock.patch.object(ER, "_call_gemini", return_value=""):
+    def d3(fn, names, primary=None):
+        return {"filename": fn, "primary_subject": primary or "",
+                "entities": {"names": [{"value": n} for n in names], "phones": [], "emails": [], "locations": []},
+                "locations": [], "structured_rows": [], "document_flags": [], "raw_text": " ".join(names)}
+    docs = [
+        d3("GHOSTWIRE_01_college_record.pdf", ["Harshvardhan Gautam", "Harshvardhan Gautam"],
+           primary="Harshvardhan Gautam"),
+        d3("GHOSTWIRE_04_certin_inquiry.txt",
+           ["The Nodal Officer", "Harshvardhan Gautam", "The Nodal Officer"],
+           primary="The Nodal Officer"),
+    ]
+    person3, _ = resolve_entity_from_multiple_docs(docs)
+    clean_person_object(person3)
+print(f"    AI tried 'The Nodal Officer' -> final subject: {person3.get('confirmed_name')!r}")
+check("subject is the real person, not the role addressee",
+      person3.get("confirmed_name") == "Harshvardhan Gautam")
+
+print("\n" + "=" * 72)
 passed, total = sum(results), len(results)
 print(f"SUMMARY: {passed}/{total} checks passed")
 print("ALL FUSION-NOISE CHECKS PASSED" if passed == total else "SOME CHECKS FAILED")

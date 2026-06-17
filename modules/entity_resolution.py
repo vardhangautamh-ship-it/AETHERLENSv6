@@ -450,6 +450,12 @@ _IMPOSSIBLE_NAME_WORDS = {
     "tribunal", "constitution",
     # Investigation / inquiry labels — never a person's name
     "cyber", "incident", "inquiry", "investigation", "operation",
+    # Role / rank titles — these words never form part of a real personal name.
+    # Catching them here means Check 7 blocks "The Nodal Officer", "The Inspector
+    # General", "The Superintendent", etc. even when the article "The" comes first.
+    "officer", "constable", "inspector", "superintendent", "registrar",
+    "nodal", "director", "controller", "commissioner", "magistrate",
+    "secretary", "chairman", "chancellor", "principal", "warden",
     # Document / data labels
     "report", "profile", "document", "file", "record", "log",
     "data", "dataset", "entry", "form", "sheet", "table",
@@ -599,13 +605,24 @@ def is_bad_subject_name(candidate, raw_documents=None) -> bool:
     if len(words) >= 2 and words[-1].lower().rstrip(".:,") in _ORG_FUNCTION_SUFFIXES:
         return True
 
-    # ── Check 8: role-title prefix ────────────────────────────────────────────
+    # ── Check 8: role-title prefix OR suffix ─────────────────────────────────
+    # Catches "Officer Mehta" (prefix) and "The Nodal Officer" (suffix).
+    # The definite-article guard below also handles "The <Role>" structurally.
     _ROLE_TITLES = {
         "officer", "constable", "inspector", "sub-inspector", "sub_inspector",
         "si", "dsp", "sp", "ips", "asi", "pi", "psi",
         "head", "superintendent", "investigating", "io",
+        "director", "registrar", "controller", "commissioner",
+        "magistrate", "secretary", "chairman", "chancellor",
+        "principal", "warden", "nodal",
     }
-    if words and words[0].lower().rstrip(".:,") in _ROLE_TITLES:
+    first = words[0].lower().rstrip(".:,") if words else ""
+    last  = words[-1].lower().rstrip(".:,") if words else ""
+    if first in _ROLE_TITLES or last in _ROLE_TITLES:
+        return True
+    # Definite-article prefix: "The X" is always an institution/role reference,
+    # never a personal name — "The Nodal Officer", "The Director General", etc.
+    if len(words) >= 2 and first == "the":
         return True
 
     # ── Check 9: filename skip-pattern blocklist ──────────────────────────────
