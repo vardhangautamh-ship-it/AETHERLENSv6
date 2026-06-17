@@ -1811,8 +1811,13 @@ def _build_sections_local(
         ]
 
     # ── Supplement thin associations with available intelligence signals ────────
-    # When fewer than 3 named associates exist, add platform, location, and phone
-    # signals so §08 is never empty for CDR/financial-only investigations.
+    # When fewer than 3 named associates exist, add platform and phone signals so
+    # §08 is never empty for CDR/financial-only investigations.
+    #
+    # Fix 2 (type-aware §08): locations are NOT promoted here. An address — and
+    # especially cross-file institutional-address boilerplate like
+    # "Manesar Industrial Area" — is not a Key Association. Locations have their
+    # own report section; surfacing them here mislabels boilerplate as a contact.
     if len(raw_associations) < 3:
         _assoc_seen = {a.get("label", "").lower() for a in raw_associations}
         # Platforms confirmed on
@@ -1820,13 +1825,6 @@ def _build_sections_local(
             if plat.lower() not in _assoc_seen and len(raw_associations) < 6:
                 raw_associations.append({"label": plat, "centrality": 0.1, "node_type": "platform"})
                 _assoc_seen.add(plat.lower())
-        # Location nodes from graph
-        for n in summary.get("top_nodes", []):
-            if (n.get("node_type") == "location"
-                    and n.get("label", "").lower() not in _assoc_seen
-                    and len(raw_associations) < 6):
-                raw_associations.append(n)
-                _assoc_seen.add(n.get("label", "").lower())
         # Key phone numbers as contact signals (max 2)
         _ph_added = 0
         for ph in person.get("phones_found", []):

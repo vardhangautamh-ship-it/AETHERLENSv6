@@ -2652,7 +2652,14 @@ def screen_fusion():
         else:
             print(f"[FUSION 5b] Graph primary: {graph_subject!r} | entity resolution: {current_name!r}")
 
-    graph_summ = graph_summary(G_full, subject_name=(primary_person or {}).get("confirmed_name", ""))
+    # Fix 5: suppress cross-file institutional-address boilerplate from ranking
+    from modules.relationship_mapper import detect_boilerplate_locations
+    _boilerplate = detect_boilerplate_locations(all_results)
+    graph_summ = graph_summary(
+        G_full,
+        subject_name=(primary_person or {}).get("confirmed_name", ""),
+        boilerplate=_boilerplate,
+    )
 
     # Confidence is recalculated centrally inside _generate_report_inner
     # (report_generator.py) where graph_data summary is already passed in.

@@ -15,6 +15,7 @@ import pandas as pd
 import pdfplumber
 
 import config
+from modules.sanitizer import most_common_by_key
 
 # ── File-type guard ────────────────────────────────────────────────────────────
 
@@ -300,7 +301,9 @@ def extract_subject_name(text: str) -> str | None:
     if not filtered:
         return None
 
-    top = Counter(filtered).most_common(5)
+    # Normalize (case + whitespace) BEFORE counting so variants of one name
+    # ("Arjun Mehta" / "ARJUN MEHTA" / "Arjun  Mehta") vote together (Fix 3).
+    top = most_common_by_key(filtered)[:5]
     print("[ENTITY] Top name candidates:", top)
     best = top[0][0] if top else None
     if best:
@@ -347,7 +350,7 @@ def extract_primary_subject_from_bytes(file_bytes: bytes, suffix: str) -> str:
         else:
             return ""
 
-        name_freq: dict = {}
+        name_values: list = []
         name_re = re.compile(r"^([A-Z][a-z]{1,20}(?:\s+[A-Z][a-z]{1,20}){1,3})$")
 
         for df in dfs:
@@ -367,12 +370,14 @@ def extract_primary_subject_from_bytes(file_bytes: bytes, suffix: str) -> str:
                     words = val.split()
                     if any(w in NAME_STOPWORDS for w in words):
                         continue
-                    name_freq[val] = name_freq.get(val, 0) + 1
+                    name_values.append(val)
 
-        if not name_freq:
+        # Aggregate by normalized key (case + whitespace) before picking the
+        # most frequent name so variants do not split the vote (Fix 3).
+        ranked = most_common_by_key(name_values)
+        if not ranked:
             return ""
-        # Primary subject = most frequently appearing real name
-        best = max(name_freq, key=lambda k: name_freq[k])
+        best = ranked[0][0]
         return best.replace("\n", " ").replace("\r", " ").strip()
     except Exception:
         return ""
