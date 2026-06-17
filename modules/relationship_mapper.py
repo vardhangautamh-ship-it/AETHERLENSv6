@@ -730,6 +730,12 @@ def get_key_associations(G: nx.DiGraph, subject_name: str, max_count: int = 5) -
             continue
 
         centrality = round(degree_centrality.get(node, 0), 3)
+        # Structural guard: a node with zero centrality is ISOLATED — it has no
+        # edge to the subject or anyone else, so it cannot be a real association.
+        # This drops extraction noise (transaction-line / promo nodes that were
+        # never connected) without needing to recognise each noise string.
+        if centrality <= 0:
+            continue
         associations.append({
             "id":         node,
             "name":       lbl,   # user-facing schema key
@@ -861,6 +867,11 @@ def graph_summary(G: nx.DiGraph, subject_name: str = "", boilerplate: set = None
             # Drop noise person/org nodes ("Dear Sir", "Swiggy Order", vendor
             # labels) so the network map shows real entities, not transaction text.
             if ntype in ("person", "org", "alias") and _is_bad(lbl):
+                continue
+            # Drop ISOLATED person/org nodes (centrality 0) — disconnected
+            # extraction noise (e.g. "Hugging Face", "Big Billion Days") that was
+            # never linked to the subject. Locations are exempt (shown in §04).
+            if ntype in ("person", "org", "alias") and c <= 0:
                 continue
             if lbl_lower not in seen_labels or c > seen_labels[lbl_lower]["centrality"]:
                 seen_labels[lbl_lower] = {

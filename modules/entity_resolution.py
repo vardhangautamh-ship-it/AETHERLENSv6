@@ -433,6 +433,16 @@ _IMPOSSIBLE_NAME_WORDS = {
     "syllabus", "module", "lesson", "chapter", "unit", "section",
     "department", "faculty", "division", "programme", "program",
     "college", "school", "university", "institute", "board",
+    # Role / relationship labels — form-field captions ("Student Name: …",
+    # "Account Holder: …") never the person, only the label preceding the name.
+    "student", "pupil", "candidate", "applicant", "enrollee", "trainee",
+    "intern", "employee", "employer", "member", "customer", "client",
+    "patient", "tenant", "resident", "holder", "cardholder", "guest",
+    "nominee", "beneficiary", "guardian", "applicant", "subscriber",
+    # Banking / transaction-statement noise ("Current"/"Savings" account,
+    # "Wallet Recharge", "Big Billion Days" sale lines).
+    "current", "savings", "wallet", "recharge", "cashback", "balance",
+    "autopay", "mandate", "billion",
     # Legal / procedural
     "procedure", "proceedings", "act", "code", "statute",
     "regulation", "ordinance", "amendment", "clause", "article",

@@ -114,6 +114,44 @@ check("subject is the real person, not the billing label",
 check("no spam location survives", not any(_is_noise_location(l) for l in person.get("location_stated", [])))
 
 print("\n" + "=" * 72)
+print("PART E — report #2: 'Student' label subject + promo/bank transaction nodes")
+print("=" * 72)
+# Academic/role label and bank/promo transaction lines must not win.
+for n in ["Student", "Customer", "Cardholder", "Account Holder",
+          "Current", "Wallet Recharge", "Big Billion Days"]:
+    check(f"reject report#2 noise {n!r}", is_bad_subject_name(n))
+
+# AI returns the role label 'Student'; resolver must keep the real person.
+ai_student = json.dumps({"confirmed_name": "Student", "platforms_confirmed": ["GitHub"]})
+with mock.patch.object(ER, "_call_bedrock_for_fusion", return_value=ai_student), \
+     mock.patch.object(ER, "_call_gemini", return_value=""):
+    def d(fn, names, primary=None):
+        return {"filename": fn, "primary_subject": primary or "",
+                "entities": {"names": [{"value": n} for n in names], "phones": [], "emails": [], "locations": []},
+                "locations": [], "structured_rows": [], "document_flags": [], "raw_text": " ".join(names)}
+    docs = [d("GHOSTWIRE_01_college_record.pdf", ["Harshvardhan Gautam", "Harshvardhan Gautam"],
+              primary="Harshvardhan Gautam"),
+            d("GHOSTWIRE_07_bank_statement.csv", ["Student", "Big Billion Days", "Wallet Recharge"])]
+    person, _ = resolve_entity_from_multiple_docs(docs)
+    clean_person_object(person)
+print(f"    AI tried 'Student' -> final subject: {person.get('confirmed_name')!r}")
+check("subject is the real person, not the role label 'Student'",
+      person.get("confirmed_name") == "Harshvardhan Gautam")
+
+# §08/§05 exclude isolated promo/transaction nodes; keep the connected associate.
+G = nx.DiGraph()
+for name, t in [("Harshvardhan Gautam", "person"), ("Current", "org"),
+                ("Big Billion Days", "org"), ("Wallet Recharge", "org"),
+                ("Hugging Face", "org"), ("Rajan Iyer", "person")]:
+    G.add_node(name, label=name, node_type=t)
+G.add_edge("Harshvardhan Gautam", "Rajan Iyer")          # only real connection
+a2 = [a["name"] for a in get_key_associations(G, "Harshvardhan Gautam")]
+print(f"    §08 associations: {a2}")
+check("§08 keeps connected associate", a2 == ["Rajan Iyer"])
+check("§08 drops isolated 'Hugging Face'/'Big Billion Days'/'Wallet Recharge'/'Current'",
+      not any(x in a2 for x in ["Hugging Face", "Big Billion Days", "Wallet Recharge", "Current"]))
+
+print("\n" + "=" * 72)
 passed, total = sum(results), len(results)
 print(f"SUMMARY: {passed}/{total} checks passed")
 print("ALL FUSION-NOISE CHECKS PASSED" if passed == total else "SOME CHECKS FAILED")
