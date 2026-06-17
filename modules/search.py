@@ -261,13 +261,61 @@ def _parse_join_str(text: str):
 
 
 def _not_found_result(platform_label: str, handle: str, url: str) -> dict:
+    """The platform confirmed this handle does NOT exist (HTTP 404)."""
     return {
         "full_name":  handle,
         "platform":   platform_label,
         "snippet":    f"Profile not found at {url}",
         "url":        url,
         "confidence": 0,
+        "status":     "not_found",
     }
+
+
+def _lookup_failed_result(platform_label: str, handle: str, url: str, reason: str) -> dict:
+    """
+    The lookup could NOT be completed (rate limit, 5xx, timeout, network error).
+
+    This is deliberately distinct from `_not_found_result`: a failed check means
+    "we don't know whether this account exists", which is very different from
+    "this account does not exist". Conflating the two led the analyst to conclude
+    a subject had no presence on a platform when the request was merely throttled.
+    """
+    return {
+        "full_name":  handle,
+        "platform":   platform_label,
+        "snippet":    f"Lookup unavailable ({reason}) — could not confirm {url}",
+        "url":        url,
+        "confidence": 0,
+        "status":     "lookup_failed",
+        "error":      reason,
+    }
+
+
+def _github_headers() -> dict:
+    """
+    Headers for GitHub API calls. Attaches a bearer token when GITHUB_TOKEN is
+    configured, lifting the anonymous 60 req/hr cap to 5,000 req/hr. The token is
+    read at call time (not import time) so Streamlit-secrets injection is honoured.
+    """
+    headers = {**_API_HEADERS, "Accept": "application/vnd.github.v3+json"}
+    try:
+        token = (getattr(config, "GITHUB_TOKEN", "") or "").strip()
+    except Exception:
+        token = ""
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    return headers
+
+
+def _github_rate_limited(resp) -> bool:
+    """True if a GitHub response is a rate-limit rejection (403/429 + remaining 0)."""
+    if resp.status_code not in (403, 429):
+        return False
+    remaining = resp.headers.get("X-RateLimit-Remaining")
+    # If the header is absent we still treat a 403/429 as throttling rather than
+    # a genuine "not found".
+    return remaining is None or remaining == "0"
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -325,13 +373,17 @@ def lookup_github(handle: str) -> dict:
     try:
         resp = requests.get(
             f"https://api.github.com/users/{handle}",
-            headers={**_API_HEADERS, "Accept": "application/vnd.github.v3+json"},
+            headers=_github_headers(),
             timeout=12,
         )
         if resp.status_code == 404:
             return _not_found_result("GitHub", handle, url)
+        if _github_rate_limited(resp):
+            return _lookup_failed_result(
+                "GitHub", handle, url,
+                "HTTP 403 rate-limited — set GITHUB_TOKEN to raise the API limit")
         if resp.status_code != 200:
-            return _not_found_result("GitHub", handle, url)
+            return _lookup_failed_result("GitHub", handle, url, f"HTTP {resp.status_code}")
 
         d         = resp.json()
         name      = d.get("name") or handle
@@ -406,8 +458,11 @@ def lookup_reddit(handle: str) -> dict:
         )
         if resp.status_code == 404:
             return _not_found_result("Reddit", handle, url)
+        if resp.status_code in (403, 429):
+            return _lookup_failed_result(
+                "Reddit", handle, url, f"HTTP {resp.status_code} rate-limited")
         if resp.status_code != 200:
-            return _not_found_result("Reddit", handle, url)
+            return _lookup_failed_result("Reddit", handle, url, f"HTTP {resp.status_code}")
 
         d = resp.json().get("data", {})
         name          = d.get("name", handle)
@@ -975,7 +1030,7 @@ def _check_platform_exists(platform: str, handle: str) -> tuple[bool, dict, int]
         if platform == "github":
             resp = requests.get(
                 f"https://api.github.com/users/{handle}",
-                headers={**_API_HEADERS, "Accept": "application/vnd.github.v3+json"},
+                headers=_github_headers(),
                 timeout=10,
             )
             exists = resp.status_code == 200
@@ -1127,7 +1182,7 @@ def _search_name_github(name: str, known_bio: str = "") -> list[dict]:
         resp = requests.get(
             "https://api.github.com/search/users",
             params={"q": f"{name} in:name", "per_page": 5},
-            headers={**_API_HEADERS, "Accept": "application/vnd.github.v3+json"},
+            headers=_github_headers(),
             timeout=12,
         )
         if resp.status_code != 200:
@@ -1140,7 +1195,7 @@ def _search_name_github(name: str, known_bio: str = "") -> list[dict]:
             try:
                 full = requests.get(
                     f"https://api.github.com/users/{login}",
-                    headers={**_API_HEADERS, "Accept": "application/vnd.github.v3+json"},
+                    headers=_github_headers(),
                     timeout=8,
                 )
                 if full.status_code == 200:

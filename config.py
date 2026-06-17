@@ -84,6 +84,13 @@ if not logger.handlers:
 # ── API Keys ──────────────────────────────────────────────────────────────────
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 
+# Optional GitHub personal-access token. Anonymous GitHub API calls are capped at
+# 60 requests/hour per IP — which rate-limits the OSINT search path almost
+# immediately on a shared host. A token (even a no-scope classic PAT) raises the
+# limit to 5,000 requests/hour. Read at call time so Streamlit-secrets injection
+# (which runs after import) is still picked up.
+GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "")
+
 # ── API Endpoints ─────────────────────────────────────────────────────────────
 GEMINI_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
 
