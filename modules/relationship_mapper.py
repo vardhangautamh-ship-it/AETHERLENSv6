@@ -704,6 +704,11 @@ def get_key_associations(G: nx.DiGraph, subject_name: str, max_count: int = 5) -
     except Exception:
         pass
 
+    try:
+        from modules.entity_resolution import is_bad_subject_name as _is_bad
+    except Exception:
+        _is_bad = lambda *a, **k: False
+
     subject_lower = (subject_name or "").lower()
     associations  = []
 
@@ -717,6 +722,11 @@ def get_key_associations(G: nx.DiGraph, subject_name: str, max_count: int = 5) -
         # Skip the subject themselves (check both stored label and node id)
         lbl = data.get("label", node)
         if lbl.lower() == subject_lower or node.lower() == subject_lower:
+            continue
+
+        # Skip noise labels: email greetings ("Dear Sir"), transaction lines
+        # ("Swiggy Order"), spam/vendor labels — never genuine associations.
+        if _is_bad(lbl):
             continue
 
         centrality = round(degree_centrality.get(node, 0), 3)
@@ -831,6 +841,10 @@ def graph_summary(G: nx.DiGraph, subject_name: str = "", boilerplate: set = None
         return {"nodes": 0, "edges": 0, "density": 0.0, "top_nodes": [], "top_associations": []}
 
     boilerplate = boilerplate or set()
+    try:
+        from modules.entity_resolution import is_bad_subject_name as _is_bad
+    except Exception:
+        _is_bad = lambda *a, **k: False
     density = nx.density(G)
     try:
         degree_centrality = nx.degree_centrality(G)
@@ -843,6 +857,10 @@ def graph_summary(G: nx.DiGraph, subject_name: str = "", boilerplate: set = None
             lbl_lower = lbl.lower()
             # Fix 5: drop cross-file boilerplate location nodes from the ranking.
             if ntype == "location" and lbl_lower in boilerplate:
+                continue
+            # Drop noise person/org nodes ("Dear Sir", "Swiggy Order", vendor
+            # labels) so the network map shows real entities, not transaction text.
+            if ntype in ("person", "org", "alias") and _is_bad(lbl):
                 continue
             if lbl_lower not in seen_labels or c > seen_labels[lbl_lower]["centrality"]:
                 seen_labels[lbl_lower] = {

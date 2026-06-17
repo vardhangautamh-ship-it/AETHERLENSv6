@@ -378,7 +378,7 @@ FILENAME_SKIP_PATTERNS = [
     # Location/infrastructure strings that are never valid person names
     "point", "link", "bridge", "sea", "worli", "bandra", "nariman",
     "tower", "plaza", "mall", "junction", "station", "airport",
-    "highway", "flyover", "naka", "park", "garden", "sector",
+    "highway", "flyover", "naka", "garden", "sector",
     # Legal/academic subject-category strings that are never person names
     "procedure", "jurisprudence", "legislation", "ordinance",
     "constitution", "amendment", "tribunal", "jurisdiction",
@@ -434,9 +434,9 @@ _IMPOSSIBLE_NAME_WORDS = {
     "department", "faculty", "division", "programme", "program",
     "college", "school", "university", "institute", "board",
     # Legal / procedural
-    "procedure", "proceedings", "act", "bill", "code", "statute",
+    "procedure", "proceedings", "act", "code", "statute",
     "regulation", "ordinance", "amendment", "clause", "article",
-    "law", "laws", "jurisprudence", "legislation", "jurisdiction",
+    "jurisprudence", "legislation", "jurisdiction",
     "tribunal", "constitution",
     # Investigation / inquiry labels — never a person's name
     "cyber", "incident", "inquiry", "investigation", "operation",
@@ -449,6 +449,16 @@ _IMPOSSIBLE_NAME_WORDS = {
     "policy", "procedure", "process", "method", "system",
     "plan", "scheme", "project", "case", "matter", "issue",
     "number", "no", "id", "ref", "reference", "code",
+    # Transactional / vendor email-sender labels — a billing-receipt "From" name
+    # like "Anthropic Billing" is an organisation label, never the subject.
+    "billing", "invoice", "invoices", "receipt", "receipts",
+    "payment", "payments", "payout", "refund", "refunds",
+    "subscription", "order", "orders", "purchase", "purchases",
+    "txn", "transaction", "checkout", "cart",
+    "support", "helpdesk", "noreply", "notification", "notifications",
+    "newsletter", "alert", "alerts", "unsubscribe", "mailer",
+    # Email greeting / sign-off fragments mis-extracted as names ("Dear Sir").
+    "dear", "sir", "madam", "regards", "sincerely", "greetings",
 }
 
 
@@ -457,7 +467,7 @@ _IMPOSSIBLE_NAME_WORDS = {
 _NOISE_SUBJECT_TOKENS = {
     "manesar", "campus", "gurugram", "gurgaon", "noida", "chandigarh",
     "spam", "credit", "loan", "insurance", "emi",
-    "job", "delivery", "otp", "fraud", "offer", "bill",
+    "job", "delivery", "otp", "fraud", "offer",
     "mutual", "fund", "electricity", "personal", "car",
     "notification", "attempt", "reels", "apply", "winner",
     "cashback", "reward", "prize", "discount", "voucher",
@@ -467,6 +477,31 @@ _NOISE_SUBJECT_TOKENS = {
     "cyber", "incident", "inquiry", "ghostwire", "jupiter", "sector",
     "operation", "case", "document", "investigation",
 }
+
+
+# Transactional / spam-category words that mean a "location" string is really a
+# spam-SMS label, not a place. Deliberately EXCLUDES real place names (a city such
+# as "Gurugram" must survive) — that is why this is separate from the name-noise
+# token sets, which DO contain city names for subject-name rejection.
+_NOISE_LOCATION_TOKENS = frozenset({
+    "spam", "otp", "fraud", "scam", "phishing", "offer", "offers",
+    "credit", "loan", "insurance", "mutual", "fund", "electricity",
+    "delivery", "notification", "cashback", "reward", "prize", "winner",
+    "voucher", "discount", "emi", "job", "lottery", "kyc", "recharge",
+    "subscription", "invoice", "billing", "bill",
+})
+
+
+def _is_noise_location(value) -> bool:
+    """True if a location string is actually a spam/transactional label."""
+    s = safe_str(value).strip()
+    if not s or len(s) < 2:
+        return True
+    sl = s.lower()
+    if "spam" in sl:
+        return True
+    words = [w.strip(".:,()[]-") for w in re.split(r"[\s\-]+", sl)]
+    return any(w in _NOISE_LOCATION_TOKENS for w in words)
 
 
 def is_bad_subject_name(candidate, raw_documents=None) -> bool:
@@ -536,9 +571,20 @@ def is_bad_subject_name(candidate, raw_documents=None) -> bool:
         return True
 
     # ── Check 9: filename skip-pattern blocklist ──────────────────────────────
-    c_lower = sl.replace(" ", "_").replace("-", "_")
+    # Match on TOKEN boundaries, never naked substrings. A candidate is a
+    # filename/artifact only when one of its delimited tokens IS a skip pattern
+    # (e.g. "anpr_log", "test_data", "val1_record"). Naked substring matching
+    # wrongly rejected real human names: 'val' in 'Torvalds'/'Sandoval', 'park'
+    # in the surname 'Park', 'naka' in 'Tanaka', 'sea' in 'Sean', 'bridge' in
+    # 'Bridges'/'Bridget'. Multi-segment patterns (those containing '_') keep
+    # substring matching, since they can never be a substring of a real name.
+    c_lower     = sl.replace(" ", "_").replace("-", "_")
+    name_tokens = set(re.split(r"[_\s\-.]+", c_lower))
     for pattern in FILENAME_SKIP_PATTERNS:
-        if pattern in c_lower:
+        if "_" in pattern:
+            if pattern in c_lower:
+                return True
+        elif pattern in name_tokens:
             return True
 
     # ── Check 10: matches an uploaded filename stem ───────────────────────────
@@ -667,6 +713,16 @@ def clean_person_object(person: dict) -> dict:
             continue
         clean_profiles.append(profile)
     person["confirmed_linked_profiles"] = clean_profiles
+
+    # ── location fields: strip spam/transactional labels (keep real places) ───
+    for _loc_key in ("location_stated", "locations_mentioned"):
+        locs = person.get(_loc_key)
+        if isinstance(locs, list) and locs:
+            kept = [l for l in locs if not _is_noise_location(l)]
+            if len(kept) != len(locs):
+                dropped = [l for l in locs if _is_noise_location(l)]
+                print(f"[CLEAN_PERSON] Dropped {len(dropped)} noise location(s) from {_loc_key}: {dropped[:5]}")
+            person[_loc_key] = kept
 
     return person
 
@@ -1406,11 +1462,18 @@ def calculate_stable_confidence(
     num_gaps: int,
     num_emails: int = 0,
     num_locations: int = 0,
+    num_platforms: int = 0,
 ) -> dict:
     """
     Dynamic evidence-based confidence engine. Starts at 0, builds from evidence.
     Capped at 95. Rounded to nearest 2.
     Returns {"confidence": int, "breakdown": str}.
+
+    `num_platforms` (confirmed online presence) lets OSINT / live-search subjects
+    score on their actual evidence. The model is otherwise document-centric, so
+    without it a fully-resolved web subject (e.g. a confirmed GitHub account) with
+    zero uploaded files scored 0 — falsely implying "no evidence". Defaults to 0
+    so every document-mode caller is unaffected.
     """
     score = 0
 
@@ -1451,6 +1514,19 @@ def calculate_stable_confidence(
         loc_bonus = 0
     score += loc_bonus
 
+    # Platform bonus (tiered) — confirmed online presence (OSINT evidence)
+    if num_platforms >= 4:
+        platform_bonus = 28
+    elif num_platforms >= 3:
+        platform_bonus = 22
+    elif num_platforms >= 2:
+        platform_bonus = 14
+    elif num_platforms >= 1:
+        platform_bonus = 8
+    else:
+        platform_bonus = 0
+    score += platform_bonus
+
     # Timeline bonus (tiered)
     if num_timeline >= 20:
         timeline_bonus = 14
@@ -1485,6 +1561,7 @@ def calculate_stable_confidence(
         f"{num_phones} phone(s) [+{phone_bonus}], "
         f"{num_emails} email(s) [+{email_bonus}], "
         f"{num_locations} location(s) [+{loc_bonus}], "
+        f"{num_platforms} platform(s) [+{platform_bonus}], "
         f"{num_timeline} timeline event(s) [+{timeline_bonus}], "
         f"{num_graph_nodes} graph node(s) [+{graph_bonus}], "
         f"{num_gaps} data gap(s) [-{gap_penalty}]"

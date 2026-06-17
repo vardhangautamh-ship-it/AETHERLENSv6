@@ -1425,9 +1425,13 @@ def _build_extracted_intelligence_section(person: dict) -> dict:
     else:
         lines.append("Emails: None found in public data.")
 
-    # Phones — per-file source attribution from phone_sources map
+    # Phones — per-file source attribution + carrier/region/line-type enrichment
     phone_sources = person.get("phone_sources", {})
     if phones:
+        try:
+            from modules.phone_enrichment import enrich_phone, format_enrichment_line
+        except Exception:
+            enrich_phone = format_enrichment_line = None
         lines.append(f"\nPHONE NUMBERS ({len(phones)}):")
         for phone in phones[:30]:
             srcs = phone_sources.get(phone, [])
@@ -1437,7 +1441,13 @@ def _build_extracted_intelligence_section(person: dict) -> dict:
                     src_label += f" +{len(srcs) - 3} more"
             else:
                 src_label = "document data"
-            lines.append(f"  {phone} — Source: {src_label} — EXTRACTED")
+            enrich_label = ""
+            if enrich_phone:
+                try:
+                    enrich_label = f" — {format_enrichment_line(enrich_phone(phone))}"
+                except Exception:
+                    enrich_label = ""
+            lines.append(f"  {phone} — Source: {src_label} — EXTRACTED{enrich_label}")
     else:
         lines.append("Phone numbers: None found in public data.")
 
@@ -1489,6 +1499,16 @@ def _build_extracted_intelligence_section(person: dict) -> dict:
     else:
         lines.append("\nLinkedIn intelligence: Not available for this target.")
 
+    # Structured per-phone enrichment (carrier / region / line type) for
+    # programmatic consumers (PDF tables, exports, downstream analytics).
+    phone_intelligence = []
+    if phones:
+        try:
+            from modules.phone_enrichment import enrich_phones
+            phone_intelligence = enrich_phones(phones)
+        except Exception:
+            phone_intelligence = []
+
     total = len(emails) + len(phones) + len(websites) + len(social_handles)
     return {
         "content": (
@@ -1498,6 +1518,7 @@ def _build_extracted_intelligence_section(person: dict) -> dict:
         ),
         "confidence": min(90, total * 15) if total > 0 else 0,
         "items": lines or ["No intelligence extracted from linked profiles."],
+        "phone_intelligence": phone_intelligence,
     }
 
 
@@ -2407,6 +2428,14 @@ def _generate_report_inner(
 
         _emails    = person.get("emails_found", [])
         _locations = person.get("locations_mentioned", [])
+        # Breadth of confirmed online identity — the primary evidence type for
+        # OSINT / live-search subjects, which carry no uploaded documents.
+        _platforms = max(
+            len(person.get("platforms_confirmed", []) or []),
+            len(person.get("usernames", {}) or {}),
+            len(person.get("profile_urls", {}) or {}),
+            len(person.get("confirmed_linked_profiles", []) or []),
+        )
         confidence_result = calculate_stable_confidence(
             num_files       = len(_source_log),
             num_phones      = len(_phones),
@@ -2415,6 +2444,7 @@ def _generate_report_inner(
             num_gaps        = len(_gaps),
             num_emails      = len(_emails),
             num_locations   = len(_locations),
+            num_platforms   = _platforms,
         )
 
         overall_confidence   = confidence_result["confidence"]

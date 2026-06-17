@@ -1759,6 +1759,63 @@ def _run_pipeline_auto(target: dict, query: str, search_results: dict):
 # SEARCH SCREEN
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _looks_like_phone(q: str) -> bool:
+    """Cheap pre-filter: is this query a phone number rather than a name/handle?"""
+    import re as _re
+    s = (q or "").strip()
+    if not s or "/" in s or "@" in s:
+        return False
+    if not _re.fullmatch(r"[+()\-\s\d]+", s):
+        return False
+    digits = _re.sub(r"\D", "", s)
+    return 7 <= len(digits) <= 15
+
+
+def _render_phone_panel(query: str):
+    """Render a phone-enrichment card (carrier / region / line type / timezone)."""
+    from modules.phone_enrichment import enrich_phone, format_enrichment_line
+    info = enrich_phone(query)
+    ok   = info.get("valid") or info.get("possible")
+    accent = "#16A34A" if info.get("valid") else ("#D97706" if ok else "#DC2626")
+    headline = format_enrichment_line(info) if ok else "Unverified / unrecognised number"
+    st.markdown(
+        f'<div class="result-card">'
+        f'<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">'
+        f'<span style="font-family:\'JetBrains Mono\',monospace;font-size:10px;letter-spacing:2px;'
+        f'color:#9D4EDD;">PHONE INTELLIGENCE</span>'
+        f'<span style="font-family:\'JetBrains Mono\',monospace;font-size:10px;letter-spacing:1px;'
+        f'color:{accent};">{"VALID" if info.get("valid") else ("POSSIBLE" if ok else "INVALID")}</span>'
+        f'</div>'
+        f'<div style="font-family:\'Rajdhani\',sans-serif;font-weight:600;font-size:18px;'
+        f'letter-spacing:1px;color:#F0EAD6;margin-bottom:4px;">{info.get("e164") or query}</div>'
+        f'<div style="font-family:\'JetBrains Mono\',monospace;font-size:12px;color:#C084FC;">{headline}</div>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+    rows = [
+        ("Country",    info.get("country")),
+        ("Region",     info.get("region")),
+        ("Carrier",    info.get("carrier")),
+        ("Line type",  info.get("line_type")),
+        ("E.164",      info.get("e164")),
+        ("National",   info.get("national")),
+        ("Timezone",   ", ".join(info.get("timezones", []))),
+    ]
+    for label, val in rows:
+        if val:
+            st.markdown(
+                f'<div style="font-family:\'JetBrains Mono\',monospace;font-size:11px;color:#9CA3AF;">'
+                f'<span style="color:#6B7280;">{label}:</span> {val}</div>',
+                unsafe_allow_html=True,
+            )
+    for note in info.get("notes", []):
+        st.markdown(
+            f'<div style="font-family:\'JetBrains Mono\',monospace;font-size:10px;color:#6B7280;'
+            f'margin-top:2px;">· {note}</div>',
+            unsafe_allow_html=True,
+        )
+
+
 def render_result_card(result: dict, idx: int, query: str, search_results: dict):
     """Render a single result card. Clicking SELECT TARGET triggers the full pipeline."""
     score    = result.get("confidence", 0)
@@ -1766,7 +1823,14 @@ def render_result_card(result: dict, idx: int, query: str, search_results: dict)
     name     = result.get("full_name", "")
     snippet  = result.get("snippet", "")
     url      = result.get("url", "")
-    sc_color = _conf_color(score)
+    status   = result.get("status", "")
+    failed   = status == "lookup_failed"
+    sc_color = "#D97706" if failed else _conf_color(score)
+    # A lookup that could not be completed (rate-limit / 5xx / timeout) is shown
+    # with an amber "LOOKUP FAILED" badge instead of a misleading "0%", and the
+    # pipeline button is withheld — running the full pipeline on an unconfirmed
+    # target wastes work and implies a confirmation that did not happen.
+    score_label = "LOOKUP FAILED" if failed else f"{score}%"
     conf_tag = (
         f'<span style="background:rgba(22,163,74,0.12);border:1px solid #16A34A;color:#16A34A;'
         f'font-family:\'JetBrains Mono\',monospace;font-size:9px;letter-spacing:2px;'
@@ -1784,7 +1848,7 @@ def render_result_card(result: dict, idx: int, query: str, search_results: dict)
         f'<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">'
         f'{_platform_badge(platform)}'
         f'<span style="font-family:\'JetBrains Mono\',monospace;font-size:10px;'
-        f'letter-spacing:1px;color:{sc_color};">{score}%{conf_tag}</span>'
+        f'letter-spacing:1px;color:{sc_color};">{score_label}{conf_tag}</span>'
         f'</div>'
         f'<div style="font-family:\'Rajdhani\',sans-serif;font-weight:600;font-size:17px;'
         f'letter-spacing:1px;color:#F0EAD6;margin-bottom:4px;">{name}</div>'
@@ -1793,7 +1857,15 @@ def render_result_card(result: dict, idx: int, query: str, search_results: dict)
         f'{url_html}</div>',
         unsafe_allow_html=True,
     )
-    if st.button("SELECT TARGET — RUN PIPELINE", key=f"sel_{idx}", use_container_width=False):
+    if failed:
+        st.markdown(
+            '<div style="font-family:\'JetBrains Mono\',monospace;font-size:10px;'
+            'letter-spacing:1px;color:#D97706;margin-top:2px;">'
+            'Could not confirm this profile — retry later, or set GITHUB_TOKEN to '
+            'raise the API rate limit.</div>',
+            unsafe_allow_html=True,
+        )
+    elif st.button("SELECT TARGET — RUN PIPELINE", key=f"sel_{idx}", use_container_width=False):
         st.session_state.pipeline_pending = {
             "target":  result,
             "query":   query,
@@ -1836,6 +1908,19 @@ def screen_search():
         )
     with c2:
         go = st.button("SEARCH", use_container_width=True)
+
+    # ── Phone-number query → show enrichment instead of a web search ──────────
+    if go and query.strip() and _looks_like_phone(query.strip()):
+        st.session_state.search_query   = query.strip()
+        st.session_state.phone_lookup_q = query.strip()
+        st.session_state.search_results = None
+    elif go and query.strip():
+        st.session_state.phone_lookup_q = ""
+
+    _phone_q = st.session_state.get("phone_lookup_q", "")
+    if _phone_q and _looks_like_phone(_phone_q):
+        _render_phone_panel(_phone_q)
+        return
 
     if go and query.strip():
         st.session_state.search_query        = query.strip()
