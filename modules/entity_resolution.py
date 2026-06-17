@@ -1417,11 +1417,18 @@ def calculate_stable_confidence(
     num_gaps: int,
     num_emails: int = 0,
     num_locations: int = 0,
+    num_platforms: int = 0,
 ) -> dict:
     """
     Dynamic evidence-based confidence engine. Starts at 0, builds from evidence.
     Capped at 95. Rounded to nearest 2.
     Returns {"confidence": int, "breakdown": str}.
+
+    `num_platforms` (confirmed online presence) lets OSINT / live-search subjects
+    score on their actual evidence. The model is otherwise document-centric, so
+    without it a fully-resolved web subject (e.g. a confirmed GitHub account) with
+    zero uploaded files scored 0 — falsely implying "no evidence". Defaults to 0
+    so every document-mode caller is unaffected.
     """
     score = 0
 
@@ -1462,6 +1469,19 @@ def calculate_stable_confidence(
         loc_bonus = 0
     score += loc_bonus
 
+    # Platform bonus (tiered) — confirmed online presence (OSINT evidence)
+    if num_platforms >= 4:
+        platform_bonus = 28
+    elif num_platforms >= 3:
+        platform_bonus = 22
+    elif num_platforms >= 2:
+        platform_bonus = 14
+    elif num_platforms >= 1:
+        platform_bonus = 8
+    else:
+        platform_bonus = 0
+    score += platform_bonus
+
     # Timeline bonus (tiered)
     if num_timeline >= 20:
         timeline_bonus = 14
@@ -1496,6 +1516,7 @@ def calculate_stable_confidence(
         f"{num_phones} phone(s) [+{phone_bonus}], "
         f"{num_emails} email(s) [+{email_bonus}], "
         f"{num_locations} location(s) [+{loc_bonus}], "
+        f"{num_platforms} platform(s) [+{platform_bonus}], "
         f"{num_timeline} timeline event(s) [+{timeline_bonus}], "
         f"{num_graph_nodes} graph node(s) [+{graph_bonus}], "
         f"{num_gaps} data gap(s) [-{gap_penalty}]"

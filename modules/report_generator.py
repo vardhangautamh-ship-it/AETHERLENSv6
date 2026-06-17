@@ -2407,6 +2407,14 @@ def _generate_report_inner(
 
         _emails    = person.get("emails_found", [])
         _locations = person.get("locations_mentioned", [])
+        # Breadth of confirmed online identity — the primary evidence type for
+        # OSINT / live-search subjects, which carry no uploaded documents.
+        _platforms = max(
+            len(person.get("platforms_confirmed", []) or []),
+            len(person.get("usernames", {}) or {}),
+            len(person.get("profile_urls", {}) or {}),
+            len(person.get("confirmed_linked_profiles", []) or []),
+        )
         confidence_result = calculate_stable_confidence(
             num_files       = len(_source_log),
             num_phones      = len(_phones),
@@ -2415,6 +2423,7 @@ def _generate_report_inner(
             num_gaps        = len(_gaps),
             num_emails      = len(_emails),
             num_locations   = len(_locations),
+            num_platforms   = _platforms,
         )
 
         overall_confidence   = confidence_result["confidence"]
