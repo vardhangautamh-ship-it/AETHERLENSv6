@@ -395,6 +395,14 @@ _NAME_SUFFIX_WORDS = {
     "1", "2", "3", "a", "b",
 }
 
+# Canonical anchored person-name matcher for STRUCTURED single-cell values
+# (CSV/Excel cells, resolved subject strings). Anchored ^...$ so it validates a
+# whole stripped cell as 2–4 Titlecase words; \s+ is safe here because a single
+# cell never spans columns or lines. Single source of truth — imported by
+# data_ingestion.extract_primary_subject_from_bytes and
+# relationship_mapper so the two never drift apart.
+RE_PERSON_NAME_CELL = re.compile(r"^([A-Z][a-z]{1,20}(?:\s+[A-Z][a-z]{1,20}){1,3})$")
+
 # Social-platform tokens that can never appear in a real human name.
 # Shared by _is_platform_suffix(), is_bad_subject_name(), and detect_all_conflicts().
 _PLATFORM_TOKEN_SET = {
@@ -907,6 +915,99 @@ def extract_all_emails(raw_documents: list) -> list:
     return list(found)
 
 
+# ── Single phone validator — one source of truth for every phone path ─────────
+def is_valid_phone(p: str) -> bool:
+    """
+    Rejects order IDs, CDR fragments, IP addresses, ISP data-volume figures, and
+    other non-phone numbers; accepts real Indian mobile / international numbers.
+    Called by extract_all_phones, build_phone_source_map, and
+    data_ingestion._extract_phones so phone validation is identical everywhere.
+    """
+    if not p:
+        return False
+    cleaned = str(p).strip()
+
+    # Reject leading small-number + space fragments (ISP data columns)
+    # e.g. "1 1221774321", "128 9876543210", "1240 1221774321"
+    if re.match(r"^\d{1,4}\s+\d+$", cleaned):
+        return False
+
+    # Reject IP addresses
+    if re.match(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$", cleaned):
+        return False
+
+    # Reject order / invoice / receipt IDs
+    # e.g. "RCP-ANT-231122-8821", "INV-OAI-2310-447821"
+    if re.match(r"^[A-Z]{2,}-[A-Z]{2,}-", cleaned):
+        return False
+    # e.g. "INV-2310", "RCP-8821"
+    if re.match(r"^[A-Z]{2,}-\d+", cleaned):
+        return False
+    # e.g. "2311-447822" (YYMM-XXXXXX order ref), "23-44782" (short order)
+    if re.match(r"^\d{2,4}-\d{5,7}$", cleaned):
+        return False
+    # e.g. "447822-2311" (reversed order ref)
+    if re.match(r"^\d{6}-\d{4}$", cleaned):
+        return False
+    # e.g. "TXN231016HDFC8821"
+    if re.match(r"^TXN\d+", cleaned):
+        return False
+
+    # Reject date-format false positives (YYYY-MM-DD)
+    if re.match(r"^\d{4}[-/]\d{2}[-/]\d{2}", cleaned):
+        return False
+
+    # Reject CDR row fragments with date tokens
+    tokens = cleaned.split()
+    if len(tokens) >= 2:
+        if any(re.match(r"\d{4}-\d{2}-\d{2}", t) for t in tokens):
+            return False
+
+    # Reject CDR row fragments with trailing call-duration padding
+    # e.g. "+91-98201-44109              320"
+    if re.search(r"\s{2,}\d{1,4}\s*$", cleaned):
+        return False
+
+    # Reject ISP account-ID patterns  e.g. "1234/JIO/2022/00123"
+    if re.match(r"^\d{4}/\w+/\d{4}/\d+$", cleaned):
+        return False
+    # Reject enrollment formats  e.g. "ALG/LLB/2022/001"
+    if re.match(r"^[A-Za-z]+/[A-Za-z]+/\d{4}/", cleaned):
+        return False
+
+    # Strip to digits only for length and prefix checks
+    digits = re.sub(r"[^\d]", "", cleaned)
+
+    # Must be 7–15 digits
+    if not (7 <= len(digits) <= 15):
+        return False
+
+    # Reject known ISP data-volume prefixes
+    _DATA_PREFIXES = ("128", "256", "512", "1024", "2048", "4096", "3185", "1852")
+    for _pfx in _DATA_PREFIXES:
+        if digits.startswith(_pfx) and len(digits) > 8:
+            return False
+
+    # Domestic number validation (no + or 00 prefix)
+    if not cleaned.startswith("+") and not cleaned.startswith("00"):
+        if len(digits) == 10:
+            if digits[0] not in "6789":
+                return False
+        elif len(digits) == 12 and digits[:2] == "91":
+            if digits[2] not in "6789":
+                return False
+        elif len(digits) < 10:
+            return False
+
+    # International +91 double-check
+    if "+91" in cleaned:
+        local = digits[-10:]
+        if len(local) == 10 and local[0] not in "6789":
+            return False
+
+    return True
+
+
 def extract_all_phones(raw_documents: list) -> list:
     """
     Permanent comprehensive phone extractor.
@@ -942,96 +1043,7 @@ def extract_all_phones(raw_documents: list) -> list:
             if clean:
                 phones.add(clean)
 
-    # ── Post-extraction validation ────────────────────────────────────────────
-    def is_valid_phone(p: str) -> bool:
-        """
-        Rejects order IDs, CDR fragments, IP addresses, and non-phone numbers.
-        Accepts real Indian mobile / international numbers only.
-        """
-        if not p:
-            return False
-        cleaned = str(p).strip()
-
-        # Reject leading small-number + space fragments (ISP data columns)
-        # e.g. "1 1221774321", "128 9876543210", "1240 1221774321"
-        if re.match(r"^\d{1,4}\s+\d+$", cleaned):
-            return False
-
-        # Reject IP addresses
-        if re.match(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$", cleaned):
-            return False
-
-        # Reject order / invoice / receipt IDs
-        # e.g. "RCP-ANT-231122-8821", "INV-OAI-2310-447821"
-        if re.match(r"^[A-Z]{2,}-[A-Z]{2,}-", cleaned):
-            return False
-        # e.g. "INV-2310", "RCP-8821"
-        if re.match(r"^[A-Z]{2,}-\d+", cleaned):
-            return False
-        # e.g. "2311-447822" (YYMM-XXXXXX order ref), "23-44782" (short order)
-        if re.match(r"^\d{2,4}-\d{5,7}$", cleaned):
-            return False
-        # e.g. "447822-2311" (reversed order ref)
-        if re.match(r"^\d{6}-\d{4}$", cleaned):
-            return False
-        # e.g. "TXN231016HDFC8821"
-        if re.match(r"^TXN\d+", cleaned):
-            return False
-
-        # Reject date-format false positives (YYYY-MM-DD)
-        if re.match(r"^\d{4}[-/]\d{2}[-/]\d{2}", cleaned):
-            return False
-
-        # Reject CDR row fragments with date tokens
-        tokens = cleaned.split()
-        if len(tokens) >= 2:
-            if any(re.match(r"\d{4}-\d{2}-\d{2}", t) for t in tokens):
-                return False
-
-        # Reject CDR row fragments with trailing call-duration padding
-        # e.g. "+91-98201-44109              320"
-        if re.search(r"\s{2,}\d{1,4}\s*$", cleaned):
-            return False
-
-        # Reject ISP account-ID patterns  e.g. "1234/JIO/2022/00123"
-        if re.match(r"^\d{4}/\w+/\d{4}/\d+$", cleaned):
-            return False
-        # Reject enrollment formats  e.g. "ALG/LLB/2022/001"
-        if re.match(r"^[A-Za-z]+/[A-Za-z]+/\d{4}/", cleaned):
-            return False
-
-        # Strip to digits only for length and prefix checks
-        digits = re.sub(r"[^\d]", "", cleaned)
-
-        # Must be 7–15 digits
-        if not (7 <= len(digits) <= 15):
-            return False
-
-        # Reject known ISP data-volume prefixes
-        _DATA_PREFIXES = ("128", "256", "512", "1024", "2048", "4096", "3185", "1852")
-        for _pfx in _DATA_PREFIXES:
-            if digits.startswith(_pfx) and len(digits) > 8:
-                return False
-
-        # Domestic number validation (no + or 00 prefix)
-        if not cleaned.startswith("+") and not cleaned.startswith("00"):
-            if len(digits) == 10:
-                if digits[0] not in "6789":
-                    return False
-            elif len(digits) == 12 and digits[:2] == "91":
-                if digits[2] not in "6789":
-                    return False
-            elif len(digits) < 10:
-                return False
-
-        # International +91 double-check
-        if "+91" in cleaned:
-            local = digits[-10:]
-            if len(local) == 10 and local[0] not in "6789":
-                return False
-
-        return True
-
+    # ── Post-extraction validation (uses module-level is_valid_phone) ─────────
     # Filter 1: use is_valid_phone validator
     # Filter 2: also check date-format false positives
     _DATE_RE = re.compile(r"^\d{4}[-/]\d{2}[-/]\d{2}")
@@ -1078,7 +1090,7 @@ def build_phone_source_map(raw_documents: list) -> dict:
         for p in entities:
             val = p.get("value", "") if isinstance(p, dict) else str(p)
             clean = safe_phone(safe_str(val))
-            if clean:
+            if clean and is_valid_phone(clean):
                 raw_map.setdefault(clean, set()).add(fname)
 
         # Structured rows
@@ -1088,14 +1100,14 @@ def build_phone_source_map(raw_documents: list) -> dict:
             for val in row.values():
                 for m in PHONE_REGEX.findall(safe_str(val)):
                     clean = safe_phone(m)
-                    if clean:
+                    if clean and is_valid_phone(clean):
                         raw_map.setdefault(clean, set()).add(fname)
 
         # Raw text
         text = safe_str(doc.get("full_text", "") or doc.get("raw_text", ""))
         for m in PHONE_REGEX.findall(text):
             clean = safe_phone(m)
-            if clean:
+            if clean and is_valid_phone(clean):
                 raw_map.setdefault(clean, set()).add(fname)
 
     # Normalise keys to last-10-digit canonical form (same dedup as extract_all_phones)

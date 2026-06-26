@@ -752,6 +752,11 @@ def calculate_risk_score(
     """
     Calculate a composite risk score for a PersonEntity.
 
+    FALLBACK ONLY: the live risk authority is ai_agents.run_risk_agent (saturating
+    deterministic score + LLM explanation). This rule-based scorer is invoked solely
+    by report_generator._build_risk_section when RiskAgent is unavailable; do not
+    use it as the primary path.
+
     Returns:
         {
             "risk_score":       float 0-100,

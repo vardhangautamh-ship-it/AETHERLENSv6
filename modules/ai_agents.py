@@ -381,25 +381,43 @@ def run_risk_agent(
             flags.append(str(a))
     flags = [f for f in flags if f.strip()]
 
-    # ── STEP 1: DETERMINISTIC BASE SCORE ──────────────────────────────────────
+    # ── STEP 1: DETERMINISTIC BASE SCORE (saturating, not linear) ─────────────
     sources      = len(p.get("data_sources", []) or [])
     # n_anomalies: prefer explicit "anomalies" key (set by orchestrator write-back),
     # then anomaly_flags count, then the normalised flags list from the caller.
     n_anomalies  = len(p.get("anomalies", []) or p.get("anomaly_flags", []) or flags)
     has_assets   = bool(p.get("assets_data"))
-    entity_count = len(str(p))
 
-    # Calibrated scoring — keeps heavy cases (7 src / 8 flags) in 72–85 band.
-    # sources*5 + anomalies*6 → 7*5 + 8*6 = 83 (8 flags); 101 → 85 (11 flags).
-    # Hard ceiling of 85 prevents 100/100 inflation on every multi-flag case.
-    base_score = (sources * 5) + (n_anomalies * 6) + (18 if has_assets else 0)
-    if entity_count < 5000:
-        base_score -= 12
-    if sources <= 4:
-        base_score -= 10
+    # Diminishing-returns contribution: each additional flag/source is worth less
+    # than the previous one, so a flag-rich case lands in a meaningful 70–88 band
+    # with real spread instead of pinning to the ceiling. The cap is a backstop,
+    # not the thing that produces the score for ordinary serious cases.
+    def _saturate(n: int, tiers) -> float:
+        """tiers = [(count, points_per_unit), ...]; count=None means 'the rest'."""
+        score = 0.0
+        for count, pts in tiers:
+            if n <= 0:
+                break
+            take = n if count is None else min(n, count)
+            score += take * pts
+            n -= take
+        return score
 
-    # FINAL HARD CAP — ceiling 85, floor 0 (only the most extreme cases hit 85)
-    base_score = max(0, min(85, base_score))
+    # First few flags are cheap (a couple of low-severity flags is ordinary);
+    # the middle band ramps hard (several flags = serious); many flags saturate.
+    # Tuned so 3 flags / 2 sources stays low (~21 <25), 6 flags / 6 sources lands
+    # ~63 (HIGH), and 12 flags / 7 sources + assets lands ~84 — the cap (90) only
+    # binds on the most extreme cases.
+    anomaly_pts = _saturate(n_anomalies, [(3, 3), (3, 6), (None, 1.5)])
+    source_pts  = _saturate(sources,     [(6, 6), (None, 2)])
+    asset_pts   = 10 if has_assets else 0
+    # Genuinely sparse case (≤2 sources AND ≤2 flags) → keep it low.
+    thin_penalty = 8 if (sources <= 2 and n_anomalies <= 2) else 0
+
+    base_score = anomaly_pts + source_pts + asset_pts - thin_penalty
+
+    # Soft ceiling 90, floor 0 — only the most extreme cases approach the ceiling.
+    base_score = int(max(0, min(90, round(base_score))))
 
     keyword_factors: list = []
 
@@ -462,6 +480,17 @@ Return ONLY valid JSON (no markdown, no code blocks):
         [{"factor": kf, "weight": 10, "evidence": kf, "source": "hybrid"} for kf in key_factors[:5]]
         if key_factors else keyword_factors[:5]
     )
+    # De-duplicate factors by normalised text so the same underlying flag never
+    # appears twice under slightly different labels (e.g. "IT Act indicator" and
+    # "Violation Flagged indicator" both describing one IT-Act flag).
+    _seen_f: set = set()
+    _deduped: list = []
+    for f in risk_factors:
+        k = re.sub(r"[^a-z0-9]", "", str(f.get("factor", "")).lower())[:40]
+        if k and k not in _seen_f:
+            _seen_f.add(k)
+            _deduped.append(f)
+    risk_factors = _deduped or risk_factors
 
     result = {
         "risk_score":       base_score,

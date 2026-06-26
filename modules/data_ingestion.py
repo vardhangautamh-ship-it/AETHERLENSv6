@@ -147,6 +147,10 @@ RE_ADDRESS = re.compile(
     re.IGNORECASE,
 )
 
+# Canonical free-text name scanner. \s+ would let a newline bridge two words,
+# producing "Zafar Ahmed Khan\nCase"; [ \t]+ restricts the inter-word gap to
+# space/tab so a match never crosses a line boundary. Single source of truth —
+# also used by extract_primary_subject_from_text's frequency pass below.
 RE_NAME = re.compile(
     r"\b([A-Z][a-z]{1,20}(?:[ \t]+[A-Z][a-z]{1,20}){1,3})\b"
 )
@@ -248,10 +252,6 @@ _LABEL_PATTERNS = [
     re.compile(r'Target[ \t]*[:\|][ \t]*([A-Z][a-z]{1,20}(?:[ \t]+[A-Z][a-z]{1,20})+)'),
 ]
 
-# \s+ would allow \n to bridge two words, producing "Zafar Ahmed Khan\nCase".
-# [ \t]+ restricts to space/tab only so name matches never cross line boundaries.
-_NAME_FREQ_RE = re.compile(r'\b([A-Z][a-z]{1,20}(?:[ \t]+[A-Z][a-z]{1,20}){1,3})\b')
-
 _LOCATION_PATTERNS = [
     re.compile(
         r'[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\s+'
@@ -293,7 +293,7 @@ def extract_subject_name(text: str) -> str | None:
     # Skip form-field captions ("Student Name:", "Account Holder:") — a capitalised
     # phrase immediately followed by ':' or '|' is a label, not the subject.
     candidates = [
-        m.group(1) for m in _NAME_FREQ_RE.finditer(text)
+        m.group(1) for m in RE_NAME.finditer(text)
         if text[m.end():m.end() + 4].lstrip()[:1] not in (":", "|")
     ]
     filtered = [
@@ -356,7 +356,9 @@ def extract_primary_subject_from_bytes(file_bytes: bytes, suffix: str) -> str:
             return ""
 
         name_values: list = []
-        name_re = re.compile(r"^([A-Z][a-z]{1,20}(?:\s+[A-Z][a-z]{1,20}){1,3})$")
+        # Canonical anchored single-cell matcher (single source of truth shared
+        # with relationship_mapper); imported locally to avoid a top-level cycle.
+        from modules.entity_resolution import RE_PERSON_NAME_CELL as name_re
 
         for df in dfs:
             # Normalise column names for matching
@@ -502,6 +504,9 @@ def _extract_phones(text: str) -> list[dict]:
     Extract phone numbers using specific + generic patterns.
     Specific patterns (India/Pakistan) take priority; generic catches the rest.
     """
+    # Single phone validator — see entity_resolution.is_valid_phone
+    from modules.entity_resolution import is_valid_phone
+
     found = []
     seen  = set()
 
@@ -509,6 +514,9 @@ def _extract_phones(text: str) -> list[dict]:
         raw    = m.group().strip()
         digits = re.sub(r"[^\d]", "", raw)
         if len(digits) < 7 or len(digits) > 15:
+            return
+        # Reject order IDs, IP fragments, ISP data-volume figures, CDR fragments
+        if not is_valid_phone(raw):
             return
         norm = digits  # normalised key to prevent duplicates across patterns
         if norm in seen:

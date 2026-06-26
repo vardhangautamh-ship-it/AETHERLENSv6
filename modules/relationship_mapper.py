@@ -8,7 +8,7 @@ import networkx as nx
 import plotly.graph_objects as go
 
 import re as _re
-from modules.entity_resolution import _NAME_SUFFIX_WORDS
+from modules.entity_resolution import _NAME_SUFFIX_WORDS, RE_PERSON_NAME_CELL
 
 EDGE_TYPES = ["called", "located_near", "co_appears", "follows", "mentioned_with",
               "contacted", "co_located", "associated_with"]
@@ -24,8 +24,9 @@ EDGE_COLORS = {
     "associated_with": "#C084FC",   # --p300
 }
 
-# Pattern to identify real person names in data rows
-_REAL_NAME_RE = _re.compile(r"^([A-Z][a-z]{1,20}(?:\s+[A-Z][a-z]{1,20}){1,3})$")
+# Pattern to identify real person names in data rows. Single source of truth
+# lives in entity_resolution (RE_PERSON_NAME_CELL); aliased here for callers.
+_REAL_NAME_RE = RE_PERSON_NAME_CELL
 
 _NAME_SKIP = {
     "Unknown", "Not found", "N/A", "None", "Null", "True", "False",
