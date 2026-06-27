@@ -2361,3 +2361,418 @@ def build_digital_twin(all_data_sources: dict, raw_documents: list = None) -> On
         print(f"[ONTOLOGY] Inference failed (non-fatal): {exc}")
 
     return graph
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# PATTERN-ANALYSIS ONTOLOGY LAYER  (Step 2)
+# ══════════════════════════════════════════════════════════════════════════════
+# A LIGHTWEIGHT, typed projection of the resolved case used solely by
+# modules/pattern_rules.py to run deterministic IF-THEN pattern detection.
+#
+# This is intentionally SEPARATE in purpose from the digital-twin Entities above
+# (PersonEntity, PhoneEntity, …), which are heavyweight graph nodes carrying ids,
+# confidence, and DB persistence. The pattern layer is an in-memory, read-only
+# *view*: each entity exposes exactly — and only — the attributes a pattern rule
+# reads (the contract documented at the top of pattern_rules.py). They live in
+# this one ontology module (no second ontology file); the names do not collide
+# with the *Entity classes. Every field below earns its place by being read by a
+# rule — nothing speculative.
+#
+# The graph relationships used by the rules (e.g. NETWORK_HUB, SHELL_LAYERING)
+# reuse the EXISTING NetworkX graph from relationship_mapper — no parallel graph.
+
+import re as _pa_re
+
+
+@dataclass
+class Person:
+    """A human in the case. (rules: NETWORK_HUB via subject_name)"""
+    name: str = ""
+    role: str = ""
+    is_subject: bool = False
+    source: str = ""
+
+
+@dataclass
+class PhoneNumber:
+    """A phone line. type ∈ domestic|international|burner.
+    (rules: OPERATIONAL_SECURITY, OFFSHORE_FLIGHT_RISK)"""
+    number: str = ""
+    type: str = "domestic"
+    country: str = ""
+    source: str = ""
+
+
+@dataclass
+class Organization:
+    """A company/entity. type ∈ shell|front|legitimate.
+    (rules: LAYERING_STRUCTURE, SHELL_LAYERING_NETWORK)"""
+    name: str = ""
+    type: str = "legitimate"
+    jurisdiction: str = ""
+    offshore: bool = False
+    source: str = ""
+
+
+@dataclass
+class Transaction:
+    """A financial movement. direction ∈ in|out.
+    (rules: LAYERING_STRUCTURE, OPERATIONAL_SCALE_MISMATCH)"""
+    date: str = ""
+    direction: str = "in"
+    amount: float = 0.0
+    cross_border: bool = False
+    counterparty: str = ""
+    structured: bool = False
+    source: str = ""
+
+
+@dataclass
+class Property:
+    """A real-asset holding. (rules: OFFSHORE_FLIGHT_RISK)"""
+    jurisdiction: str = ""
+    type: str = ""
+    foreign: bool = False
+    source: str = ""
+
+
+@dataclass
+class CommChannel:
+    """A communications channel. type ∈ protonmail|telegram|signal|vpn|email|…
+    (rules: OPERATIONAL_SECURITY, COUNTER_SURVEILLANCE)"""
+    type: str = ""
+    encrypted: bool = False
+    foreign_exit: bool = False
+    source: str = ""
+
+
+@dataclass
+class LegalProceeding:
+    """A legal/enforcement event. kind ∈ loc|enforcement|inquiry|notice.
+    (rules: OFFSHORE_FLIGHT_RISK, ENFORCEMENT_HISTORY_ESCALATION,
+    ANTI_FORENSIC_BEHAVIOUR)"""
+    agency: str = ""
+    status: str = ""
+    date: str = ""
+    case_ref: str = ""
+    kind: str = ""
+    source: str = ""
+
+
+@dataclass
+class DeletionEvent:
+    """An evidence-deletion event. (rules: ANTI_FORENSIC_BEHAVIOUR)"""
+    timestamp: str = ""
+    target: str = ""
+    source: str = ""
+
+
+@dataclass
+class TimelineEvent:
+    """A dated event with significance. (rules: TIMELINE_CLUSTER)"""
+    date: str = ""
+    significance: str = "LOW"
+    source: str = ""
+    description: str = ""
+
+
+@dataclass
+class Ontology:
+    """Typed, structured view of one case that the pattern rules run over.
+    The single output of build_ontology(); the rules read only from here."""
+    subject_name: str = ""
+    subject: Optional[Person] = None
+    flags: list = field(default_factory=list)            # list[str]
+    graph: Any = None                                    # existing NetworkX graph
+    persons: list = field(default_factory=list)
+    phones: list = field(default_factory=list)
+    organizations: list = field(default_factory=list)
+    transactions: list = field(default_factory=list)
+    properties: list = field(default_factory=list)
+    comm_channels: list = field(default_factory=list)
+    legal_proceedings: list = field(default_factory=list)
+    deletion_events: list = field(default_factory=list)
+    timeline_events: list = field(default_factory=list)
+
+    def counts(self) -> dict:
+        """Population summary — handy for tests and the report header."""
+        return {
+            "persons": len(self.persons), "phones": len(self.phones),
+            "organizations": len(self.organizations), "transactions": len(self.transactions),
+            "properties": len(self.properties), "comm_channels": len(self.comm_channels),
+            "legal_proceedings": len(self.legal_proceedings),
+            "deletion_events": len(self.deletion_events),
+            "timeline_events": len(self.timeline_events), "flags": len(self.flags),
+        }
+
+
+# ── builder helpers (defensive: tolerate dicts OR objects, missing keys) ──────
+def _pa_get(obj, key, default=None):
+    if isinstance(obj, dict):
+        return obj.get(key, default)
+    return getattr(obj, key, default)
+
+
+def _pa_norm(s) -> str:
+    return str(s or "").strip().lower()
+
+
+def _pa_listify(x) -> list:
+    if x is None:
+        return []
+    if isinstance(x, dict):
+        return [x]
+    if isinstance(x, (list, tuple, set)):
+        return list(x)
+    return [x]
+
+
+def _pa_flatten_flags(*sources) -> list:
+    """Normalise assorted flag containers (str / {'flag':..} / objects) → list[str]."""
+    out = []
+    for src in sources:
+        for f in _pa_listify(src):
+            if isinstance(f, dict):
+                txt = f.get("flag") or f.get("text") or f.get("description") or ""
+            else:
+                txt = str(f)
+            txt = str(txt).strip()
+            if txt:
+                out.append(txt)
+    # de-dup preserving order (deterministic)
+    seen, deduped = set(), []
+    for t in out:
+        k = t.lower()
+        if k not in seen:
+            seen.add(k)
+            deduped.append(t)
+    return deduped
+
+
+_PA_OFFSHORE = ("uae", "dubai", "singapore", "switzerland", "swiss", "cayman", "bvi",
+                "british virgin", "mauritius", "panama", "cyprus", "hong kong", "hongkong",
+                "seychelles", "malta", "luxembourg", "offshore", "foreign")
+_PA_DOMESTIC = ("india", "indian", " in ", "domestic")
+_PA_DATE_RE = _pa_re.compile(r"\b(\d{4}-\d{1,2}-\d{1,2})\b")
+
+
+def _pa_is_offshore(j) -> bool:
+    j = _pa_norm(j)
+    return bool(j) and any(t in j for t in _PA_OFFSHORE)
+
+
+def _pa_is_foreign(j) -> bool:
+    j = _pa_norm(j)
+    return bool(j) and not any(t.strip() in j for t in _PA_DOMESTIC)
+
+
+def _pa_classify_phone(number, tags) -> str:
+    low = [_pa_norm(t) for t in _pa_listify(tags)]
+    if any("burner" in t or "prepaid" in t for t in low):
+        return "burner"
+    digits = _pa_re.sub(r"[^\d+]", "", str(number or ""))
+    if digits.startswith("+") and not digits.startswith("+91"):
+        return "international"
+    if digits.startswith("00") and not digits.startswith("0091"):
+        return "international"
+    return "domestic"
+
+
+def _pa_first_date(text) -> str:
+    m = _PA_DATE_RE.search(str(text or ""))
+    return m.group(1) if m else ""
+
+
+def _pa_channels_from_flags(flags) -> list:
+    """Derive CommChannel entries from §09 flag text when not explicitly typed."""
+    chans, seen = [], set()
+    for f in flags:
+        fl = _pa_norm(f)
+        for key, ctype, enc in (("protonmail", "protonmail", True), ("proton", "protonmail", True),
+                                 ("telegram", "telegram", True), ("signal", "signal", True),
+                                 ("wickr", "wickr", True), ("threema", "threema", True),
+                                 ("vpn", "vpn", False)):
+            if key in fl and ctype not in seen:
+                seen.add(ctype)
+                foreign_exit = ctype == "vpn" and ("foreign" in fl or "exit" in fl
+                                                   or any(c in fl for c in _PA_OFFSHORE))
+                chans.append(CommChannel(type=ctype, encrypted=enc,
+                                         foreign_exit=foreign_exit, source="flag"))
+    return chans
+
+
+def _pa_legal_from_flags(flags) -> list:
+    """Derive LegalProceeding entries from flag text (LOC / enforcement / inquiry)."""
+    out = []
+    for f in flags:
+        fl = _pa_norm(f)
+        date = _pa_first_date(f)
+        if "lookout" in fl or fl.endswith(" loc") or " loc " in fl or "look out circular" in fl:
+            out.append(LegalProceeding(agency="", status="active", date=date,
+                                       kind="loc", source="flag"))
+        for ag in ("dri", "ncb", "ed", "sfio", "cbi"):
+            if _pa_re.search(rf"\b{ag}\b", fl):
+                out.append(LegalProceeding(agency=ag.upper(), status="", date=date,
+                                           kind="enforcement", source="flag"))
+        if any(k in fl for k in ("inquiry", "summons", "notice", "cert-in", "certin")):
+            kind = "notice" if "notice" in fl else "inquiry"
+            out.append(LegalProceeding(agency="", status="", date=date,
+                                       kind=kind, source="flag"))
+    return out
+
+
+def _pa_deletions_from_flags(flags) -> list:
+    out = []
+    for f in flags:
+        fl = _pa_norm(f)
+        if any(k in fl for k in ("deletion", "deleted", "wiped", "formatted",
+                                 "anti-forensic", "anti forensic", "data destroyed")):
+            out.append(DeletionEvent(timestamp=_pa_first_date(f), target="", source="flag"))
+    return out
+
+
+def build_ontology(person, entities=None, flags=None, timeline=None,
+                   graph=None, phones=None, financial_data=None) -> Ontology:
+    """THE consolidation point: raw entity-resolution output → typed Ontology.
+
+    Defensive by design — every argument is optional and each field is parsed
+    with safe fallbacks, so a partially-populated case never raises. The pattern
+    rules then consume the returned Ontology, never the raw dicts.
+
+    Expected (flexible) input shapes:
+      person         : resolved Person Object dict — confirmed_name/name,
+                       anomaly_flags, phones_found, role
+      entities       : dict of typed lists (organizations, properties,
+                       comm_channels, legal_proceedings, deletion_events, persons)
+                       and/or raw entity dict; missing keys are fine
+      flags          : list[str | {'flag':..}] — §09 anomaly flags
+      timeline       : {'events':[...]} or list of event dicts
+      graph          : the EXISTING NetworkX graph (relationship_mapper)
+      phones         : list[str | dict] of phone lines (else person.phones_found)
+      financial_data : {'transactions':[...], 'properties':[...]} or list of txns
+    """
+    entities = entities or {}
+    person = person or {}
+    onto = Ontology(graph=graph)
+
+    # ── subject + persons ────────────────────────────────────────────────────
+    subject_name = (_pa_get(person, "confirmed_name") or _pa_get(person, "name")
+                    or _pa_get(person, "primary_subject") or "")
+    onto.subject_name = str(subject_name).strip()
+    subj = Person(name=onto.subject_name, role=str(_pa_get(person, "role", "") or ""),
+                  is_subject=True, source="resolution")
+    onto.subject = subj
+    onto.persons.append(subj)
+    for p in _pa_listify(_pa_get(entities, "persons")):
+        nm = str(_pa_get(p, "name", "") or "").strip()
+        if nm and nm != onto.subject_name:
+            onto.persons.append(Person(name=nm, role=str(_pa_get(p, "role", "") or ""),
+                                       is_subject=False, source=str(_pa_get(p, "source", "") or "")))
+
+    # ── flags (arg + person.anomaly_flags + behavioral_flags) ────────────────
+    onto.flags = _pa_flatten_flags(flags, _pa_get(person, "anomaly_flags"),
+                                   _pa_get(person, "behavioral_flags"),
+                                   _pa_get(person, "conflicts"))
+
+    # ── phones (arg, else person.phones_found) ───────────────────────────────
+    raw_phones = _pa_listify(phones) or _pa_listify(_pa_get(person, "phones_found"))
+    for ph in raw_phones:
+        if isinstance(ph, dict):
+            num = ph.get("number") or ph.get("phone") or ph.get("value") or ""
+            tags = ph.get("tags") or []
+            ptype = ph.get("type") or _pa_classify_phone(num, tags)
+            onto.phones.append(PhoneNumber(number=str(num), type=ptype,
+                                           country=str(ph.get("country", "") or ""),
+                                           source=str(ph.get("source", "") or "")))
+        else:
+            num = str(ph)
+            onto.phones.append(PhoneNumber(number=num, type=_pa_classify_phone(num, []),
+                                           source=""))
+
+    # ── organizations ────────────────────────────────────────────────────────
+    for o in _pa_listify(_pa_get(entities, "organizations") or _pa_get(entities, "orgs")
+                         or _pa_get(entities, "companies")):
+        name = str(_pa_get(o, "name", "") or "").strip()
+        if not name:
+            continue
+        otype = _pa_norm(_pa_get(o, "type"))
+        if otype not in ("shell", "front", "legitimate"):
+            blob = _pa_norm(name) + " " + " ".join(_pa_norm(t) for t in _pa_listify(_pa_get(o, "tags")))
+            otype = ("shell" if "shell" in blob else "front" if "front" in blob else "legitimate")
+        juris = str(_pa_get(o, "jurisdiction", "") or "")
+        onto.organizations.append(Organization(
+            name=name, type=otype, jurisdiction=juris,
+            offshore=bool(_pa_get(o, "offshore", False)) or _pa_is_offshore(juris),
+            source=str(_pa_get(o, "source", "") or "")))
+
+    # ── transactions (financial_data) ─────────────────────────────────────────
+    fin = financial_data or {}
+    for t in _pa_listify(_pa_get(fin, "transactions") if isinstance(fin, dict) else fin):
+        direction = _pa_norm(_pa_get(t, "direction"))
+        if direction in ("credit", "deposit", "inward", "in"):
+            direction = "in"
+        elif direction in ("debit", "withdrawal", "outward", "out", "wire"):
+            direction = "out"
+        else:
+            direction = "in"
+        try:
+            amount = float(_pa_get(t, "amount", 0) or 0)
+        except (TypeError, ValueError):
+            amount = 0.0
+        onto.transactions.append(Transaction(
+            date=str(_pa_get(t, "date", "") or ""), direction=direction, amount=amount,
+            cross_border=bool(_pa_get(t, "cross_border", False)),
+            counterparty=str(_pa_get(t, "counterparty", "") or ""),
+            structured=bool(_pa_get(t, "structured", False)),
+            source=str(_pa_get(t, "source", "") or "")))
+
+    # ── properties (financial_data or entities) ───────────────────────────────
+    prop_src = (_pa_get(fin, "properties") if isinstance(fin, dict) else None) \
+        or _pa_get(entities, "properties") or _pa_get(entities, "assets")
+    for p in _pa_listify(prop_src):
+        juris = str(_pa_get(p, "jurisdiction", "") or _pa_get(p, "location", "") or "")
+        onto.properties.append(Property(
+            jurisdiction=juris, type=str(_pa_get(p, "type", "") or ""),
+            foreign=bool(_pa_get(p, "foreign", False)) or _pa_is_foreign(juris),
+            source=str(_pa_get(p, "source", "") or "")))
+
+    # ── comm channels (explicit entities, else derived from flags) ────────────
+    explicit_chans = _pa_listify(_pa_get(entities, "comm_channels") or _pa_get(entities, "channels"))
+    for c in explicit_chans:
+        onto.comm_channels.append(CommChannel(
+            type=_pa_norm(_pa_get(c, "type")), encrypted=bool(_pa_get(c, "encrypted", False)),
+            foreign_exit=bool(_pa_get(c, "foreign_exit", False)),
+            source=str(_pa_get(c, "source", "") or "")))
+    if not onto.comm_channels:
+        onto.comm_channels = _pa_channels_from_flags(onto.flags)
+
+    # ── legal proceedings (explicit, else derived from flags) ─────────────────
+    explicit_legal = _pa_listify(_pa_get(entities, "legal_proceedings")
+                                 or _pa_get(entities, "proceedings"))
+    for lp in explicit_legal:
+        onto.legal_proceedings.append(LegalProceeding(
+            agency=str(_pa_get(lp, "agency", "") or ""), status=_pa_norm(_pa_get(lp, "status")),
+            date=str(_pa_get(lp, "date", "") or ""), case_ref=str(_pa_get(lp, "case_ref", "") or ""),
+            kind=_pa_norm(_pa_get(lp, "kind")), source=str(_pa_get(lp, "source", "") or "")))
+    if not onto.legal_proceedings:
+        onto.legal_proceedings = _pa_legal_from_flags(onto.flags)
+
+    # ── deletion events (explicit, else derived from flags) ───────────────────
+    explicit_del = _pa_listify(_pa_get(entities, "deletion_events"))
+    for de in explicit_del:
+        onto.deletion_events.append(DeletionEvent(
+            timestamp=str(_pa_get(de, "timestamp", "") or _pa_get(de, "date", "") or ""),
+            target=str(_pa_get(de, "target", "") or ""), source=str(_pa_get(de, "source", "") or "")))
+    if not onto.deletion_events:
+        onto.deletion_events = _pa_deletions_from_flags(onto.flags)
+
+    # ── timeline events ───────────────────────────────────────────────────────
+    tl_events = _pa_get(timeline, "events") if isinstance(timeline, dict) else timeline
+    for ev in _pa_listify(tl_events):
+        onto.timeline_events.append(TimelineEvent(
+            date=str(_pa_get(ev, "date", "") or ""),
+            significance=str(_pa_get(ev, "significance", "") or _pa_get(ev, "importance", "") or "LOW"),
+            source=str(_pa_get(ev, "source", "") or ""),
+            description=str(_pa_get(ev, "description", "") or _pa_get(ev, "event", "") or "")))
+
+    return onto

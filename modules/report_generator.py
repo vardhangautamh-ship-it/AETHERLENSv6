@@ -553,6 +553,7 @@ def generate_pdf(
         ("07. BEHAVIORAL PATTERNS",               "behavioral_patterns"),
         ("08. KEY ASSOCIATIONS",           "associations"),
         ("09. ANOMALIES + FLAGS",          "anomalies"),
+        ("09B. PATTERN ANALYSIS",          "pattern_analysis"),
         ("10. DATA GAPS",                  "data_gaps"),
         ("11. SOURCE LOG",                 "source_log"),
         ("12. AI ENGINE NOTES",            "ai_notes"),
@@ -617,6 +618,50 @@ def generate_pdf(
                     _STYLES["verified"],
                 ))
 
+            block.append(Spacer(1, 4 * mm))
+            story.append(KeepTogether(block))
+            continue
+
+        # ── Section 09B — Pattern Analysis (deterministic, rule-based) ─────────
+        if key == "pattern_analysis":
+            pa = report_data.get(key) or {}
+            block = []
+            block.append(Paragraph(_safe(title), _STYLES["section_header"]))
+            block.append(_hr())
+            block.append(Paragraph(
+                "[ DETERMINISTIC ANALYSIS — rule-based, reproducible; not AI ]",
+                _STYLES["label"],
+            ))
+            block.append(Paragraph(
+                _safe(f"Detected case type: {str(pa.get('case_type', 'undetermined')).upper()}"),
+                _STYLES["verified"],
+            ))
+            _pats = pa.get("patterns", []) or []
+            if not _pats:
+                block.append(Paragraph(
+                    "No significant cross-pattern correlations detected in the available data.",
+                    _STYLES["verified"],
+                ))
+            else:
+                for _p in _pats:
+                    block.append(Paragraph(
+                        _safe(f"{str(_p.get('pattern_name', '')).upper()} [{_p.get('confidence', '')}]"),
+                        _STYLES["label"],
+                    ))
+                    block.append(Paragraph(_safe(f"&rarr; {_p.get('explanation', '')}"), _STYLES["verified"]))
+                    if _p.get("triggers"):
+                        block.append(Paragraph(_safe("Triggered by: " + "; ".join(_p["triggers"])), _STYLES["verified"]))
+                    if _p.get("sources"):
+                        block.append(Paragraph(_safe("Sources: " + ", ".join(_p["sources"])), _STYLES["verified"]))
+            # Optional [AI NARRATIVE] — non-factual synthesis of the patterns above.
+            _pa_narr = pa.get("narrative")
+            if _pa_narr:
+                block.append(Spacer(1, 2 * mm))
+                block.append(Paragraph(
+                    "[ AI NARRATIVE — non-factual synthesis of the deterministic patterns above ]",
+                    _STYLES["label"],
+                ))
+                block.append(Paragraph(_safe(_pa_narr), _STYLES["ai_analysis"]))
             block.append(Spacer(1, 4 * mm))
             story.append(KeepTogether(block))
             continue
@@ -2049,6 +2094,96 @@ def _build_sections_local(
 # SECTIONS -> PDF DATA ADAPTER
 # ══════════════════════════════════════════════════════════════════════════════
 
+def _render_pattern_analysis_text(result: dict) -> str:
+    """Deterministic plain-text rendering of the §09B pattern-analysis result.
+
+    Identical for every pipeline and every run; contains NO LLM output. Step 5
+    may PREPEND a clearly-labelled [AI NARRATIVE] paragraph above this text, but
+    this deterministic block always stands on its own.
+    """
+    lines = ["[DETERMINISTIC ANALYSIS] Rule-based pattern detection."]
+    ct = str(result.get("case_type_detected", "undetermined") or "undetermined").upper()
+    lines.append(f"Detected case type: {ct}")
+    patterns = result.get("patterns") or []
+    if not patterns:
+        lines.append("")
+        lines.append("No significant cross-pattern correlations detected in the available data.")
+        return "\n".join(lines)
+    for p in patterns:
+        lines.append("")
+        lines.append(f"{p.pattern_name.upper()} [{p.confidence}]")
+        lines.append(f"  -> {p.plain_explanation}")
+        if p.triggers_met:
+            lines.append(f"  Triggered by: {'; '.join(p.triggers_met)}")
+        if p.supporting_sources:
+            lines.append(f"  Sources: {', '.join(p.supporting_sources)}")
+    return "\n".join(lines)
+
+
+# Master switch for the OPTIONAL [AI NARRATIVE] wrapper. The narrative is never
+# load-bearing: with this False (or the LLM unavailable) the §09B section still
+# shows every deterministic pattern conclusion — just without the prose.
+PATTERN_ANALYSIS_NARRATIVE = True
+
+
+def _generate_pattern_narrative(patterns: list, enabled: bool = None) -> str:
+    """OPTIONAL [AI NARRATIVE] — strictly subordinate to the deterministic patterns.
+
+    Produces ONE fluent paragraph that connects the ALREADY-detected patterns into
+    readable prose. The prompt passes ONLY the detected pattern explanations and
+    forbids introducing anything new, so the LLM adds readability, never
+    intelligence. Returns "" if disabled, if there are no patterns, or if the LLM
+    is unavailable/fails — in every such case the section loses zero conclusions.
+    """
+    if enabled is None:
+        enabled = PATTERN_ANALYSIS_NARRATIVE
+    if not enabled or not patterns:
+        return ""
+    listing = "\n".join(
+        f"- {p.get('pattern_name', '')} [{p.get('confidence', '')}]: {p.get('explanation', '')}"
+        for p in patterns
+    )
+    prompt = (
+        "You are writing one short paragraph for an intelligence report.\n"
+        "Using ONLY the patterns listed below, write one concise paragraph (3-5 "
+        "sentences) connecting them into readable prose for an investigator.\n"
+        "Do NOT add any pattern, fact, name, number, date, or conclusion that is "
+        "not in this list. Do NOT speculate or infer beyond it. Return only the "
+        "paragraph text, no preamble.\n\n"
+        f"PATTERNS:\n{listing}"
+    )
+    try:
+        from modules.ai_agents import _call_ai
+        out = _call_ai(prompt, max_tokens=400)
+        return (out or "").strip()
+    except Exception as exc:
+        print(f"[REPORT] Pattern narrative non-fatal: {exc}")
+        return ""
+
+
+def _build_pattern_analysis_section(result: dict) -> dict:
+    """Assemble the data-layer §09B Pattern Analysis section from a pattern_engine
+    result. Pure deterministic projection — no LLM, no per-pipeline branching."""
+    patterns = result.get("patterns") or []
+    return {
+        "header": "[DETERMINISTIC ANALYSIS] Rule-based pattern detection",
+        "case_type": result.get("case_type_detected", "undetermined"),
+        "content": _render_pattern_analysis_text(result),
+        "patterns": [
+            {
+                "pattern_id": p.pattern_id,
+                "pattern_name": p.pattern_name,
+                "confidence": p.confidence,
+                "explanation": p.plain_explanation,
+                "triggers": list(p.triggers_met),
+                "sources": list(p.supporting_sources),
+            }
+            for p in patterns
+        ],
+        "pattern_count": len(patterns),
+    }
+
+
 def _sections_to_pdf_data(sections: dict) -> dict:
     """
     Translate internal sections dict (Gemini or local format) into the flat
@@ -2145,6 +2280,10 @@ def _sections_to_pdf_data(sections: dict) -> dict:
         "risk_assessment":        risk_lines,
         "next_steps":             ns_lines,
     }
+    # Section 09B — pass full pattern_analysis dict through for custom rendering
+    s09b = sections.get("pattern_analysis")
+    if isinstance(s09b, dict):
+        result["pattern_analysis"] = s09b
     # Section 18 — pass full tactical_plan dict through for rich PDF rendering
     if isinstance(s18, dict) and s18.get("actions"):
         result["tactical_plan"] = s18
@@ -2492,6 +2631,47 @@ def _generate_report_inner(
         )
     except Exception as _tle:
         print(f"[REPORT] Timeline intelligence failed (non-fatal): {_tle}")
+
+    # ── Pattern Analysis (09B) — deterministic rule-based pattern detection ─────
+    # SINGLE point for BOTH pipelines (OSINT + FUSION converge in this function).
+    # Reads the same enriched §09 flags the Anomalies section shows, plus the
+    # graph / timeline / phones, and runs the deterministic pattern engine. No
+    # per-pipeline special-casing (the R-E lesson). The optional LLM narrative is
+    # added later (Step 5) and never originates a conclusion.
+    try:
+        from modules.pattern_engine import run_pattern_analysis
+        _pa_flags = list(sections.get("anomalies_and_flags", {}).get("flags", []) or [])
+        _pa_result = run_pattern_analysis(
+            person=person,
+            entities=(graph_data or {}).get("entities", []),
+            flags=_pa_flags,
+            timeline=timeline_data,
+            graph=(graph_data or {}).get("graph"),
+            phones=person.get("phones_found", []),
+            financial_data=assets_data,
+        )
+        sections["pattern_analysis"] = _build_pattern_analysis_section(_pa_result)
+        print(f"[REPORT] Pattern analysis: "
+              f"{sections['pattern_analysis']['pattern_count']} pattern(s), "
+              f"case_type={_pa_result.get('case_type_detected')}")
+        # OPTIONAL narrative — runs AFTER the deterministic patterns exist and is
+        # purely additive. Any failure here leaves all conclusions intact.
+        try:
+            _narr = _generate_pattern_narrative(sections["pattern_analysis"]["patterns"])
+            if _narr:
+                sections["pattern_analysis"]["narrative"] = _narr
+                print("[REPORT] Pattern narrative attached ([AI NARRATIVE]).")
+        except Exception as _narr_exc:
+            print(f"[REPORT] Pattern narrative non-fatal: {_narr_exc}")
+    except Exception as _pae:
+        print(f"[REPORT] Pattern analysis failed (non-fatal): {_pae}")
+        sections["pattern_analysis"] = {
+            "header": "[DETERMINISTIC ANALYSIS] Rule-based pattern detection",
+            "case_type": "undetermined",
+            "content": ("[DETERMINISTIC ANALYSIS] Rule-based pattern detection.\n"
+                        "No significant cross-pattern correlations detected in the available data."),
+            "patterns": [], "pattern_count": 0,
+        }
 
     # Always inject sections 13–17 (Gemini doesn't generate them)
     if "linked_profiles" not in sections:

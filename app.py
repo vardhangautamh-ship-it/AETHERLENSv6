@@ -3734,6 +3734,41 @@ def screen_reports():
     s9 = secs.get("anomalies_and_flags",{})
     _verified_section("09","ANOMALIES AND FLAGS", s9.get("content","None detected"), 0, s9.get("flags",[]))
 
+    # ── §09B PATTERN ANALYSIS (deterministic, rule-based) ─────────────────────
+    s9b = secs.get("pattern_analysis", {})
+    _pa_patterns = s9b.get("patterns", []) or []
+    _ct = str(s9b.get("case_type", "undetermined")).upper()
+    if _pa_patterns:
+        _pa_blocks = ""
+        for _p in _pa_patterns:
+            _trig = "; ".join(_p.get("triggers", []) or [])
+            _srcs = ", ".join(_p.get("sources", []) or [])
+            _pa_blocks += (
+                f'<div class="note" style="margin-top:8px;">'
+                f'<span style="color:var(--purple-100);font-weight:700;">{_p.get("pattern_name","")}</span> '
+                f'<span style="color:var(--text-dim);">[{_p.get("confidence","")}]</span><br>'
+                f'<span style="padding-left:12px;">&rarr; {_p.get("explanation","")}</span>'
+                + (f'<br><span style="padding-left:12px;color:var(--text-dim);font-size:11px;">Triggered by: {_trig}</span>' if _trig else "")
+                + (f'<br><span style="padding-left:12px;color:var(--text-dim);font-size:11px;">Sources: {_srcs}</span>' if _srcs else "")
+                + '</div>'
+            )
+        _pa_body = (
+            f'<div class="note" style="color:var(--text-dim);font-size:11px;">Detected case type: '
+            f'<span style="color:var(--purple-100);">{_ct}</span></div>{_pa_blocks}'
+        )
+    else:
+        _pa_body = '<div class="note">No significant cross-pattern correlations detected in the available data.</div>'
+    # Optional [AI NARRATIVE] — non-factual synthesis; never load-bearing.
+    _pa_narr = s9b.get("narrative", "")
+    if _pa_narr:
+        _pa_body += (
+            '<div style="margin-top:12px;border-top:1px solid #1a1a1a;padding-top:8px;">'
+            '<span class="tag a">AI NARRATIVE</span>'
+            '<div class="note" style="color:var(--purple-100);margin-top:6px;font-style:italic;">'
+            f'{_pa_narr}</div></div>'
+        )
+    _sec("09B","PATTERN ANALYSIS","DETERMINISTIC","v", _pa_body)
+
     s10 = secs.get("data_gaps",{})
     _gap_items = s10.get("items",["None identified"])[:20]
     _gaps_html = "".join(f'<div class="note" style="padding-left:10px;">· {g}</div>' for g in _gap_items)
