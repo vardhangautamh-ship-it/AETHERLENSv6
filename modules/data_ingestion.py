@@ -185,11 +185,44 @@ NAME_STOPWORDS = {
     "Pune", "Nashik", "Nagpur", "Ahmedabad", "Surat", "Jaipur", "Lucknow",
     # Traffic / legal violation terms that appear capitalised in challan CSVs
     # and match the name regex (e.g. "Speeding", "Overloading")
-    "Speeding", "Overspeed", "Overloading", "Violation", "Challan",
+    "Speeding", "Overspeed", "Overspeeding", "Overloading", "Violation",
+    "Challan", "Jumping", "Parking",
     # Operation / investigation title words — never part of a human name
     "Cyber", "Incident", "Inquiry", "Investigation", "Operation",
     "Ghostwire", "Jupiter", "Sector", "Case",
 }
+
+
+def _normalize_name_match(raw: str) -> str | None:
+    """Clean a single RE_NAME capture before it becomes an entity or subject.
+
+    RE_NAME must keep its [ \\t]+ inter-word gap (single-spacing would drop the
+    legitimate double-spaced PDF artifact 'Arjun  Mehta'), so it cannot, by
+    itself, stop an adjacent CSV column from bleeding into the capture. This is
+    the single place every RE_NAME match is cleaned, fixing two confirmed
+    column-bleed artifacts:
+
+      * violation/label column bleed  ->  'Abbas Qureshi Overspeeding'
+      * doubled-name (column restart) ->  'Farhan Abbas Qureshi Farhan'
+
+    Strips trailing noise tokens (NAME_STOPWORDS — cities, violations, labels)
+    and collapses a trailing token that merely repeats an earlier one. Returns
+    the cleaned 2-4 word name, or None if nothing valid survives.
+    """
+    words = raw.split()
+    # Drop trailing noise tokens (e.g. a violation column that bled onto the end).
+    while len(words) > 2 and words[-1] in NAME_STOPWORDS:
+        words.pop()
+    # Collapse a doubled name: a trailing token repeating an earlier token
+    # (case-insensitive) is a column-restart artifact, not part of the name.
+    while len(words) > 2 and words[-1].lower() in {w.lower() for w in words[:-1]}:
+        words.pop()
+    if len(words) < 2:
+        return None
+    # Any remaining stopword (interior bleed) means this was never a clean name.
+    if any(w in NAME_STOPWORDS for w in words):
+        return None
+    return " ".join(words)
 
 # Values that look like names but are actually sheet/column/metadata labels
 FUSION_NAME_SKIPLIST = {
@@ -292,10 +325,13 @@ def extract_subject_name(text: str) -> str | None:
     # PRIORITY 2 — Frequency analysis
     # Skip form-field captions ("Student Name:", "Account Holder:") — a capitalised
     # phrase immediately followed by ':' or '|' is a label, not the subject.
-    candidates = [
-        m.group(1) for m in RE_NAME.finditer(text)
-        if text[m.end():m.end() + 4].lstrip()[:1] not in (":", "|")
-    ]
+    candidates = []
+    for m in RE_NAME.finditer(text):
+        if text[m.end():m.end() + 4].lstrip()[:1] in (":", "|"):
+            continue
+        name = _normalize_name_match(m.group(1))
+        if name:
+            candidates.append(name)
     filtered = [
         n for n in candidates
         if not any(s in n.lower() for s in DOCUMENT_SKIP_LIST)
@@ -598,7 +634,6 @@ def _extract_names(text: str) -> list[dict]:
     seen  = set()
     for m in RE_NAME.finditer(text):
         raw   = m.group().strip()
-        words = raw.split()
         # Structural caption guard: a capitalised phrase immediately followed by
         # ':' or '|' is a FORM-FIELD CAPTION ("Student Name:", "Account Holder:",
         # "Father's Name:", "Nominee:") — never the person. The actual value
@@ -607,18 +642,16 @@ def _extract_names(text: str) -> list[dict]:
         # without enumerating individual label words.
         if text[m.end():m.end() + 4].lstrip()[:1] in (":", "|"):
             continue
-        # Filter stopwords and short single words
-        if any(w in NAME_STOPWORDS for w in words):
+        # Strip column-bleed (violation/label tails, doubled names) and filter
+        # stopwords / short single words via the single canonical normalizer.
+        name = _normalize_name_match(raw)
+        if not name or name in seen:
             continue
-        if len(words) < 2:
-            continue
-        if raw in seen:
-            continue
-        seen.add(raw)
+        seen.add(name)
         found.append({
-            "value":    raw,
+            "value":    name,
             "type":     "name",
-            "ambiguous": len(words) == 2,
+            "ambiguous": len(name.split()) == 2,
             "context":  text[max(0, m.start()-30):m.end()+30].strip(),
         })
     return found

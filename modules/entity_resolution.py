@@ -932,8 +932,17 @@ def is_valid_phone(p: str) -> bool:
     if re.match(r"^\d{1,4}\s+\d+$", cleaned):
         return False
 
-    # Reject IP addresses
-    if re.match(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$", cleaned):
+    # Reject IP addresses (standalone or embedded in a bled-together cell)
+    if re.search(r"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b", cleaned):
+        return False
+
+    # Reject ANPR/CCTV gate codes and similar short hyphenated ID codes — including
+    # when a gate code bleeds together with an adjacent column. e.g. gate 'G3-2302'
+    # + IP '10.44.21.8' collapses to '3-2302 1044218', whose 12 combined digits
+    # otherwise pass the length/domestic checks. A real phone never carries a
+    # 1–2-digit group before a hyphen (real groups are 3+ digits: '022-...',
+    # '+91-98201-...'), so this never rejects a genuine number.
+    if any(re.match(r"^\d{1,2}-\d{2,5}$", t) for t in cleaned.split()):
         return False
 
     # Reject order / invoice / receipt IDs
