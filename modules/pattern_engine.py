@@ -48,16 +48,24 @@ def _detect_case_type(patterns) -> str:
     if not patterns:
         return "undetermined"
     weight = {PR.FINANCIAL: 0, PR.CYBER: 0, PR.GENERAL: 0}
+    strongs = {PR.FINANCIAL: 0, PR.CYBER: 0, PR.GENERAL: 0}
     for p in patterns:
         weight[p.case_type] = weight.get(p.case_type, 0) + (2 if p.confidence == "STRONG" else 1)
+        if p.confidence == "STRONG":
+            strongs[p.case_type] = strongs.get(p.case_type, 0) + 1
 
     typed = {PR.FINANCIAL: weight[PR.FINANCIAL], PR.CYBER: weight[PR.CYBER]}
     best = max(typed.values())
     if best > 0:
-        # tie-break by fixed priority (financial before cyber)
-        for ct in _CASE_PRIORITY:
-            if typed.get(ct, 0) == best:
-                return ct
+        tied = [ct for ct in _CASE_PRIORITY if typed.get(ct, 0) == best]
+        if len(tied) > 1:
+            # Weight tie → the type with more STRONG matches wins (a case that
+            # laundered its proceeds shouldn't read as financial when its
+            # strongest signals are cyber). Only a full tie falls back to the
+            # fixed priority order. Still fully deterministic.
+            best_strong = max(strongs.get(ct, 0) for ct in tied)
+            tied = [ct for ct in tied if strongs.get(ct, 0) == best_strong]
+        return tied[0]
     # only general patterns fired
     return PR.GENERAL
 
@@ -83,11 +91,15 @@ def analyze_ontology(onto) -> dict:
 
 
 def run_pattern_analysis(person, entities=None, flags=None, timeline=None,
-                         graph=None, phones=None, financial_data=None) -> dict:
+                         graph=None, phones=None, financial_data=None, records=None,
+                         texts=None) -> dict:
     """Build the ontology from raw resolver output, then analyze it.
 
     This is the single entry point both report pipelines (FUSION and OSINT) call,
     at the same point, with the same arguments — no per-pipeline special-casing.
+    `records` carries the structured source rows and `texts` the raw narrative
+    text, so dated deletion/legal/comm events keep their dates (HOP 3).
     """
-    onto = build_ontology(person, entities, flags, timeline, graph, phones, financial_data)
+    onto = build_ontology(person, entities, flags, timeline, graph, phones,
+                          financial_data, records, texts)
     return analyze_ontology(onto)

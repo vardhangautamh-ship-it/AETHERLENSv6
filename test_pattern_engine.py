@@ -60,7 +60,9 @@ print("  patterns :", [f"{p.pattern_id}/{p.confidence}" for p in res["patterns"]
 check("result has required keys",
       set(res) >= {"case_type_detected", "patterns", "summary_skeleton"})
 check("patterns fired", len(res["patterns"]) >= 7)
-check("case_type is financial (financial signals dominate)", res["case_type_detected"] == "financial")
+# Weight tie (financial 6 = cyber 6) → the type with more STRONG matches wins
+# (cyber has 3 STRONGs vs financial's 2); fixed priority only breaks a full tie.
+check("case_type is cyber (weight tie -> more STRONG matches wins)", res["case_type_detected"] == "cyber")
 
 # STRONG-first ordering
 ranks = [{"STRONG": 0, "MODERATE": 1, "WEAK": 2}[p.confidence] for p in res["patterns"]]
