@@ -9,6 +9,7 @@ PDF architecture: SimpleDocTemplate.build(onFirstPage=, onLaterPages=)
 """
 
 import io
+import os
 import json
 import re
 import datetime
@@ -2641,6 +2642,56 @@ def _generate_report_inner(
     try:
         from modules.pattern_engine import run_pattern_analysis
         _pa_flags = list(sections.get("anomalies_and_flags", {}).get("flags", []) or [])
+        # Flatten structured source rows from every document so dated deletion/
+        # legal/comm events keep their dates (HOP 3). Empty for OSINT (no docs).
+        _pa_records = [r for _d in (raw_documents or [])
+                       for r in (_d.get("structured_rows") or []) if isinstance(r, dict)]
+        # Raw narrative text (case notes, surveillance logs) — app names and
+        # enforcement references live here, not in the structured rows.
+        _pa_texts = [str(_d.get("raw_text") or _d.get("full_text") or _d.get("text") or "")
+                     for _d in (raw_documents or [])]
+        # ── TEMP DIAGNOSTIC (remove after diagnosis) — PA_DEBUG live-input dump ──
+        if os.environ.get("PA_DEBUG"):
+            _pa_ents = (graph_data or {}).get("entities", [])
+            _pa_graph = (graph_data or {}).get("graph")
+            print("\n========== [PA_DEBUG] LIVE §09B INPUTS TO run_pattern_analysis ==========")
+            print(f"  person.name           : {person.get('confirmed_name') or person.get('name')!r}")
+            print(f"  raw_documents         : {len(raw_documents or [])} doc(s)")
+            for _d in (raw_documents or []):
+                _sr = _d.get("structured_rows") or []
+                _rt = str(_d.get("raw_text") or _d.get("full_text") or _d.get("text") or "")
+                print(f"     - {str(_d.get('filename') or _d.get('name') or '?')[:44]:44} "
+                      f"structured_rows={len(_sr):<4} raw_text_len={len(_rt)}")
+            print(f"  records (total)       : {len(_pa_records)}")
+            _rec_cols = sorted({k for r in _pa_records for k in r.keys()}) if _pa_records else []
+            print(f"     record columns     : {_rec_cols}")
+            print(f"  texts (total)         : {len(_pa_texts)}  nonempty={sum(1 for t in _pa_texts if t.strip())}")
+            _joined = " \n".join(_pa_texts).lower()
+            print(f"     texts has '2023-06-22' : {'2023-06-22' in _joined}")
+            print(f"     texts has 'cert-in'    : {'cert-in' in _joined or 'cert in' in _joined}")
+            print(f"     texts has 'delet'      : {'delet' in _joined}")
+            print(f"  financial_data (assets_data) : {len(assets_data or [])} row(s)")
+            _fd_cols = sorted({k for r in (assets_data or []) if isinstance(r, dict) for k in r.keys()})
+            print(f"     financial columns  : {_fd_cols}")
+            _fd_blob = " ".join(str(v) for r in (assets_data or []) if isinstance(r, dict)
+                                for v in r.values()).lower()
+            print(f"     fin has 'ransom'   : {'ransom' in _fd_blob}")
+            print(f"     fin has 'mixer'    : {'mixer' in _fd_blob}")
+            print(f"     fin has 'offshore' : {'offshore' in _fd_blob}")
+            print(f"  entities (graph_data) : {len(_pa_ents)} node(s)")
+            _ent_types = {}
+            for _e in _pa_ents:
+                _t = str((_e or {}).get('type') or '?')
+                _ent_types[_t] = _ent_types.get(_t, 0) + 1
+            print(f"     entity types       : {_ent_types}")
+            print(f"     org nodes          : {[str((_e or {}).get('label') or (_e or {}).get('name')) for _e in _pa_ents if 'org' in str((_e or {}).get('type','')).lower()]}")
+            try:
+                _gn = _pa_graph.number_of_nodes() if _pa_graph is not None else None
+                _ge = _pa_graph.number_of_edges() if _pa_graph is not None else None
+            except Exception:
+                _gn = _ge = "?"
+            print(f"  graph (graph_data)    : nodes={_gn} edges={_ge} type={type(_pa_graph).__name__}")
+            print("=========================================================================\n")
         _pa_result = run_pattern_analysis(
             person=person,
             entities=(graph_data or {}).get("entities", []),
@@ -2649,6 +2700,8 @@ def _generate_report_inner(
             graph=(graph_data or {}).get("graph"),
             phones=person.get("phones_found", []),
             financial_data=assets_data,
+            records=_pa_records,
+            texts=_pa_texts,
         )
         sections["pattern_analysis"] = _build_pattern_analysis_section(_pa_result)
         print(f"[REPORT] Pattern analysis: "
