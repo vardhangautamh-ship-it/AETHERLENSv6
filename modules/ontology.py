@@ -2555,6 +2555,327 @@ _PA_OFFSHORE = ("uae", "dubai", "singapore", "switzerland", "swiss", "cayman", "
 _PA_DOMESTIC = ("india", "indian", " in ", "domestic")
 _PA_DATE_RE = _pa_re.compile(r"\b(\d{4}-\d{1,2}-\d{1,2})\b")
 
+# ── GENERALITY VOCABULARIES ───────────────────────────────────────────────────
+# Every mapping decision below matches against one of these SETS, never a single
+# literal. To support a new case's wording, add ONE alias to the relevant set —
+# no logic change. All matching is case- and punctuation-insensitive (compare the
+# _pa_token() of both sides), so "Real Estate", "real-estate", "REAL_ESTATE" are
+# equivalent. These describe GENERIC shapes — no case/operation/subject names.
+
+# Graph-node `type` aliases → which typed bucket a flat node belongs to (HOP 1).
+_PA_NODETYPE_ORG = {"organization", "organisation", "org", "company", "entity",
+                    "business", "corp", "corporation", "firm", "ngo", "trust",
+                    "llp", "fze", "pte", "shell", "front", "vendor", "employer"}
+_PA_NODETYPE_PERSON = {"person", "individual", "subject", "name", "people",
+                       "human", "associate", "contact", "alias"}
+_PA_NODETYPE_PROPERTY = {"property", "asset", "realestate", "holding", "land",
+                         "estate", "apartment", "villa", "plot"}
+
+# Org name/notes tokens that signal a shell/front entity (HOP 1/2). Includes
+# corporate-form abbreviations common to offshore shells and money-mixing terms.
+_PA_SHELL_TOKENS = {"shell", "front", "paper company", "fze", "pte", "holdings",
+                    "ventures", "llp", "llc", "ltd", "offshore", "mixer",
+                    "tumbler", "obfuscation", "nominee", "trading", "general trading"}
+
+# ── HOP 2 — transaction column + value vocabularies ───────────────────────────
+# COLUMN-NAME aliases: which raw CSV column supplies each Transaction field. A
+# column matches if its normalised name equals an alias OR contains one (len>=4).
+# Extend by adding one alias token to the relevant set.
+_PA_COL_AMOUNT = {"amount", "amountinr", "amountinrequiv", "amountusd", "amounteur",
+                  "value", "sum", "sumpaid", "total", "totalamount", "transactionamount",
+                  "txnamount", "paid", "amountpaid", "debitamount", "creditamount"}
+_PA_COL_TYPE = {"transactiontype", "txntype", "type", "flow", "txtype", "entrytype",
+                "movement", "drcr", "category", "nature"}
+_PA_COL_DIRECTION = {"direction", "drcr", "debitcredit", "inout"}
+_PA_COL_COUNTERPARTY = {"counterparty", "beneficiary", "recipient", "payee",
+                        "contactname", "remitter", "sender", "party", "destination",
+                        "towhom", "paidto", "receivedfrom"}
+_PA_COL_NOTES = {"notes", "note", "remark", "remarks", "description", "details",
+                 "narration", "purpose", "memo", "comment"}
+_PA_COL_DATE = {"date", "txndate", "transactiondate", "valuedate", "entrydate",
+                "timestamp", "postingdate", "datetime", "normalized", "eventdate"}
+# Financial-CONTEXT column vocabulary — a deposit/investment ledger is
+# unambiguously financial even when a row carries no explicit transaction-type or
+# direction column (its COLUMN NAMES are the signal: investor_ref, promised_return,
+# ledger_code, principal, redemption…). Used by the strict `records` gate so such a
+# ledger deposit is admitted as an inbound transaction, while call / movement /
+# receipt rows (no such columns) stay skipped. Extend by adding one column-name token.
+_PA_COL_FINCTX = {"investor", "investorref", "depositor", "deposit", "ledger",
+                  "ledgercode", "principal", "maturity", "redemption", "promisedreturn",
+                  "returnpct", "scheme", "unitholder", "subscriber", "contribution",
+                  "premium", "instalment", "installment", "folio", "portfolio"}
+# Party-side column vocabulary — the columns that name WHO transacts on the
+# subject side of a money row (the named subject, the account/wallet holder —
+# a front entity or the subject personally). The money-routing graph enrichment
+# links each such named party to the organization the row's money moved through.
+# Extend by adding one column-name token.
+_PA_COL_PARTY = {"subjectname", "accountholder", "walletholder", "acctholder",
+                 "accountname", "holder", "originator", "orderedby"}
+
+# VALUE vocabularies: classify a field's CONTENT by keyword, never by equality.
+# Short tokens (<=3 chars, e.g. "in"/"out") match only as whole words.
+_PA_DIR_OUT = {"out", "wire", "transfer", "remit", "remittance", "withdrawal",
+               "payout", "offshore", "sent", "debit", "payment", "mixer", "split",
+               "disburse", "outflow", "spend", "purchase", "wireout", "paidout"}
+_PA_DIR_IN = {"in", "inflow", "deposit", "receipt", "credit", "collection",
+              "received", "incoming", "fee", "ransom", "investor", "subscription",
+              "inward", "topup", "funding", "contribution"}
+# Foreign / cross-border indicators (reuses the offshore set, adds reach signals).
+_PA_FOREIGN_TOKENS = set(_PA_OFFSHORE) | {"overseas", "abroad", "gulf", "+971",
+                       "+65", "+44", "+880", "+966", "+974", "qatar", "saudi",
+                       "oman", "bahrain", "kuwait", "doha", "abu dhabi", "sharjah",
+                       "international", "cross-border", "crossborder"}
+# Structuring / smurfing indicators (sub-threshold splitting of deposits).
+_PA_STRUCTURING_TOKENS = {"split", "structur", "layering", "smurf", "below threshold",
+                          "sub-threshold", "subthreshold", "tranche", "instalment",
+                          "installment", "partial", "broken", "multiple deposit",
+                          "broken up", "just under"}
+
+# ── HOP 3 — dated events from source rows + encrypted-app recognition ──────────
+# Secure / encrypted messaging + anonymisation apps. Any match → an ENCRYPTED
+# CommChannel. Extend with one app name as new tools appear.
+_PA_ENCRYPTED_APPS = {"protonmail", "proton", "tutanota", "telegram", "signal",
+                      "session", "threema", "wickr", "briar", "silentcircle",
+                      "silent circle", "pgp", "gpg", "element", "olvid", "encrypted"}
+# Canonical names so "proton"/"protonmail" don't count as two platforms.
+_PA_APP_CANON = {"proton": "protonmail", "silent circle": "silentcircle"}
+# VPN / anonymisation indicators (in a value), plus column names that denote a
+# VPN/foreign exit when populated (exit_node, vpn_exit, …).
+_PA_VPN_TOKENS = {"vpn", "tor", "tor browser", "onion", "proxy", "exit node",
+                  "anonymis", "anonymiz", "nordvpn", "expressvpn", "protonvpn",
+                  "mullvad"}
+_PA_COL_EXITNODE = {"exitnode", "vpnexit", "exitcountry", "exitlocation"}
+# Evidence-destruction indicators.
+_PA_DELETION_TOKENS = {"deletion", "deleted", "delete", "wiped", "wipe", "formatted",
+                       "format", "purged", "purge", "anti-forensic", "anti forensic",
+                       "antiforensic", "destroyed", "erased", "scrubbed",
+                       "visibility_change", "logs purged", "account_delete"}
+# Legal-event indicators → kind. Specific kinds (loc/notice/inquiry) before the
+# generic enforcement-agency scan so a notice isn't mislabelled enforcement.
+_PA_LOC_TOKENS = {"lookout", "look out circular", "look-out", "loc issued"}
+_PA_NOTICE_TOKENS = {"notice", "summons", "show cause", "show-cause", "production order"}
+_PA_INQUIRY_TOKENS = {"inquiry", "enquiry", "cert-in", "certin", "probe", "fir",
+                      "ecir", "case registered", "investigation opened"}
+_PA_ENFORCEMENT_AGENCIES = {"dri", "ncb", "ed", "sfio", "cbi", "sebi", "eow",
+                            "income tax", "customs", "enforcement directorate",
+                            "serious fraud", "cyber cell"}
+# Broader enforcement-ACTION indicators (agency names + case/charge markers). Any
+# match → a kind="enforcement" proceeding (the rule counts these toward escalation).
+_PA_ENFORCEMENT_INDICATORS = _PA_ENFORCEMENT_AGENCIES | {
+    "ahtu", "fir", "ecir", "charge sheet", "chargesheet", "prosecution",
+    "passport act", "pmla", "fema", "ndps", "it act", "case registered",
+    "case ref", "raid", "seizure", "seized", "arrest", "complaint registered"}
+# Person-name-ish columns used to build the relationship graph from records.
+_PA_COL_CONTACT = {"contactname", "contact", "peer", "associate", "counterpart",
+                   "party", "peername", "alias", "handler", "supplier"}
+_PA_YEAR_RE = _pa_re.compile(r"\b(19|20)\d{2}\b")
+
+
+def _pa_year_date(text) -> str:
+    """Synthesise a YYYY-01-01 date from the first 4-digit year in text (e.g. a
+    year embedded in an enforcement reference 'SEBI/WTM/2019/2207'). Returns ''
+    when no year is present — never invents one."""
+    m = _PA_YEAR_RE.search(str(text or ""))
+    return f"{m.group(0)}-01-01" if m else ""
+
+
+# High-significance event vocabulary (drives TimelineEvent.significance when the
+# source provides none). Generic operational/enforcement/financial signals.
+_PA_HIGH_SIG_TOKENS = {"delet", "wiped", "wipe", "purge", "anti-forensic", "wire",
+                       "transfer", "offshore", "cross-border", "crossborder", "ransom",
+                       "extortion", "payout", "mixer", "layering", "enforcement",
+                       "raid", "seizure", "seized", "arrest", "summons", "notice",
+                       "lookout", "fir", "ecir", "transit", "smuggl", "forged",
+                       "forgery", "trafficking", "deployed", "exfil", "breach",
+                       "scrape", "unauthor", "cert-in", "certin", "inflow"}
+
+
+def _pa_canon_app(app) -> str:
+    a = _pa_norm(app)
+    return _PA_APP_CANON.get(a, a)
+
+
+def _pa_high_significance(text) -> bool:
+    """True if event text names a materially significant act. Used only to fill a
+    missing significance — never overrides a significance the source already gave."""
+    return _pa_any_token(text, _PA_HIGH_SIG_TOKENS)
+
+
+def _pa_events_from_pairs(pairs) -> tuple:
+    """HOP 3 — derive DATED, typed deletion / legal / comm events from (text, date)
+    pairs sourced from structured ROWS *and* timeline entries (raw-text lines keep
+    their date + context). The date travels WITH the semantic, so it is never lost
+    to a flattened, dateless flag label. Fully general — each pair is classified by
+    keyword over its text against the vocabularies above; a pair with no matching
+    signal contributes nothing (never a fabricated date/event)."""
+    dels, legals, chans, seen_chan = [], [], [], set()
+    for blob, rdate, exit_val in pairs:
+        if not blob:
+            continue
+        if _pa_any_token(blob, _PA_DELETION_TOKENS):
+            dels.append(DeletionEvent(timestamp=rdate, target="", source="record"))
+        if _pa_any_token(blob, _PA_LOC_TOKENS):
+            legals.append(LegalProceeding(status="active", date=rdate, kind="loc", source="record"))
+        if _pa_any_token(blob, _PA_NOTICE_TOKENS):
+            legals.append(LegalProceeding(date=rdate, kind="notice", source="record"))
+        if _pa_any_token(blob, _PA_INQUIRY_TOKENS):
+            legals.append(LegalProceeding(date=rdate, kind="inquiry", source="record"))
+        for ind in _PA_ENFORCEMENT_INDICATORS:
+            if _pa_any_token(blob, (ind,)):
+                agency = ind.upper() if ind in _PA_ENFORCEMENT_AGENCIES else ""
+                # year embedded in a reference (e.g. 'PPT/DEL/2017/0094') when the
+                # line carries no full date — escalation counts distinct YEARS.
+                legals.append(LegalProceeding(agency=agency, date=rdate or _pa_year_date(blob),
+                                              kind="enforcement", source="record"))
+                break
+        for app in _PA_ENCRYPTED_APPS:
+            if _pa_any_token(blob, (app,)):
+                canon = _pa_canon_app(app)
+                if canon not in seen_chan:
+                    seen_chan.add(canon)
+                    chans.append(CommChannel(type=canon, encrypted=True, source="record"))
+        if (_pa_any_token(blob, _PA_VPN_TOKENS) or str(exit_val or "").strip()) and "vpn" not in seen_chan:
+            seen_chan.add("vpn")
+            foreign = _pa_is_foreign(exit_val) or _pa_any_token(blob, _PA_FOREIGN_TOKENS)
+            chans.append(CommChannel(type="vpn", encrypted=False,
+                                     foreign_exit=bool(foreign), source="record"))
+    return dels, legals, chans
+
+
+# Tokens that mark a string as an org/role/description, never a personal name.
+_PA_NON_PERSON_TOKENS = _PA_SHELL_TOKENS | {
+    "desk", "wallet", "collection", "redemption", "conversion", "payment", "fee",
+    "account", "exchange", "deposit", "transfer", "service", "cash", "recruitment",
+    "solutions", "capital", "advisory", "manpower", "pooled", "investor", "victim",
+    "withdrawal", "counter", "agency", "landline", "office", "bank", "company"}
+
+
+def _pa_personish(name) -> bool:
+    """A general, structural 'looks like a real personal name' test: 2-4 words, each
+    Capitalised and letters-only, and free of org/role/description tokens. No name
+    lists — purely structural; used only to seed relationship-graph nodes."""
+    n = str(name or "").strip()
+    words = n.split()
+    if not (4 <= len(n) <= 50) or not (2 <= len(words) <= 4):
+        return False
+    if not all(w[:1].isupper() and _pa_re.match(r"^[A-Za-z.''\-]+$", w) for w in words):
+        return False
+    return not _pa_any_token(n, _PA_NON_PERSON_TOKENS)
+
+
+def _pa_graph_from_records(subject, records, transactions):
+    """Build a relationship graph from structured source rows when no usable graph
+    was supplied upstream. Edges are REAL and subject-centric only: subject↔each
+    communication contact (a person-name column) and subject↔each person who is a
+    transaction counterparty. No inferred associate-to-associate edges are invented
+    (no fabrication). Returns an undirected nx.Graph (empty if no subject)."""
+    G = nx.Graph()
+    s = str(subject or "").strip()
+    if not s:
+        return G
+    G.add_node(s, type="person")
+    for row in records:
+        if not isinstance(row, dict):
+            continue
+        for col, val in row.items():
+            if _pa_token(col) in _PA_COL_CONTACT:
+                nm = str(val or "").strip()
+                if _pa_personish(nm) and _pa_norm(nm) != _pa_norm(s):
+                    G.add_node(nm, type="person")
+                    G.add_edge(s, nm)
+    for t in (transactions or []):
+        cp = (getattr(t, "counterparty", "") or "").strip()
+        if not cp:
+            continue
+        # a person named inside a counterparty label, e.g. "Mule wallet (Farida Sheikh)"
+        m = _pa_re.search(r"\(([^)]+)\)", cp)
+        nm = (m.group(1) if m else cp).strip()
+        if _pa_personish(nm) and _pa_norm(nm) != _pa_norm(s):
+            G.add_node(nm, type="person")
+            G.add_edge(s, nm)
+    return G
+
+
+def _pa_token(s) -> str:
+    """Normalise to a comparable token: lower-case, strip all non-alphanumerics.
+    Makes column/value/type matching case- and punctuation-insensitive."""
+    return _pa_re.sub(r"[^a-z0-9]", "", _pa_norm(s))
+
+
+def _pa_any_token(text, vocab) -> bool:
+    """True if any vocab phrase appears in `text` (both normalised, space-kept).
+    Substring/keyword match over a known vocabulary — not equality to a literal.
+    Short tokens (<=3 chars) match only as whole words to avoid spurious hits."""
+    t = " " + _pa_norm(text) + " "
+    if not t.strip():
+        return False
+    words = {w for w in _pa_re.split(r"[^a-z0-9+]+", t) if w}
+    for v in vocab:
+        vn = _pa_norm(v)
+        if not vn:
+            continue
+        if len(vn) <= 3:
+            if vn in words:
+                return True
+        elif vn in t:
+            return True
+    return False
+
+
+def _pa_pick(row, col_vocab):
+    """HOP 2 — return the value of the first column whose normalised name matches
+    `col_vocab` (exact alias, or contains an alias of length>=4). General column
+    resolution: a new header is supported by adding one alias, not by branching."""
+    if not isinstance(row, dict):
+        return None
+    norm = {_pa_token(k): v for k, v in row.items()}
+    for k, v in norm.items():            # exact-alias pass first (most precise)
+        if k in col_vocab:
+            return v
+    for k, v in norm.items():            # then substring pass for compound headers
+        if any(len(m) >= 4 and m in k for m in col_vocab):
+            return v
+    return None
+
+
+def _pa_has_col(row, col_vocab) -> bool:
+    """True if `row` has ANY column whose normalised name matches `col_vocab`
+    (exact alias, or contains an alias of length>=4). Column-name presence test —
+    used to recognise a financial/deposit ledger by its headers, not its values."""
+    if not isinstance(row, dict):
+        return False
+    for k in row:
+        kt = _pa_token(k)
+        if kt in col_vocab or any(len(m) >= 4 and m in kt for m in col_vocab):
+            return True
+    return False
+
+
+def _pa_classify_direction(*texts) -> str:
+    """Classify money-flow direction from a transaction-type / notes value by
+    keyword vote over the IN/OUT vocabularies. Returns 'in', 'out', or '' (undecided
+    — the caller defaults undecided deposits to 'in', never fabricating an 'out')."""
+    blob = " " + " ".join(_pa_norm(t) for t in texts) + " "
+    words = {w for w in _pa_re.split(r"[^a-z0-9]+", blob) if w}
+
+    def _score(vocab):
+        n = 0
+        for v in vocab:
+            vn = _pa_norm(v)
+            if len(vn) <= 3:
+                if vn in words:
+                    n += 1
+            elif vn in blob:
+                n += 1
+        return n
+
+    out_n, in_n = _score(_PA_DIR_OUT), _score(_PA_DIR_IN)
+    if out_n > in_n:
+        return "out"
+    if in_n > out_n:
+        return "in"
+    return ""
+
 
 def _pa_is_offshore(j) -> bool:
     j = _pa_norm(j)
@@ -2583,21 +2904,91 @@ def _pa_first_date(text) -> str:
     return m.group(1) if m else ""
 
 
+def _pa_build_transaction(t, strict=False):
+    """Map ONE raw row → a Transaction via the shared HOP-2 column vocabularies.
+
+    This is the single transaction mapper used for BOTH the dedicated
+    `financial_data` bucket and the generic structured `records` (where
+    document-panel financial CSVs actually land). Field resolution
+    (amount / direction / counterparty / cross_border / structured) reuses the
+    same synonym & keyword sets — no parallel mapper, no case-specific columns.
+
+    `strict` (used for `records`, which may contain NON-financial rows — call
+    logs, movement/ANPR, ledgers, receipts) accepts a row ONLY when it carries
+    genuine transaction semantics: a positive money amount AND a resolvable
+    money-flow direction (explicit direction column, or a transaction-type/notes
+    value the direction classifier recognises). A row lacking either is returned
+    as None and skipped, never fabricated into a bogus transaction. In permissive
+    mode (the dedicated financial bucket) every row maps, preserving prior
+    behaviour. Returns a Transaction, or None to skip.
+    """
+    type_val = _pa_get(t, "type") or _pa_pick(t, _PA_COL_TYPE) or ""
+    notes_val = _pa_get(t, "notes") or _pa_pick(t, _PA_COL_NOTES) or ""
+    cp_val = (_pa_get(t, "counterparty") or _pa_pick(t, _PA_COL_COUNTERPARTY) or "")
+
+    # direction: an explicit direction value wins; else classify the type/notes.
+    explicit_dir = _pa_norm(_pa_get(t, "direction") or _pa_pick(t, _PA_COL_DIRECTION))
+    if explicit_dir in ("credit", "deposit", "inward", "in", "inflow", "received", "cr"):
+        direction, dir_signal = "in", True
+    elif explicit_dir in ("debit", "withdrawal", "outward", "out", "wire", "sent", "dr"):
+        direction, dir_signal = "out", True
+    else:
+        # The transaction-TYPE value is authoritative for direction; fall back to
+        # notes only when the type is blank/ambiguous, then default to inbound.
+        classified = _pa_classify_direction(type_val) or _pa_classify_direction(notes_val)
+        dir_signal = bool(classified)
+        direction = classified or "in"
+
+    # amount: explicit numeric key, else first amount-synonym column.
+    raw_amt = _pa_get(t, "amount")
+    if raw_amt in (None, "", 0, 0.0):
+        raw_amt = _pa_pick(t, _PA_COL_AMOUNT)
+    try:
+        amount = float(str(raw_amt).replace(",", "")) if raw_amt not in (None, "") else 0.0
+    except (TypeError, ValueError):
+        amount = 0.0
+
+    # STRICT — a `records` row becomes a transaction only with genuine financial
+    # semantics: a positive money amount AND a money-flow signal. The signal is
+    # either a resolved direction (explicit column / transaction-type / notes) OR a
+    # financial-context ledger header (investor_ref, promised_return, ledger_code…),
+    # in which case a bare deposit row defaults to inbound. Rows with neither —
+    # call logs, movement/ANPR, plain receipts — are skipped, never fabricated.
+    fin_ctx = _pa_has_col(t, _PA_COL_FINCTX)
+    if strict and not (amount > 0 and (dir_signal or fin_ctx)):
+        return None
+
+    # cross_border / structured: explicit flag OR keyword over counterparty+notes+type.
+    cross_border = bool(_pa_get(t, "cross_border", False)) or \
+        _pa_any_token(f"{cp_val} {notes_val} {type_val}", _PA_FOREIGN_TOKENS)
+    structured = bool(_pa_get(t, "structured", False)) or \
+        _pa_any_token(f"{type_val} {notes_val}", _PA_STRUCTURING_TOKENS)
+
+    return Transaction(
+        date=str(_pa_get(t, "date") or _pa_pick(t, _PA_COL_DATE) or ""),
+        direction=direction, amount=amount, cross_border=cross_border,
+        counterparty=str(cp_val or ""), structured=structured,
+        source=str(_pa_get(t, "source") or _pa_get(t, "source_file") or ""))
+
+
 def _pa_channels_from_flags(flags) -> list:
-    """Derive CommChannel entries from §09 flag text when not explicitly typed."""
+    """Derive CommChannel entries from §09 flag text when not explicitly typed.
+    Uses the shared encrypted-app vocabulary (_PA_ENCRYPTED_APPS) + VPN tokens, so
+    any known secure app named in a flag yields an encrypted channel."""
     chans, seen = [], set()
     for f in flags:
         fl = _pa_norm(f)
-        for key, ctype, enc in (("protonmail", "protonmail", True), ("proton", "protonmail", True),
-                                 ("telegram", "telegram", True), ("signal", "signal", True),
-                                 ("wickr", "wickr", True), ("threema", "threema", True),
-                                 ("vpn", "vpn", False)):
-            if key in fl and ctype not in seen:
-                seen.add(ctype)
-                foreign_exit = ctype == "vpn" and ("foreign" in fl or "exit" in fl
-                                                   or any(c in fl for c in _PA_OFFSHORE))
-                chans.append(CommChannel(type=ctype, encrypted=enc,
-                                         foreign_exit=foreign_exit, source="flag"))
+        for app in _PA_ENCRYPTED_APPS:
+            if _pa_any_token(fl, (app,)):
+                canon = _pa_canon_app(app)
+                if canon not in seen:
+                    seen.add(canon)
+                    chans.append(CommChannel(type=canon, encrypted=True, source="flag"))
+        if _pa_any_token(fl, _PA_VPN_TOKENS) and "vpn" not in seen:
+            seen.add("vpn")
+            foreign_exit = _pa_any_token(fl, _PA_FOREIGN_TOKENS) or "exit" in fl
+            chans.append(CommChannel(type="vpn", encrypted=False,
+                                     foreign_exit=foreign_exit, source="flag"))
     return chans
 
 
@@ -2631,8 +3022,50 @@ def _pa_deletions_from_flags(flags) -> list:
     return out
 
 
+def _pa_normalize_entities(entities) -> dict:
+    """HOP 1 — accept EITHER shape and return the dict the rest of the builder reads.
+
+    The live pipeline passes a FLAT LIST of graph nodes ([{id,label,type}, …]);
+    the unit tests pass a DICT of typed lists ({organizations:[...], persons:[...],
+    …}). A dict is returned unchanged (tests/other callers unaffected). A list is
+    bucketed by a TYPE-SYNONYM set (case/punctuation-insensitive), never by literal
+    equality, so any node-type wording sorts into the right typed object.
+
+    Nodes whose type is unknown/location are skipped — never fabricated into a
+    typed object. A node with no explicit/blank type is treated as a person, which
+    matches relationship_mapper's default node type.
+    """
+    if isinstance(entities, dict):
+        return entities
+    nodes = _pa_listify(entities)
+    if not nodes:
+        return {}
+    buckets = {"organizations": [], "persons": [], "properties": []}
+    for nd in nodes:
+        name = str(_pa_get(nd, "label", "") or _pa_get(nd, "name", "")
+                   or _pa_get(nd, "id", "") or "").strip()
+        if not name:
+            continue
+        tok = _pa_token(_pa_get(nd, "type", ""))
+        tags = _pa_listify(_pa_get(nd, "tags"))
+        src = str(_pa_get(nd, "source", "") or "graph")
+        if tok in _PA_NODETYPE_ORG or any(k in tok for k in ("org", "compan", "shell", "front")):
+            # Preserve an upstream shell/front type signal; else leave blank for the
+            # org loop to classify from name/tags against _PA_SHELL_TOKENS.
+            otype = tok if tok in ("shell", "front") else ""
+            buckets["organizations"].append(
+                {"name": name, "type": otype, "tags": tags, "source": src})
+        elif tok in _PA_NODETYPE_PROPERTY or "propert" in tok or "asset" in tok:
+            buckets["properties"].append({"jurisdiction": name, "source": src})
+        elif tok in _PA_NODETYPE_PERSON or tok == "" or "person" in tok:
+            buckets["persons"].append({"name": name, "source": src})
+        # else: location / unknown / infrastructure node → intentionally skipped
+    return buckets
+
+
 def build_ontology(person, entities=None, flags=None, timeline=None,
-                   graph=None, phones=None, financial_data=None) -> Ontology:
+                   graph=None, phones=None, financial_data=None, records=None,
+                   texts=None) -> Ontology:
     """THE consolidation point: raw entity-resolution output → typed Ontology.
 
     Defensive by design — every argument is optional and each field is parsed
@@ -2644,15 +3077,25 @@ def build_ontology(person, entities=None, flags=None, timeline=None,
                        anomaly_flags, phones_found, role
       entities       : dict of typed lists (organizations, properties,
                        comm_channels, legal_proceedings, deletion_events, persons)
-                       and/or raw entity dict; missing keys are fine
+                       OR a flat list of {id,label,type} graph nodes (HOP 1)
       flags          : list[str | {'flag':..}] — §09 anomaly flags
       timeline       : {'events':[...]} or list of event dicts
       graph          : the EXISTING NetworkX graph (relationship_mapper)
       phones         : list[str | dict] of phone lines (else person.phones_found)
       financial_data : {'transactions':[...], 'properties':[...]} or list of txns
+      records        : flat list of structured source rows (HOP 3) — the dated
+                       origin for deletion/legal/comm events. When a date column
+                       and the semantic share a row, the date is preserved; flag
+                       text (which is dateless) is only a last-resort fallback.
     """
-    entities = entities or {}
+    entities = _pa_normalize_entities(entities)   # HOP 1: list-or-dict → dict
     person = person or {}
+    # The graph rules (NETWORK_HUB betweenness / articulation, SHELL_LAYERING
+    # neighbour count) reason about CONNECTION, not direction; connected_components
+    # is undirected-only. Normalise a directed graph to an undirected view so those
+    # rules work regardless of how the upstream graph was built. No rule change.
+    if isinstance(graph, nx.DiGraph):
+        graph = graph.to_undirected(as_view=False)
     onto = Ontology(graph=graph)
 
     # ── subject + persons ────────────────────────────────────────────────────
@@ -2697,34 +3140,73 @@ def build_ontology(person, entities=None, flags=None, timeline=None,
             continue
         otype = _pa_norm(_pa_get(o, "type"))
         if otype not in ("shell", "front", "legitimate"):
-            blob = _pa_norm(name) + " " + " ".join(_pa_norm(t) for t in _pa_listify(_pa_get(o, "tags")))
-            otype = ("shell" if "shell" in blob else "front" if "front" in blob else "legitimate")
+            # Classify from name + tags against the shell/front vocabulary (keyword
+            # match over a vocab, not equality to one literal). "front" wins ties.
+            blob = name + " " + " ".join(str(t) for t in _pa_listify(_pa_get(o, "tags")))
+            otype = ("front" if _pa_any_token(blob, ("front", "paper company", "nominee"))
+                     else "shell" if _pa_any_token(blob, _PA_SHELL_TOKENS)
+                     else "legitimate")
         juris = str(_pa_get(o, "jurisdiction", "") or "")
         onto.organizations.append(Organization(
             name=name, type=otype, jurisdiction=juris,
             offshore=bool(_pa_get(o, "offshore", False)) or _pa_is_offshore(juris),
             source=str(_pa_get(o, "source", "") or "")))
 
-    # ── transactions (financial_data) ─────────────────────────────────────────
+    # ── transactions — HOP 2 general column mapping, from BOTH buckets ─────────
+    # Transactions are drawn from the dedicated `financial_data` bucket AND from
+    # the generic structured `records` — because the document-panel financial CSVs
+    # (crypto flows, bank statements, investor ledgers) land in `records`, while
+    # `financial_data` is fed only by the separate asset-upload widget. One shared
+    # mapper (_pa_build_transaction) serves both; `records` is read in STRICT mode
+    # so non-financial rows (call logs, movement/ANPR, receipts) are skipped, not
+    # fabricated. Deduplicated by (date, amount, counterparty, direction) so a row
+    # present in both buckets is counted once.
     fin = financial_data or {}
+    _seen_txn = set()
+
+    def _txn_key(tx):
+        return (_pa_token(tx.date), round(float(tx.amount or 0), 2),
+                _pa_token(tx.counterparty), _pa_norm(tx.direction))
+
+    # 1) dedicated financial bucket — permissive (every row maps, as before).
     for t in _pa_listify(_pa_get(fin, "transactions") if isinstance(fin, dict) else fin):
-        direction = _pa_norm(_pa_get(t, "direction"))
-        if direction in ("credit", "deposit", "inward", "in"):
-            direction = "in"
-        elif direction in ("debit", "withdrawal", "outward", "out", "wire"):
-            direction = "out"
-        else:
-            direction = "in"
-        try:
-            amount = float(_pa_get(t, "amount", 0) or 0)
-        except (TypeError, ValueError):
-            amount = 0.0
-        onto.transactions.append(Transaction(
-            date=str(_pa_get(t, "date", "") or ""), direction=direction, amount=amount,
-            cross_border=bool(_pa_get(t, "cross_border", False)),
-            counterparty=str(_pa_get(t, "counterparty", "") or ""),
-            structured=bool(_pa_get(t, "structured", False)),
-            source=str(_pa_get(t, "source", "") or "")))
+        tx = _pa_build_transaction(t, strict=False)
+        if tx is None:
+            continue
+        onto.transactions.append(tx)
+        _seen_txn.add(_txn_key(tx))
+
+    # 2) generic records — STRICT (skip non-financial rows), dedup vs bucket + self.
+    for r in _pa_listify(records):
+        tx = _pa_build_transaction(r, strict=True)
+        if tx is None:
+            continue
+        k = _txn_key(tx)
+        if k in _seen_txn:
+            continue
+        _seen_txn.add(k)
+        onto.transactions.append(tx)
+
+    # ── counterparty → Organization enrichment (HOP 2) ─────────────────────────
+    # The entity money is routed THROUGH (mixer, offshore exchange, shell company)
+    # often appears only as a transaction counterparty, never as a graph node. Add
+    # it as a typed Organization when its name matches the shell/front or foreign
+    # vocabularies — keyword-driven, no case-specific names, no fabrication of a
+    # company where the counterparty text gives no such signal.
+    _seen_orgs = {_pa_token(o.name) for o in onto.organizations}
+    for t in onto.transactions:
+        cp = (t.counterparty or "").strip()
+        if not cp or _pa_token(cp) in _seen_orgs:
+            continue
+        is_shell = _pa_any_token(cp, _PA_SHELL_TOKENS)
+        is_foreign = _pa_any_token(cp, _PA_FOREIGN_TOKENS)
+        if not (is_shell or is_foreign):
+            continue
+        otype = ("front" if _pa_any_token(cp, ("front", "paper company", "nominee"))
+                 else "shell" if is_shell else "legitimate")
+        onto.organizations.append(Organization(
+            name=cp, type=otype, jurisdiction="", offshore=is_foreign, source="counterparty"))
+        _seen_orgs.add(_pa_token(cp))
 
     # ── properties (financial_data or entities) ───────────────────────────────
     prop_src = (_pa_get(fin, "properties") if isinstance(fin, dict) else None) \
@@ -2736,17 +3218,109 @@ def build_ontology(person, entities=None, flags=None, timeline=None,
             foreign=bool(_pa_get(p, "foreign", False)) or _pa_is_foreign(juris),
             source=str(_pa_get(p, "source", "") or "")))
 
-    # ── comm channels (explicit entities, else derived from flags) ────────────
+    # ── Relationship graph: build from records when none supplied upstream ─────
+    # The graph rules (NETWORK_HUB, SHELL_LAYERING_NETWORK) need a populated graph;
+    # if the upstream graph is empty (e.g. the CDR builder didn't recognise this
+    # file's columns), assemble a subject-centric one from the source rows. Real
+    # edges only — no invented associate-to-associate links.
+    if onto.graph is None or onto.graph.number_of_nodes() == 0:
+        _built = _pa_graph_from_records(onto.subject_name, _pa_listify(records), onto.transactions)
+        if _built.number_of_nodes() > 1:
+            onto.graph = _built
+
+    # ── money-routing graph enrichment — orgs the money moved through ─────────
+    # SHELL_LAYERING_NETWORK is a GRAPH rule: it needs the offshore shell to be a
+    # graph node whose neighbours are the parties routing money through it. Those
+    # parties are genuinely named ON the transaction rows themselves — the
+    # counterparty column names the org, and the party-side columns (subject_name,
+    # account_holder, wallet_holder…) name who moved the money. Add one node per
+    # organization that appears as a row's counterparty, and one edge per named
+    # party on that row. Row-grounded edges only — no associate-to-associate links
+    # are invented, and no edge exists without a source row naming both ends.
+    # Node kind is stored under `node_type`, the relationship_mapper convention
+    # used by the live graph (its nodes carry `node_type`, not `type`).
+    _org_by_token = {_pa_token(o.name): o for o in onto.organizations if o.name}
+    if _org_by_token:
+        _g = onto.graph if isinstance(onto.graph, nx.Graph) else nx.Graph()
+        _node_by_token = {_pa_token(n): n for n in _g.nodes}
+        _money_rows = list(_pa_listify(records)) + \
+            _pa_listify(_pa_get(fin, "transactions") if isinstance(fin, dict) else fin)
+        _added_edge = False
+        for row in _money_rows:
+            if not isinstance(row, dict):
+                continue
+            cp = str(_pa_get(row, "counterparty")
+                     or _pa_pick(row, _PA_COL_COUNTERPARTY) or "").strip()
+            org = _org_by_token.get(_pa_token(cp)) if cp else None
+            if org is None:
+                continue
+            org_node = _node_by_token.get(_pa_token(org.name))
+            if org_node is None:
+                org_node = org.name
+                _g.add_node(org_node, node_type="organization")
+                _node_by_token[_pa_token(org.name)] = org_node
+            for col, val in row.items():
+                if _pa_token(col) not in _PA_COL_PARTY:
+                    continue
+                party = str(val or "").strip()
+                if not party or _pa_token(party) == _pa_token(org.name):
+                    continue
+                pnode = _node_by_token.get(_pa_token(party))
+                if pnode is None:
+                    pnode = party
+                    _g.add_node(pnode, node_type=(
+                        "person" if _pa_personish(party) else "entity"))
+                    _node_by_token[_pa_token(party)] = pnode
+                _g.add_edge(pnode, org_node)
+                _added_edge = True
+        if _added_edge and (onto.graph is None or onto.graph.number_of_nodes() == 0):
+            onto.graph = _g
+
+    # ── HOP 3: dated comm/legal/deletion events from SOURCE ROWS + TIMELINE ────
+    # Priority order for each category: explicit typed entities → records/timeline
+    # (dated, rich) → flag text (dateless, last resort). The date travels with the
+    # semantic so date-correlated rules (e.g. ANTI_FORENSIC) keep working.
+    _evpairs = []
+    for row in _pa_listify(records):
+        if not isinstance(row, dict):
+            continue
+        vals = [str(v) for v in row.values() if str(v).strip() not in ("", "None", "nan")]
+        blob = " ".join(vals)
+        rdate = _pa_first_date(str(_pa_pick(row, _PA_COL_DATE) or "")) or _pa_first_date(blob)
+        _evpairs.append((blob, rdate, _pa_pick(row, _PA_COL_EXITNODE)))
+    _tl_raw = _pa_get(timeline, "events") if isinstance(timeline, dict) else timeline
+    for ev in _pa_listify(_tl_raw):
+        desc = (_pa_get(ev, "description") or _pa_get(ev, "context")
+                or _pa_get(ev, "event") or "")
+        edate = _pa_first_date(str(_pa_get(ev, "date") or _pa_get(ev, "normalized")
+                                   or _pa_pick(ev, _PA_COL_DATE) or ""))
+        if desc:
+            _evpairs.append((str(desc), edate, None))
+    # Raw narrative text (case notes, surveillance logs): scan LINE BY LINE so an
+    # app name / enforcement reference keeps any date (or embedded year) on its line.
+    for txt in _pa_listify(texts):
+        for line in str(txt or "").splitlines():
+            line = line.strip()
+            if line:
+                _evpairs.append((line, _pa_first_date(line), None))
+    rec_dels, rec_legals, rec_chans = _pa_events_from_pairs(_evpairs)
+
+    # ── comm channels (explicit entities → records → flags) ───────────────────
     explicit_chans = _pa_listify(_pa_get(entities, "comm_channels") or _pa_get(entities, "channels"))
     for c in explicit_chans:
         onto.comm_channels.append(CommChannel(
             type=_pa_norm(_pa_get(c, "type")), encrypted=bool(_pa_get(c, "encrypted", False)),
             foreign_exit=bool(_pa_get(c, "foreign_exit", False)),
             source=str(_pa_get(c, "source", "") or "")))
+    _have = {c.type for c in onto.comm_channels}
+    for c in rec_chans:
+        if c.type not in _have:
+            _have.add(c.type)
+            onto.comm_channels.append(c)
     if not onto.comm_channels:
         onto.comm_channels = _pa_channels_from_flags(onto.flags)
 
-    # ── legal proceedings (explicit, else derived from flags) ─────────────────
+    # ── legal proceedings (explicit → records → flags) ────────────────────────
     explicit_legal = _pa_listify(_pa_get(entities, "legal_proceedings")
                                  or _pa_get(entities, "proceedings"))
     for lp in explicit_legal:
@@ -2754,25 +3328,64 @@ def build_ontology(person, entities=None, flags=None, timeline=None,
             agency=str(_pa_get(lp, "agency", "") or ""), status=_pa_norm(_pa_get(lp, "status")),
             date=str(_pa_get(lp, "date", "") or ""), case_ref=str(_pa_get(lp, "case_ref", "") or ""),
             kind=_pa_norm(_pa_get(lp, "kind")), source=str(_pa_get(lp, "source", "") or "")))
+    onto.legal_proceedings.extend(rec_legals)
     if not onto.legal_proceedings:
         onto.legal_proceedings = _pa_legal_from_flags(onto.flags)
 
-    # ── deletion events (explicit, else derived from flags) ───────────────────
+    # ── deletion events (explicit → records → flags) ──────────────────────────
     explicit_del = _pa_listify(_pa_get(entities, "deletion_events"))
     for de in explicit_del:
         onto.deletion_events.append(DeletionEvent(
             timestamp=str(_pa_get(de, "timestamp", "") or _pa_get(de, "date", "") or ""),
             target=str(_pa_get(de, "target", "") or ""), source=str(_pa_get(de, "source", "") or "")))
+    onto.deletion_events.extend(rec_dels)
     if not onto.deletion_events:
         onto.deletion_events = _pa_deletions_from_flags(onto.flags)
 
-    # ── timeline events ───────────────────────────────────────────────────────
+    # ── timeline events (general field resolution: normalized/context/…) ───────
     tl_events = _pa_get(timeline, "events") if isinstance(timeline, dict) else timeline
     for ev in _pa_listify(tl_events):
+        edate = (_pa_get(ev, "date") or _pa_get(ev, "normalized")
+                 or _pa_pick(ev, _PA_COL_DATE) or "")
+        edesc = (_pa_get(ev, "description") or _pa_get(ev, "event")
+                 or _pa_get(ev, "context") or "")
+        esig = (_pa_get(ev, "significance") or _pa_get(ev, "importance")
+                or _pa_get(ev, "severity") or "")
+        # Fill a MISSING significance by keyword (never overrides a supplied one),
+        # so timeline-cluster detection works on sources that don't pre-score events.
+        if not str(esig).strip():
+            esig = "HIGH" if _pa_high_significance(edesc) else "LOW"
         onto.timeline_events.append(TimelineEvent(
-            date=str(_pa_get(ev, "date", "") or ""),
-            significance=str(_pa_get(ev, "significance", "") or _pa_get(ev, "importance", "") or "LOW"),
-            source=str(_pa_get(ev, "source", "") or ""),
-            description=str(_pa_get(ev, "description", "") or _pa_get(ev, "event", "") or "")))
+            date=str(edate or ""), significance=str(esig or "LOW"),
+            source=str(_pa_get(ev, "source", "") or ""), description=str(edesc or "")))
+
+    # ── TEMP DIAGNOSTIC (remove after diagnosis) — env-gated, no logic change ──
+    import os as _os
+    if _os.environ.get("PA_DEBUG"):
+        print("\n========== [PA_DEBUG] build_ontology() POPULATED ONTOLOGY ==========")
+        print(f"  subject_name   : {onto.subject_name!r}")
+        print(f"  arg types      : entities={type(entities).__name__} "
+              f"financial_data={type(financial_data).__name__} "
+              f"flags={type(flags).__name__} phones={type(phones).__name__}")
+        print(f"  counts         : {onto.counts()}")
+        print(f"  PhoneNumbers   ({len(onto.phones)}): "
+              f"{[(p.number, p.type) for p in onto.phones]}")
+        print(f"  Organizations  ({len(onto.organizations)}): "
+              f"{[(o.name, o.type, o.jurisdiction, o.offshore) for o in onto.organizations]}")
+        print(f"  Transactions   ({len(onto.transactions)}): "
+              f"{[(t.direction, t.amount, t.cross_border, t.structured) for t in onto.transactions]}")
+        print(f"  Properties     ({len(onto.properties)}): "
+              f"{[(p.jurisdiction, p.foreign) for p in onto.properties]}")
+        print(f"  CommChannels   ({len(onto.comm_channels)}): "
+              f"{[(c.type, c.encrypted, c.foreign_exit) for c in onto.comm_channels]}")
+        print(f"  LegalProceed.  ({len(onto.legal_proceedings)}): "
+              f"{[(lp.kind, lp.agency, lp.status, lp.date) for lp in onto.legal_proceedings]}")
+        print(f"  DeletionEvents ({len(onto.deletion_events)}): "
+              f"{[(d.timestamp, d.target) for d in onto.deletion_events]}")
+        print(f"  TimelineEvents ({len(onto.timeline_events)}): "
+              f"{[(e.date, e.significance) for e in onto.timeline_events][:8]}")
+        print(f"  flags ({len(onto.flags)}): {onto.flags}")
+        print("===================================================================\n")
+    # ── END TEMP DIAGNOSTIC ──────────────────────────────────────────────────
 
     return onto
