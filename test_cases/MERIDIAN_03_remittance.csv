@@ -1,0 +1,7 @@
+date,subject_name,transaction_type,amount_inr,counterparty,destination_country,cross_border,notes
+2024-02-10,Kabir Anwar Farhadi,remittance_out,45000,Overseas Agent A,Bangladesh,yes,client placement fee
+2024-02-24,Kabir Anwar Farhadi,remittance_out,38000,Overseas Agent A,Bangladesh,yes,client placement fee
+2024-03-15,Kabir Anwar Farhadi,remittance_out,42000,Overseas Agent A,Bangladesh,yes,document supplier settlement
+2024-04-06,Kabir Anwar Farhadi,remittance_out,36000,Overseas Agent A,Bangladesh,yes,client placement fee
+2024-04-28,Kabir Anwar Farhadi,remittance_out,49000,Overseas Agent A,Bangladesh,yes,document supplier settlement
+2024-05-19,Kabir Anwar Farhadi,remittance_out,40000,Overseas Agent A,Bangladesh,yes,client placement fee

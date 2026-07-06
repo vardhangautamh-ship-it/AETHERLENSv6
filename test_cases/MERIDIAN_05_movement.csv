@@ -1,0 +1,5 @@
+date,time,subject_name,location,movement_type,vehicle,checkpoint_code,notes
+2024-03-15,05:40,Kabir Anwar Farhadi,Petrapole land port,ROAD_TRANSIT,AS01 KF 4410,CP-3315,client convoy staging
+2024-04-12,06:10,Kabir Anwar Farhadi,Hili border checkpost,TRANSIT,AS01 KF 4410,CP-4412,crossing recce
+2024-05-20,23:05,Kabir Anwar Farhadi,Changrabandha crossing,STAGING,AS01 KF 4410,CP-5520,overnight staging
+2024-06-18,04:20,Kabir Anwar Farhadi,Barpeta exit transit hub,DROP_OFF,AS01 KF 4410,CP-6618,client handover
