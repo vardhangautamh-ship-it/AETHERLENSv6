@@ -3185,4 +3185,9 @@ def _generate_report_inner(
         "subject":      subject,
         "mode":         mode,
         "user_id":      user_id,
+        # The typed case ontology (Phase 0.5 backbone). Kept in-process only —
+        # it carries a live NetworkX graph and is not serialised into the PDF.
+        # The Phase 2/4 cross-subject features (data_mining, advanced_intel,
+        # predictive) read it; None when pattern analysis could not build it.
+        "ontology":     _onto,
     }

@@ -1278,8 +1278,9 @@ try {
         # ── Intelligence nav ──
         st.markdown(sidebar_section_label("INTELLIGENCE"), unsafe_allow_html=True)
         int_nav = [
-            ("reports_center", "REPORTS CENTER"),
-            ("reports",        "REPORT VIEWER"),
+            ("cross_case_intel", "CROSS-CASE INTEL"),
+            ("reports_center",   "REPORTS CENTER"),
+            ("reports",          "REPORT VIEWER"),
         ]
         if role == config.ROLE_ADMIN:
             int_nav.append(("audit_center", "AUDIT CENTER"))
@@ -3429,6 +3430,15 @@ def _generate_and_store(mode: str):
         print(f"[REPORT] Complete — sections={len(rd.get('sections',{}))} gemini={rd.get('gemini_used')}")
         st.session_state.report_data = rd
         st.session_state.pipeline_person = person
+        # ── Cross-case library (Phase 1.5/2/4) ───────────────────────────────
+        # Keep each completed analysis so the CROSS-CASE INTEL screen can run
+        # prioritisation, watchlist, mining, dismantling, and predictive over
+        # the real analysed set. Keyed by subject so re-running one case
+        # updates rather than duplicates it. In-session only.
+        try:
+            _add_to_case_library(rd)
+        except Exception as _cle:
+            print(f"[REPORT] case-library update non-fatal: {_cle}")
         st.session_state.active_screen = "reports"
         st.rerun()
     except Exception as e:
@@ -5422,6 +5432,165 @@ def screen_geo_map():
 # REPORTS CENTER
 # ─────────────────────────────────────────────────────────────────────────────
 
+# ─────────────────────────────────────────────────────────────────────────────
+# CROSS-CASE INTELLIGENCE  (Phase 1.5 / 2 / 4 — decision support, human review)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _add_to_case_library(rd: dict):
+    """Append a completed analysis to the in-session cross-case library, keyed
+    by subject so re-running a case updates rather than duplicates it. Stores
+    the section dicts (for prioritisation/watchlist) and the typed ontology
+    (for mining/graph/predictive). In-session only — nothing persisted."""
+    if not isinstance(rd, dict):
+        return
+    lib = st.session_state.setdefault("case_library", [])
+    subject = str(rd.get("subject") or "Unknown Subject")
+    entry = {"subject": subject, "sections": rd.get("sections") or {},
+             "ontology": rd.get("ontology"), "mode": rd.get("mode", ""),
+             "generated_at": rd.get("generated_at", "")}
+    for i, e in enumerate(lib):
+        if e.get("subject") == subject:
+            lib[i] = entry
+            return
+    lib.append(entry)
+
+
+def _notice_box(text: str):
+    st.markdown(
+        f'<div style="border-left:3px solid #D97706;background:#D9770610;'
+        f'padding:10px 14px;margin:8px 0;font-size:0.75rem;color:#B45309;'
+        f'font-family:\'JetBrains Mono\',monospace;line-height:1.5;">{text}</div>',
+        unsafe_allow_html=True)
+
+
+def screen_cross_case_intel():
+    screen_header("CROSS-CASE INTEL",
+                  "Prioritisation · Watchlist · Network mining · Dismantling · Predictive — decision support, human review")
+    lib = st.session_state.get("case_library", [])
+
+    st.markdown(
+        '<div style="border:1px solid #DC2626;background:#DC262610;padding:12px 16px;'
+        'margin-bottom:14px;font-size:0.78rem;color:#B91C1C;font-family:\'JetBrains Mono\',monospace;">'
+        'DECISION SUPPORT ONLY — Every output on this screen is an evidence-cited '
+        'suggestion for a human officer to weigh. Nothing here authorises, directs, '
+        'or determines any action or any finding of guilt. Prioritisation is '
+        'evidence-based (documents, numbers, behaviour) — no nationality, ethnicity, '
+        'or religion is used.</div>', unsafe_allow_html=True)
+
+    cols = st.columns([3, 1])
+    with cols[0]:
+        st.markdown(f'**{len(lib)} analysed case(s) in this session\'s library:** '
+                    + (", ".join(e["subject"] for e in lib) if lib else "_none yet_"))
+    with cols[1]:
+        if lib and st.button("CLEAR LIBRARY", use_container_width=True):
+            st.session_state["case_library"] = []
+            st.rerun()
+
+    if not lib:
+        st.markdown('<div class="info-msg">No analysed cases yet. Run FUSION analyses and '
+                    'generate reports — each completed report is added here automatically. '
+                    'Cross-subject features need at least two cases.</div>',
+                    unsafe_allow_html=True)
+        if st.button("GO TO FUSION"):
+            st.session_state.active_screen = "fusion"; st.rerun()
+        return
+
+    cases_for_mining = [{"subject": e["subject"], "ontology": e["ontology"]}
+                        for e in lib if e.get("ontology") is not None]
+    cases_for_targeting = [{"subject": e["subject"], "sections": e["sections"]}
+                           for e in lib]
+
+    t_pri, t_watch, t_mine, t_dismantle, t_predict = st.tabs(
+        ["PRIORITISATION", "WATCHLIST", "NETWORK MINING",
+         "DISMANTLING", "PREDICTIVE"])
+
+    # ── Phase 1.5 Step 10 — prioritisation + target packages ──────────────────
+    with t_pri:
+        from modules.targeting import prioritize_cases, render_target_package
+        res = prioritize_cases(cases_for_targeting)
+        _notice_box(res["authorisation_notice"])
+        for e in res["prioritised"]:
+            st.markdown(f"**{e['rank']}. {e['subject']}** — {e['basis']}")
+        if res.get("skipped"):
+            st.caption(f"{res['skipped']} malformed case(s) skipped — not ranked, not guessed.")
+        st.markdown("---")
+        subs = [p["subject"] for p in res["packages"]]
+        if subs:
+            pick = st.selectbox("Target package (for officer review):", subs, key="cci_pkg")
+            pkg = next((p for p in res["packages"] if p["subject"] == pick), None)
+            if pkg:
+                st.code(render_target_package(pkg), language=None)
+
+    # ── Phase 1.5 Step 11 — dynamic watchlist ─────────────────────────────────
+    with t_watch:
+        from modules.targeting import build_watchlist, render_watchlist
+        prev = st.session_state.get("cci_prev_watchlist")
+        wl = build_watchlist(cases_for_targeting, previous=prev)
+        st.session_state["cci_prev_watchlist"] = wl
+        _notice_box(wl["legal_basis_notice"])
+        st.code(render_watchlist(wl), language=None)
+
+    # ── Phase 2 Steps 12/13 — cross-subject mining ────────────────────────────
+    with t_mine:
+        if len(cases_for_mining) < 2:
+            st.markdown('<div class="info-msg">Network mining needs at least two cases '
+                        'that carry a typed ontology (generated on this build).</div>',
+                        unsafe_allow_html=True)
+        else:
+            from modules.data_mining import (mine_case_set, render_mining_result,
+                                             run_all_specialised_miners,
+                                             render_specialised_result)
+            mined = mine_case_set(cases_for_mining)
+            _notice_box(mined["mining_notice"])
+            st.markdown(f"**{mined['cluster_count']} cluster(s), {mined['link_count']} cited link(s) "
+                        f"across {mined['subject_count']} subject(s).**")
+            st.code(render_mining_result(mined), language=None)
+            st.markdown("##### Specialised miners")
+            allm = run_all_specialised_miners(cases_for_mining)
+            for name, r in allm.items():
+                if r["flagged_count"]:
+                    with st.expander(f"{name.replace('_',' ').title()} — "
+                                     f"{r['flagged_count']} flagged, {r['ring_count']} ring(s)"):
+                        st.code(render_specialised_result(r), language=None)
+
+    # ── Phase 4 Step 14 — network-dismantling suggestions ─────────────────────
+    with t_dismantle:
+        if len(cases_for_mining) < 2:
+            st.markdown('<div class="info-msg">Dismantling suggestions need a mined network '
+                        '(two or more cases with a typed ontology).</div>',
+                        unsafe_allow_html=True)
+        else:
+            from modules.data_mining import mine_case_set
+            from modules.advanced_intel import (suggest_network_dismantling,
+                                                render_dismantling_suggestions)
+            sugg = suggest_network_dismantling(mine_case_set(cases_for_mining))
+            _notice_box(sugg["dismantling_notice"])
+            st.code(render_dismantling_suggestions(sugg), language=None)
+
+    # ── Phase 4 Step 15 — bounded predictive elements ─────────────────────────
+    with t_predict:
+        from modules.predictive import predict_from_ontology, render_predictions
+        any_onto = False
+        for e in lib:
+            if e.get("ontology") is None:
+                continue
+            any_onto = True
+            pred = predict_from_ontology(e["ontology"])
+            with st.expander(f"{e['subject']} — {pred['prediction_count']} projection(s), "
+                             f"{len(pred['not_built'])} not built"):
+                if pred["prediction_count"] == 0 and not pred["not_built"]:
+                    st.caption("No recurrence in cited dated evidence.")
+                st.code(render_predictions(pred), language=None)
+        if any_onto:
+            _notice_box(
+                "SPECULATIVE — FOR HUMAN REVIEW ONLY: projections extrapolate an "
+                "already-demonstrated, dated behaviour by one interval. Weak and "
+                "non-determinative; not a prediction that anything will occur.")
+        else:
+            st.markdown('<div class="info-msg">Predictive elements need a case with a typed '
+                        'ontology carrying dated transactions.</div>', unsafe_allow_html=True)
+
+
 def screen_reports_center():
     screen_header("REPORTS CENTER", "All generated reports · Filter · Preview · Download · Compliance score")
     try:
@@ -5614,6 +5783,7 @@ def screen_dashboard():
     elif screen == "timeline":           screen_timeline()
     elif screen == "heatmap":            screen_heatmap()
     elif screen == "geo_map":            screen_geo_map()
+    elif screen == "cross_case_intel":   screen_cross_case_intel()
     elif screen == "reports_center":     screen_reports_center()
     elif screen == "reports":            screen_reports()
     elif screen == "audit_center":       screen_audit_center()
