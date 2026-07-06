@@ -3779,6 +3779,21 @@ def screen_reports():
         )
     _sec("09B","PATTERN ANALYSIS","DETERMINISTIC","v", _pa_body)
 
+    # ── §09C IMMIGRATION VIOLATION PROFILE (only when indicators fired) ────────
+    s9c = secs.get("immigration_profile")
+    if isinstance(s9c, dict) and s9c.get("items"):
+        _ic_lines = "".join(
+            f'<div class="note" style="padding-left:6px;'
+            + ('color:var(--text-dim);font-size:11px;' if _it.strip().startswith(("evidence:","sources:","RISK","EVIDENCE-BASED")) else '')
+            + f'">{_it}</div>'
+            for _it in s9c.get("items", [])
+        )
+        _ic_body = (
+            f'<div class="note" style="color:var(--text-dim);font-size:11px;">'
+            f'{s9c.get("content","")}</div>{_ic_lines}'
+        )
+        _sec("09C","IMMIGRATION VIOLATION PROFILE","DETERMINISTIC","v", _ic_body)
+
     s10 = secs.get("data_gaps",{})
     _gap_items = s10.get("items",["None identified"])[:20]
     _gaps_html = "".join(f'<div class="note" style="padding-left:10px;">· {g}</div>' for g in _gap_items)
