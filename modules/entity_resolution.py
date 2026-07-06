@@ -883,36 +883,67 @@ PHONE_REGEX = re.compile(
 )
 
 
+# One email regex + skip-domain set for BOTH the extractor and the source map —
+# admission logic is identical, so an email always has a per-file attribution.
+_EMAIL_RE = re.compile(
+    r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}",
+    re.IGNORECASE,
+)
+_EMAIL_SKIP_DOMAINS = {
+    "openai.com", "anthropic.com", "x.ai", "google.com",
+    "billing.anthropic.com", "console.x.ai", "cloud.google.com",
+    "noreply", "example.com", "mailer.com", "no-reply",
+    "amazonaws.com", "sendgrid.net", "mailchimp.com",
+}
+
+
 def extract_all_emails(raw_documents: list) -> list:
     """
     Extract unique email addresses from structured rows and raw text.
     Skips service/billing domains so only the subject's own emails are returned.
     """
-    EMAIL_RE = re.compile(
-        r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}",
-        re.IGNORECASE,
-    )
-    SKIP_DOMAINS = {
-        "openai.com", "anthropic.com", "x.ai", "google.com",
-        "billing.anthropic.com", "console.x.ai", "cloud.google.com",
-        "noreply", "example.com", "mailer.com", "no-reply",
-        "amazonaws.com", "sendgrid.net", "mailchimp.com",
-    }
     found: set = set()
     for doc in (raw_documents or []):
         # Structured rows
         for row in doc.get("structured_rows", []):
             for val in row.values():
-                for m in EMAIL_RE.findall(str(val)):
+                for m in _EMAIL_RE.findall(str(val)):
                     domain = m.split("@")[-1].lower()
-                    if not any(sd in domain for sd in SKIP_DOMAINS):
+                    if not any(sd in domain for sd in _EMAIL_SKIP_DOMAINS):
                         found.add(m.lower())
         # Raw text
-        for m in EMAIL_RE.findall(str(doc.get("raw_text", ""))):
+        for m in _EMAIL_RE.findall(str(doc.get("raw_text", ""))):
             domain = m.split("@")[-1].lower()
-            if not any(sd in domain for sd in SKIP_DOMAINS):
+            if not any(sd in domain for sd in _EMAIL_SKIP_DOMAINS):
                 found.add(m.lower())
     return list(found)
+
+
+def build_email_source_map(raw_documents: list) -> dict:
+    """
+    Returns {email(lowercase): [filename, ...]} mapping each extracted email to
+    the document(s) it appears in. Same admission logic as extract_all_emails
+    (one regex, one skip set). Used for per-file source attribution in §14 —
+    the email counterpart of build_phone_source_map.
+    """
+    src_map: dict = {}
+    for doc in safe_list(raw_documents):
+        if not isinstance(doc, dict):
+            continue
+        fname = safe_str(doc.get("filename", "")) or "unknown file"
+        blobs = [
+            safe_str(val)
+            for row in safe_list(doc.get("structured_rows", []))
+            if isinstance(row, dict)
+            for val in row.values()
+        ]
+        blobs.append(safe_str(doc.get("raw_text", "")))
+        for blob in blobs:
+            for m in _EMAIL_RE.findall(blob):
+                domain = m.split("@")[-1].lower()
+                if not any(sd in domain for sd in _EMAIL_SKIP_DOMAINS):
+                    src_map.setdefault(m.lower(), set()).add(fname)
+    return {e: sorted(s) for e, s in src_map.items()}
 
 
 # ── Single phone validator — one source of truth for every phone path ─────────
@@ -1375,6 +1406,8 @@ def resolve_entity_from_multiple_docs(raw_documents: list) -> tuple[dict, str]:
             if e not in existing:
                 existing.add(e)
         person["emails_found"] = list(existing)
+    # Per-file source attribution for §14 report rendering (mirrors phones)
+    person["email_sources"] = build_email_source_map(raw_documents)
 
     # Permanent: conflict detection across all sources
     if primary_name != "Unknown Subject":
@@ -1795,8 +1828,19 @@ def detect_all_conflicts(
 
     seen_variants: set = set()
     _primary_key = normalize_name_key(primary_name)
+    # RC-02: every variant candidate goes through the SINGLE canonical name
+    # normaliser before comparison, whatever path built the entities list —
+    # a leading role word ("Subject Arjun Mehta") or trailing column bleed is
+    # stripped here even when the caller assembled names without ingestion.
+    try:
+        from modules.data_ingestion import _normalize_name_match as _nnm
+    except Exception:
+        _nnm = lambda s: s
     for source, names in names_by_source.items():
         for name in names:
+            name = _nnm(str(name)) or ""
+            if not name:
+                continue
             # Case/whitespace-insensitive self-exclusion: "ARJUN MEHTA" is the
             # SAME identity as "Arjun Mehta" and must never raise a false
             # NAME_CONFLICT against the primary (Fix 4).

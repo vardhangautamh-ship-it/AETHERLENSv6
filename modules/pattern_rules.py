@@ -37,6 +37,8 @@ getattr + safe defaults, so partially-populated ontologies never raise.
                                            #   kind, source
   onto.deletion_events  : [DeletionEvent]  # timestamp, target, source
   onto.timeline_events  : [TimelineEvent]  # date, significance, source, descr
+  onto.locations        : [Location]       # name, kind, source (Phase 1:
+                                           #   BORDER_MOVEMENT_CLUSTER reads it)
 
 Entity attribute vocabularies (deterministic enums, lower-case compared):
   PhoneNumber.type   : "domestic" | "international" | "burner"
@@ -64,7 +66,7 @@ class PatternMatch:
     rule-generated sentence (never LLM text)."""
     pattern_id: str
     pattern_name: str
-    case_type: str                       # "financial" | "cyber" | "general"
+    case_type: str                       # "financial" | "cyber" | "immigration" | "general"
     confidence: str                      # "STRONG" | "MODERATE" | "WEAK"
     triggers_met: list[str]
     plain_explanation: str
@@ -74,6 +76,7 @@ class PatternMatch:
 # Case-type constants
 FINANCIAL = "financial"
 CYBER = "cyber"
+IMMIGRATION = "immigration"
 GENERAL = "general"
 
 
@@ -514,6 +517,383 @@ def rule_counter_surveillance(onto) -> PatternMatch | None:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# IMMIGRATION PATTERNS (11–16)  — Phase 1
+# ══════════════════════════════════════════════════════════════════════════════
+# HARD ETHICAL CONSTRAINT (binding on every rule in this section):
+#   Every indicator is EVIDENCE-BASED — documents, numbers, behaviour. No rule
+#   reads, or may ever read, nationality, ethnicity, or religion. The typed
+#   pattern-layer Person deliberately does not expose identity attributes, and
+#   no vocabulary below contains an ethnicity, religion, or nationality term.
+#   A foreign-origin phone line is ONE corroborating signal among several and
+#   is structurally prevented from firing anything on its own (see the guard
+#   in rule_foreign_sim_corroborated). The report layer prints this constraint
+#   whenever an immigration pattern appears in output.
+
+# Domestic country-code anchor (the jurisdiction the platform operates in),
+# same role as _DOMESTIC_TOKENS above — an anchor, not a profiling attribute.
+_DOMESTIC_CC_PREFIXES = ("+91",)
+
+# Travel/identity document-fraud vocabulary. An indicator requires BOTH a fraud
+# token AND a travel-document token in the same flag/event text, so "forged
+# invoice" (financial) never counts as an immigration document-fraud signal.
+_DOC_FRAUD_TOKENS = ("forged", "forgery", "counterfeit", "fake", "tampered",
+                     "fabricated", "bogus", "altered", "impersonation",
+                     "stolen", "fraudulent", "duplicate")
+_TRAVEL_DOC_TOKENS = ("passport", "visa", "work permit", "travel document",
+                      "identity card", "id card", "aadhaar", "residence permit",
+                      "emigration clearance", "immigration document")
+
+# SIM-farming signatures (bulk/pre-activated SIM infrastructure).
+_SIM_FARM_TOKENS = ("sim box", "sim farm", "sim-farm", "bulk sim", "gsm gateway",
+                    "pre-activated sim", "preactivated sim", "bulk-activated sim")
+
+# Border-area vocabulary: land-border crossing points and generic border-
+# infrastructure terms (places and infrastructure — never peoples).
+_BORDER_AREA_TOKENS = ("border", "checkpost", "check post", "check-post",
+                       "crossing", "land port", "integrated check post",
+                       "petrapole", "benapole", "moreh", "raxaul", "jogbani",
+                       "panitanki", "sunauli", "attari", "wagah", "hili",
+                       "changrabandha", "dawki", "banbasa", "gede",
+                       "transit hub", "exit point", "exit transit")
+
+# Movement corroboration (behavioural: the subject demonstrably moves).
+_MOVEMENT_TOKENS = ("transit", "movement", "route", "crossing", "travelled",
+                    "traveled", "anpr", "toll", "journey", "moved from")
+
+# Entry/overstay record inconsistencies (official-record discrepancies).
+_ENTRY_INCONSISTENCY_TOKENS = ("overstay", "visa expired", "expired visa",
+                               "no entry record", "entry record missing",
+                               "no arrival record", "unrecorded entry",
+                               "illegal entry", "without valid visa",
+                               "no immigration record", "exit not recorded",
+                               "entry-exit mismatch", "entry/exit mismatch",
+                               "deportation", "deported")
+
+# Immigration-authority corroboration tokens (for official-proceeding checks).
+_IMMIGRATION_AUTHORITY_TOKENS = ("frro", "immigration", "foreigner",
+                                 "bureau of immigration", "passport office")
+
+# Remittance-corridor tuning (INR). Median at/below this reads as repeated
+# small-value remittance rather than one-off large wires.
+_REMITTANCE_MEDIAN_INR = 200_000
+
+
+def _is_foreign_origin_phone(ph) -> bool:
+    """Foreign-origin evidence for a phone LINE (a number, not a person)."""
+    if _norm(_attr(ph, "type")) == "international":
+        return True
+    c = _norm(_attr(ph, "country"))
+    if c and _is_foreign(c):
+        return True
+    num = str(_attr(ph, "number", "") or "").replace(" ", "").replace("-", "")
+    return num.startswith("+") and not any(num.startswith(cc)
+                                           for cc in _DOMESTIC_CC_PREFIXES)
+
+
+def _scannable_texts(onto) -> list[str]:
+    """Flag texts + timeline-event descriptions — the deterministic text pool
+    immigration vocab checks run over. No other free text is read."""
+    out = [str(f) for f in (_attr(onto, "flags", []) or [])]
+    for ev in _attr(onto, "timeline_events", []) or []:
+        d = str(_attr(ev, "description", "") or "")
+        if d:
+            out.append(d)
+    return out
+
+
+def _dedup_texts(texts) -> list[str]:
+    seen, out = set(), []
+    for t in texts:
+        k = _norm(t)[:80]
+        if k and k not in seen:
+            seen.add(k)
+            out.append(t)
+    return out
+
+
+def _remittance_txns(onto) -> list:
+    txns = _attr(onto, "transactions", []) or []
+    return [t for t in txns if _norm(_attr(t, "direction")) == "out"
+            and bool(_attr(t, "cross_border", False))]
+
+
+def _doc_fraud_indicators(onto) -> list[str]:
+    hits = []
+    for t in _scannable_texts(onto):
+        tl = _norm(t)
+        if (any(ft in tl for ft in _DOC_FRAUD_TOKENS)
+                and any(dt in tl for dt in _TRAVEL_DOC_TOKENS)):
+            hits.append(t)
+    return _dedup_texts(hits)
+
+
+def _border_locations(onto) -> list:
+    seen, out = set(), []
+    for loc in _attr(onto, "locations", []) or []:
+        name = _norm(_attr(loc, "name"))
+        if name and name not in seen and any(tok in name for tok in _BORDER_AREA_TOKENS):
+            seen.add(name)
+            out.append(loc)
+    return out
+
+
+def _entry_indicators(onto) -> list[str]:
+    hits = [t for t in _scannable_texts(onto)
+            if any(tok in _norm(t) for tok in _ENTRY_INCONSISTENCY_TOKENS)]
+    return _dedup_texts(hits)
+
+
+def rule_foreign_sim_corroborated(onto) -> PatternMatch | None:
+    """FOREIGN_SIM_CORROBORATED — foreign-origin lines + ≥2 behavioural classes.
+
+    HARD GUARD: a foreign-origin phone line NEVER fires this rule alone. It
+    must be corroborated by at least TWO independent behavioural evidence
+    classes (remittance pattern, document fraud, border-area presence, line
+    volume, entry-record inconsistency). Evidence-based only — the rule reads
+    numbers and behaviour, never who the subject is."""
+    phones = _attr(onto, "phones", []) or []
+    foreign = [p for p in phones if _is_foreign_origin_phone(p)]
+    if not foreign:
+        return None
+
+    classes: list[str] = []
+    remit = _remittance_txns(onto)
+    if len(remit) >= 3:
+        classes.append(f"{len(remit)} outbound cross-border transfer(s)")
+    fraud = _doc_fraud_indicators(onto)
+    if fraud:
+        classes.append(f"{len(fraud)} travel/identity document-fraud indicator(s)")
+    borders = _border_locations(onto)
+    if borders:
+        names = ", ".join(str(_attr(l, "name")) for l in borders[:3])
+        classes.append(f"border-area presence: {names}")
+    if len(phones) >= 4:
+        classes.append(f"{len(phones)} distinct phone lines in use")
+    entry = _entry_indicators(onto)
+    if entry:
+        classes.append(f"{len(entry)} entry/overstay record inconsistency(ies)")
+
+    # THE GUARD: foreign origin is one signal among several, never sole.
+    if len(classes) < 2:
+        return None
+
+    triggers = [f"{len(foreign)} foreign-origin phone line(s) "
+                f"(one signal among several — never sole)"] + classes
+    confidence = "STRONG" if len(classes) >= 3 else "MODERATE"
+    explanation = (
+        f"Foreign-origin phone lines corroborated by {len(classes)} independent "
+        f"behavioural evidence classes — an operational cross-border footprint. "
+        f"(Evidence-based indicator: documents, numbers, behaviour only.)"
+    )
+    return PatternMatch(
+        pattern_id="FOREIGN_SIM_CORROBORATED",
+        pattern_name="Foreign SIM (Corroborated)",
+        case_type=IMMIGRATION,
+        confidence=confidence,
+        triggers_met=triggers,
+        plain_explanation=explanation,
+        supporting_sources=_sources(foreign, remit, borders),
+    )
+
+
+def rule_remittance_corridor(onto) -> PatternMatch | None:
+    """REMITTANCE_CORRIDOR — repeated small outbound cross-border transfers."""
+    out_cb = _remittance_txns(onto)
+    if len(out_cb) < 4:
+        return None
+
+    amounts = []
+    for t in out_cb:
+        try:
+            amounts.append(float(_attr(t, "amount", 0) or 0))
+        except (TypeError, ValueError):
+            pass
+    amounts.sort()
+    median = amounts[len(amounts) // 2] if amounts else 0.0
+    small = bool(amounts) and median <= _REMITTANCE_MEDIAN_INR
+
+    by_cp: dict = {}
+    for t in out_cb:
+        cp = _norm(_attr(t, "counterparty"))
+        if cp:
+            by_cp[cp] = by_cp.get(cp, 0) + 1
+    repeat_count = max(by_cp.values()) if by_cp else 0
+    repeated = repeat_count >= 2
+
+    if not (small or repeated):
+        return None
+
+    triggers = [f"{len(out_cb)} outbound cross-border transfer(s)"]
+    if small:
+        triggers.append(f"median transfer ~INR {int(median):,} "
+                        f"(at/below the small-remittance band)")
+    if repeated:
+        triggers.append(f"same counterparty receives {repeat_count} transfer(s)")
+    if len(out_cb) >= 6 and repeated:
+        confidence = "STRONG"
+    elif repeated or len(out_cb) >= 5:
+        confidence = "MODERATE"
+    else:
+        confidence = "WEAK"
+    explanation = (
+        "Repeated small-value outbound cross-border transfers form a remittance "
+        "corridor pattern."
+    )
+    return PatternMatch(
+        pattern_id="REMITTANCE_CORRIDOR",
+        pattern_name="Remittance Corridor",
+        case_type=IMMIGRATION,
+        confidence=confidence,
+        triggers_met=triggers,
+        plain_explanation=explanation,
+        supporting_sources=_sources(out_cb),
+    )
+
+
+def rule_document_fraud_cluster(onto) -> PatternMatch | None:
+    """DOCUMENT_FRAUD_CLUSTER — 2+ travel/identity document-fraud indicators."""
+    inds = _doc_fraud_indicators(onto)
+    if len(inds) < 2:
+        return None
+
+    legals = _attr(onto, "legal_proceedings", []) or []
+    official = [lp for lp in legals
+                if _norm(_attr(lp, "kind")) in ("notice", "inquiry")]
+
+    triggers = [f"{len(inds)} distinct travel/identity document-fraud indicator(s)"]
+    triggers += [f"indicator: {str(i)[:100]}" for i in inds[:3]]
+    if official:
+        triggers.append(f"{len(official)} official notice/inquiry proceeding(s) on record")
+    confidence = "STRONG" if (len(inds) >= 3 or official) else "MODERATE"
+    explanation = (
+        "Multiple independent indicators of forged or tampered travel/identity "
+        "documents cluster around the subject's records."
+    )
+    return PatternMatch(
+        pattern_id="DOCUMENT_FRAUD_CLUSTER",
+        pattern_name="Document Fraud Cluster",
+        case_type=IMMIGRATION,
+        confidence=confidence,
+        triggers_met=triggers,
+        plain_explanation=explanation,
+        supporting_sources=_sources(official),
+    )
+
+
+def rule_sim_farming_signature(onto) -> PatternMatch | None:
+    """SIM_FARMING_SIGNATURE — line volume + burner share / farm infrastructure."""
+    phones = _attr(onto, "phones", []) or []
+    distinct = {}
+    for p in phones:
+        num = _norm(_attr(p, "number"))
+        if num and num not in distinct:
+            distinct[num] = p
+    lines = list(distinct.values())
+    burners = [p for p in lines if _norm(_attr(p, "type")) == "burner"]
+    farm_flags = _dedup_texts(
+        [t for t in _scannable_texts(onto)
+         if any(tok in _norm(t) for tok in _SIM_FARM_TOKENS)])
+
+    if not (len(lines) >= 5 and (len(burners) >= 2 or farm_flags)):
+        return None
+
+    triggers = [f"{len(lines)} distinct phone lines "
+                f"({len(burners)} flagged as burner)"]
+    if farm_flags:
+        triggers.append(f"SIM-farm infrastructure referenced: {str(farm_flags[0])[:80]}")
+    confidence = "STRONG" if (len(lines) >= 8 or farm_flags) else "MODERATE"
+    explanation = (
+        "The volume of active lines and burner share match a SIM-farming "
+        "signature (bulk-activated line infrastructure)."
+    )
+    return PatternMatch(
+        pattern_id="SIM_FARMING_SIGNATURE",
+        pattern_name="SIM Farming Signature",
+        case_type=IMMIGRATION,
+        confidence=confidence,
+        triggers_met=triggers,
+        plain_explanation=explanation,
+        supporting_sources=_sources(lines),
+    )
+
+
+def rule_border_movement_cluster(onto) -> PatternMatch | None:
+    """BORDER_MOVEMENT_CLUSTER — border-area locations + movement corroboration."""
+    borders = _border_locations(onto)
+    if len(borders) < 2:
+        return None
+    moves = _dedup_texts(
+        [t for t in _scannable_texts(onto)
+         if any(tok in _norm(t) for tok in _MOVEMENT_TOKENS)])
+    if not moves:
+        return None
+
+    names = ", ".join(str(_attr(l, "name")) for l in borders[:4])
+    triggers = [
+        f"{len(borders)} border-area location(s) in evidence: {names}",
+        f"{len(moves)} movement/transit record(s) corroborate",
+    ]
+    if len(borders) >= 3 and len(moves) >= 2:
+        confidence = "STRONG"
+    elif len(borders) >= 3 or len(moves) >= 2:
+        confidence = "MODERATE"
+    else:
+        confidence = "WEAK"
+    explanation = (
+        "Locations tied to the case cluster around border crossing points, with "
+        "movement records corroborating transit toward them."
+    )
+    return PatternMatch(
+        pattern_id="BORDER_MOVEMENT_CLUSTER",
+        pattern_name="Border Movement Cluster",
+        case_type=IMMIGRATION,
+        confidence=confidence,
+        triggers_met=triggers,
+        plain_explanation=explanation,
+        supporting_sources=_sources(borders),
+    )
+
+
+def rule_entry_record_inconsistency(onto) -> PatternMatch | None:
+    """ENTRY_RECORD_INCONSISTENCY — overstay / missing-entry record discrepancies."""
+    inds = _entry_indicators(onto)
+    if not inds:
+        return None
+
+    legals = _attr(onto, "legal_proceedings", []) or []
+    official = [lp for lp in legals
+                if _norm(_attr(lp, "kind")) in ("notice", "inquiry")
+                and any(tok in _norm(_attr(lp, "agency")) or tok in _norm(_attr(lp, "case_ref"))
+                        for tok in _IMMIGRATION_AUTHORITY_TOKENS)]
+
+    n = len(inds)
+    if n >= 3 or (n >= 2 and official):
+        confidence = "STRONG"
+    elif n == 2 or (n == 1 and official):
+        confidence = "MODERATE"
+    else:
+        confidence = "WEAK"
+
+    triggers = [f"{n} entry/overstay record inconsistency(ies)"]
+    triggers += [f"indicator: {str(i)[:100]}" for i in inds[:3]]
+    if official:
+        triggers.append("official immigration-authority notice/inquiry on record")
+    explanation = (
+        "Official records show entry/exit or visa-status discrepancies "
+        "(overstay, missing entry record, or expired authorisation)."
+    )
+    return PatternMatch(
+        pattern_id="ENTRY_RECORD_INCONSISTENCY",
+        pattern_name="Entry Record Inconsistency",
+        case_type=IMMIGRATION,
+        confidence=confidence,
+        triggers_met=triggers,
+        plain_explanation=explanation,
+        supporting_sources=_sources(official),
+    )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # GENERAL PATTERNS (9–10)
 # ══════════════════════════════════════════════════════════════════════════════
 def rule_network_hub(onto) -> PatternMatch | None:
@@ -629,7 +1009,7 @@ def rule_timeline_cluster(onto) -> PatternMatch | None:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Registry — deterministic order (financial → cyber → general)
+# Registry — deterministic order (financial → cyber → immigration → general)
 # ══════════════════════════════════════════════════════════════════════════════
 ALL_RULES = [
     rule_layering_structure,
@@ -640,6 +1020,12 @@ ALL_RULES = [
     rule_operational_scale_mismatch,
     rule_anti_forensic_behaviour,
     rule_counter_surveillance,
+    rule_foreign_sim_corroborated,
+    rule_remittance_corridor,
+    rule_document_fraud_cluster,
+    rule_sim_farming_signature,
+    rule_border_movement_cluster,
+    rule_entry_record_inconsistency,
     rule_network_hub,
     rule_timeline_cluster,
 ]
@@ -653,6 +1039,12 @@ RULES_BY_ID = {
     "OPERATIONAL_SCALE_MISMATCH": rule_operational_scale_mismatch,
     "ANTI_FORENSIC_BEHAVIOUR": rule_anti_forensic_behaviour,
     "COUNTER_SURVEILLANCE": rule_counter_surveillance,
+    "FOREIGN_SIM_CORROBORATED": rule_foreign_sim_corroborated,
+    "REMITTANCE_CORRIDOR": rule_remittance_corridor,
+    "DOCUMENT_FRAUD_CLUSTER": rule_document_fraud_cluster,
+    "SIM_FARMING_SIGNATURE": rule_sim_farming_signature,
+    "BORDER_MOVEMENT_CLUSTER": rule_border_movement_cluster,
+    "ENTRY_RECORD_INCONSISTENCY": rule_entry_record_inconsistency,
     "NETWORK_HUB": rule_network_hub,
     "TIMELINE_CLUSTER": rule_timeline_cluster,
 }

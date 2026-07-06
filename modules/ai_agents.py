@@ -938,24 +938,56 @@ _STRUCTURAL_KEYS = {
 }
 
 
-def _tactical_plan_fallback(person_object: dict, anomalies: list, assets_data: list) -> dict:
+# ── Immigration tactical vocabulary (Phase 1 Step 8) ──────────────────────────
+# EVIDENCE-BASED tokens only — travel-document fraud, official immigration
+# proceedings, and the fired immigration PATTERN ids from §09B. Deliberately
+# contains NO nationality, ethnicity, or religion term: an immigration tactical
+# plan is triggered by documents/behaviour, never by who the subject is. This
+# mirrors the HARD ETHICAL CONSTRAINT in modules/pattern_rules.py.
+_IMMIGRATION_TACTICAL_TOKENS = (
+    "passport act", "foreigners act", "frro", "bureau of immigration",
+    "overstay", "visa expired", "expired visa", "forged passport",
+    "forged visa", "forged work permit", "work permit", "travel document",
+    "emigration",
+    # fired §09B immigration pattern ids / names:
+    "foreign_sim_corroborated", "foreign sim", "remittance_corridor",
+    "remittance corridor", "document_fraud_cluster", "document fraud",
+    "sim_farming", "sim farming", "border_movement", "border movement",
+    "entry_record_inconsistency", "entry record",
+)
+
+
+def _tactical_plan_fallback(person_object: dict, anomalies: list, assets_data: list,
+                            case_type_hint: str = "") -> dict:
     """
     Generalized 6-action Tactical Operation Plan that works for ANY case type.
 
-    Detects case type dynamically from anomaly text.  Action 2 branches on:
+    Case type comes from the authoritative §09B detector when a `case_type_hint`
+    is supplied (single source of truth — no divergent duplicate logic); it
+    falls back to evidence-token detection over anomaly text otherwise. Action 2
+    branches on:
+      immigration          → SECURE TRAVEL DOCUMENTS & IMMIGRATION RECORDS
       financial/FEMA/PMLA  → FREEZE BANK ACCOUNTS UNDER PMLA
       cyber/IT Act/comms   → APPLY FOR JUDICIAL INTERCEPTION ORDER
       else (general OSINT) → PRESERVE ALL PLATFORM & CLOUD DATA
+    Every action carries a human-review marker; immigration actions carry a
+    MANDATORY marker plus the evidence-based / no-profiling safeguard note.
     Returns a complete dict (case_summary, critical_warning, actions).
     """
     person_name  = person_object.get("confirmed_name", "Unknown Subject")
     anomaly_text = " ".join(str(a).lower() for a in (anomalies or []))
+    _hint = str(case_type_hint or "").strip().lower()
 
-    has_financial = any(k in anomaly_text for k in [
+    # Immigration wins when §09B classified the case as immigration OR when
+    # travel-document/immigration EVIDENCE is present in the flags. Evaluated
+    # first because a forged passport is unambiguously an immigration matter.
+    has_immigration = (_hint == "immigration"
+                       or any(k in anomaly_text for k in _IMMIGRATION_TACTICAL_TOKENS))
+    has_financial = (_hint == "financial") or any(k in anomaly_text for k in [
         "fema", "pmla", "bank", "financial", "international transfer", "ed indicator",
         "hawala", "money launder", "cash deposit", "usd",
     ])
-    has_cyber = any(k in anomaly_text for k in [
+    has_cyber = (_hint == "cyber") or any(k in anomaly_text for k in [
         "it act", "cyber", "platform", "digital evidence", "cert-in",
         "section 66", "section 43", "malicious", "deletion", "scraping",
         "unauthori", "dpdp",
@@ -964,8 +996,48 @@ def _tactical_plan_fallback(person_object: dict, anomalies: list, assets_data: l
         "ndps", "drug", "narcotic", "psychotropic", "ncb",
     ])
 
-    # ── Action 2: branches on detected case type ───────────────────────────────
-    if has_financial:
+    # ── Action 2: branches on detected case type (immigration first) ───────────
+    if has_immigration:
+        action2 = {
+            "id": 2,
+            "title": "SECURE TRAVEL DOCUMENTS & IMMIGRATION RECORDS",
+            "priority": "CRITICAL",
+            "time_window": "0-24 hours",
+            "time_sensitivity": "CRITICAL",
+            "description": (
+                f"Move to impound the passport and travel documents of {person_name} and "
+                f"raise a Look-Out Circular through the Bureau of Immigration to prevent "
+                f"departure. Obtain certified entry/exit and visa-status records from the "
+                f"jurisdictional FRRO/FRO. Do not notify subject."
+            ),
+            "legal_basis": (
+                "Passport Act 1967 — Section 10(3) (impounding) / "
+                "Foreigners Act 1946 — Sections 3 & 14 (movement control & overstay) / "
+                "BNSS 2023 — Section 94 (production of documents)"
+            ),
+            "authority_required": (
+                "FRRO/FRO officer for records; Look-Out Circular via Bureau of "
+                "Immigration on SP/DCP-or-above request"
+            ),
+            "agency": "FRRO / Bureau of Immigration",
+            "depends_on": [],
+            "blocks": [5],
+            "parallel_with": [1],
+            "risk_if_delayed": "HIGH",
+            "risk_if_reversed": "HIGH",
+            "reward": (
+                "Prevents flight/exit before the subject is aware; secures the "
+                "documentary basis of the immigration offence"
+            ),
+            "human_review": (
+                "MANDATORY — a designated officer must confirm the immigration "
+                "indicators are evidence-based (travel documents, entry/exit records, "
+                "behaviour) and NOT based on nationality, ethnicity, or religion "
+                "before this action is authorised."
+            ),
+            "human_review_required": True,
+        }
+    elif has_financial:
         action2 = {
             "id": 2,
             "title": "FREEZE BANK ACCOUNTS UNDER PMLA",
@@ -985,6 +1057,9 @@ def _tactical_plan_fallback(person_object: dict, anomalies: list, assets_data: l
             "risk_if_delayed": "HIGH",
             "risk_if_reversed": "HIGH",
             "reward": "Prevents asset dissipation; freezes proceeds of crime before subject is aware",
+            "human_review": "REQUIRED — ED Deputy Director / designated PMLA authority "
+                            "must review the evidence before authorising the freeze.",
+            "human_review_required": True,
         }
     elif has_cyber:
         action2 = {
@@ -1006,6 +1081,9 @@ def _tactical_plan_fallback(person_object: dict, anomalies: list, assets_data: l
             "risk_if_delayed": "MEDIUM",
             "risk_if_reversed": "LOW",
             "reward": "Enables real-time intelligence collection on ongoing communications",
+            "human_review": "REQUIRED — competent authority (Home Secretary / MHA) "
+                            "must approve the interception order before execution.",
+            "human_review_required": True,
         }
     else:
         action2 = {
@@ -1028,6 +1106,9 @@ def _tactical_plan_fallback(person_object: dict, anomalies: list, assets_data: l
             "risk_if_delayed": "HIGH",
             "risk_if_reversed": "HIGH",
             "reward": "Secures digital evidence before subject can delete or alter it",
+            "human_review": "REQUIRED — SP (Cyber) or designated nodal officer must "
+                            "authorise the preservation notices.",
+            "human_review_required": True,
         }
 
     actions = [
@@ -1058,6 +1139,9 @@ def _tactical_plan_fallback(person_object: dict, anomalies: list, assets_data: l
                 "Prevents evidence deletion; secures platform metadata and activity logs "
                 "before subject is alerted"
             ),
+            "human_review": "REQUIRED — SP (Cyber) or designated nodal officer must "
+                            "authorise the preservation notice.",
+            "human_review_required": True,
         },
         # ── Action 2 — Case-adaptive parallel action ───────────────────────────
         action2,
@@ -1076,12 +1160,15 @@ def _tactical_plan_fallback(person_object: dict, anomalies: list, assets_data: l
             "legal_basis": "BNSS Section 94 / IT Act 2000 — Section 80 (warrant for search)",
             "authority_required": "Judicial Magistrate First Class (JMFC)",
             "agency": "Local Police",
-            "depends_on": [1, 2] if has_financial else [1],
+            "depends_on": [1, 2] if (has_financial or has_immigration) else [1],
             "blocks": [4],
             "parallel_with": [],
             "risk_if_delayed": "MEDIUM",
             "risk_if_reversed": "MEDIUM",
             "reward": "Legal authorization for physical search; device and document seizure",
+            "human_review": "REQUIRED — Judicial Magistrate (JMFC) must issue the "
+                            "search warrant; no search without judicial authorisation.",
+            "human_review_required": True,
         },
         # ── Action 4 — Records subpoena ────────────────────────────────────────
         {
@@ -1107,6 +1194,9 @@ def _tactical_plan_fallback(person_object: dict, anomalies: list, assets_data: l
             "risk_if_delayed": "MEDIUM",
             "risk_if_reversed": "LOW",
             "reward": "Call pattern evidence; financial transaction trail; movement history",
+            "human_review": "REQUIRED — SP or above / ED Deputy Director must sign the "
+                            "production orders.",
+            "human_review_required": True,
         },
         # ── Action 5 — Subject notice: only after digital + financial secured ─
         {
@@ -1132,6 +1222,9 @@ def _tactical_plan_fallback(person_object: dict, anomalies: list, assets_data: l
             "risk_if_delayed": "LOW",
             "risk_if_reversed": "MEDIUM",
             "reward": "Subject's recorded statement; opportunity to identify co-conspirators",
+            "human_review": "REQUIRED — SP / Additional SP must approve issuing the "
+                            "notice; confirm Actions 1-3 are complete first.",
+            "human_review_required": True,
         },
         # ── Action 6 — Chargesheet: all prior actions must complete first ──────
         {
@@ -1160,24 +1253,40 @@ def _tactical_plan_fallback(person_object: dict, anomalies: list, assets_data: l
                 "Formal prosecution; prevents subject from claiming lack of notice; "
                 "initiates judicial process"
             ),
+            "human_review": "REQUIRED — SP / DCP (minimum) must authorise the "
+                            "chargesheet; public prosecutor to be briefed.",
+            "human_review_required": True,
         },
     ]
 
+    # Immigration takes precedence in the label when detected — it is the lead
+    # case type and, when present, dictated Action 2 above.
     case_type = (
-        "Financial Crime" if has_financial
-        else ("Cyber Crime" if has_cyber
-              else ("Drug/Narcotics" if has_drug
-                    else "General OSINT"))
+        "Immigration Offence" if has_immigration
+        else ("Financial Crime" if has_financial
+              else ("Cyber Crime" if has_cyber
+                    else ("Drug/Narcotics" if has_drug
+                          else "General OSINT")))
     )
+    critical_warning = (
+        "Digital preservation must precede all physical actions. "
+        "Evidence loss is irreversible."
+    )
+    if has_immigration:
+        critical_warning += (
+            " IMMIGRATION SAFEGUARD: every action below is decision-support only and "
+            "requires the marked human review. Indicators must be evidence-based "
+            "(travel documents, entry/exit records, behaviour) — nationality, "
+            "ethnicity, and religion must NOT be used as a basis for any action."
+        )
     return {
         "case_summary": (
             f"Tactical operation plan for {person_name} — "
             f"{len(anomalies or [])} confirmed evidence flag(s) across {case_type} case type."
         ),
-        "critical_warning": (
-            "Digital preservation must precede all physical actions. "
-            "Evidence loss is irreversible."
-        ),
+        "critical_warning": critical_warning,
+        "case_type": case_type,
+        "human_review_required": True,
         "actions": actions,
         "method": "rule-based-fallback (generalized for all case types)",
     }
@@ -1195,9 +1304,12 @@ def run_tactical_plan_agent(
     Pulls anomalies from report_data (keys: "anomalies" or "anomaly_flags").
     Step 1: Try LLM for a full 6-action plan.
     Step 2: If LLM fails or returns != 6 actions, fall back to the deterministic
-            _tactical_plan_fallback which auto-detects case type from anomaly text.
+            _tactical_plan_fallback, which uses the authoritative §09B case type
+            (report_data["case_type"], single source of truth) when present and
+            otherwise auto-detects from anomaly text.
     """
     anomalies = report_data.get("anomalies", []) or report_data.get("anomaly_flags", [])
+    case_type_hint = str(report_data.get("case_type") or "").strip().lower()
     grounding = build_grounding_context(person_object)
 
     prompt = f"""You are a senior Indian law enforcement tactical planner.
@@ -1212,7 +1324,8 @@ Return ONLY valid JSON."""
     result = _extract_json(raw) or {}
 
     if not result.get("actions") or len(result.get("actions", [])) != 6:
-        result = _tactical_plan_fallback(person_object, anomalies, assets_data)
+        result = _tactical_plan_fallback(person_object, anomalies, assets_data,
+                                         case_type_hint=case_type_hint)
 
     result["method"]       = f"hybrid ({LAST_ENGINE_USED})" if raw else "rule-based-fallback"
     result["agent"]        = "TacticalPlanAgent"

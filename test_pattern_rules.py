@@ -181,7 +181,7 @@ check(f"repeated runs identical ({len(run1)} patterns fired)", run1 == run2 == r
 check("rule order is financial→cyber→general",
       [r["case_type"] for r in run1] == sorted(set(r["case_type"] for r in run1),
        key=lambda c: ["financial", "cyber", "general"].index(c)) or True)  # order preserved by registry
-check("registry exposes all 10 rules", len(PR.ALL_RULES) == 10 and len(PR.RULES_BY_ID) == 10)
+check("registry exposes all 16 rules", len(PR.ALL_RULES) == 16 and len(PR.RULES_BY_ID) == 16)
 
 
 print("=" * 72)

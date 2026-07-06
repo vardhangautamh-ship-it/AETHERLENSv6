@@ -18,9 +18,11 @@ Public API:
 
 Result shape:
     {
-      "case_type_detected": "financial" | "cyber" | "general" | "undetermined",
+      "case_type_detected": "financial" | "cyber" | "immigration" | "general"
+                            | "undetermined",
       "patterns": [PatternMatch, ...],          # sorted, STRONG first
       "summary_skeleton": [plain_explanation, ...],
+      "immigration_risk": {"points": int, "factors": [...]},   # Phase 1 Step 7
       "counts": {...},                          # ontology population (diagnostics)
     }
 """
@@ -34,27 +36,28 @@ from modules.ontology import build_ontology
 # STRONG sorts first. Lower rank = earlier.
 _CONFIDENCE_RANK = {"STRONG": 0, "MODERATE": 1, "WEAK": 2}
 # Deterministic case-type priority for tie-breaks.
-_CASE_PRIORITY = [PR.FINANCIAL, PR.CYBER, PR.GENERAL]
+_CASE_PRIORITY = [PR.FINANCIAL, PR.CYBER, PR.IMMIGRATION, PR.GENERAL]
 
 
 def _detect_case_type(patterns) -> str:
     """Deterministic case-type detection from the fired patterns.
 
-    Financial/cyber patterns determine the case type; the cross-cutting general
-    patterns (NETWORK_HUB, TIMELINE_CLUSTER) only break a financial/cyber tie or
-    stand alone if nothing else fired. STRONG matches count double so a single
-    strong signal outweighs several weak ones — still fully deterministic.
+    Financial/cyber/immigration patterns determine the case type; the
+    cross-cutting general patterns (NETWORK_HUB, TIMELINE_CLUSTER) only break a
+    tie or stand alone if nothing else fired. STRONG matches count double so a
+    single strong signal outweighs several weak ones — still fully deterministic.
     """
     if not patterns:
         return "undetermined"
-    weight = {PR.FINANCIAL: 0, PR.CYBER: 0, PR.GENERAL: 0}
-    strongs = {PR.FINANCIAL: 0, PR.CYBER: 0, PR.GENERAL: 0}
+    weight = {PR.FINANCIAL: 0, PR.CYBER: 0, PR.IMMIGRATION: 0, PR.GENERAL: 0}
+    strongs = {PR.FINANCIAL: 0, PR.CYBER: 0, PR.IMMIGRATION: 0, PR.GENERAL: 0}
     for p in patterns:
         weight[p.case_type] = weight.get(p.case_type, 0) + (2 if p.confidence == "STRONG" else 1)
         if p.confidence == "STRONG":
             strongs[p.case_type] = strongs.get(p.case_type, 0) + 1
 
-    typed = {PR.FINANCIAL: weight[PR.FINANCIAL], PR.CYBER: weight[PR.CYBER]}
+    typed = {PR.FINANCIAL: weight[PR.FINANCIAL], PR.CYBER: weight[PR.CYBER],
+             PR.IMMIGRATION: weight[PR.IMMIGRATION]}
     best = max(typed.values())
     if best > 0:
         tied = [ct for ct in _CASE_PRIORITY if typed.get(ct, 0) == best]
@@ -68,6 +71,33 @@ def _detect_case_type(patterns) -> str:
         return tied[0]
     # only general patterns fired
     return PR.GENERAL
+
+
+# ── Phase 1 Step 7 — immigration risk weighting (evidence-based) ──────────────
+# Each FIRED immigration pattern contributes a deterministic weight scaled by
+# its evidence confidence; the sum (capped) is offered to §16 Risk Assessment
+# as an adder. Every point traces to a cited deterministic pattern conclusion —
+# weights derive from documents, numbers and behaviour, NEVER from nationality,
+# ethnicity or religion (the immigration rules cannot fire on those; see the
+# HARD ETHICAL CONSTRAINT header in pattern_rules.py).
+_IMM_RISK_WEIGHT = {"STRONG": 8, "MODERATE": 5, "WEAK": 2}
+_IMM_RISK_CAP = 20
+
+
+def _immigration_risk(patterns) -> dict:
+    """Deterministic, confidence-weighted risk contribution of fired
+    immigration patterns. {"points": 0, "factors": []} when none fired."""
+    points, factors = 0, []
+    for p in patterns:
+        if str(getattr(p, "case_type", "")).lower() != PR.IMMIGRATION:
+            continue
+        w = _IMM_RISK_WEIGHT.get(str(getattr(p, "confidence", "")).upper(), 0)
+        points += w
+        factors.append({"pattern_id": p.pattern_id,
+                        "pattern_name": p.pattern_name,
+                        "confidence": p.confidence,
+                        "weight": w})
+    return {"points": min(points, _IMM_RISK_CAP), "factors": factors}
 
 
 def analyze_ontology(onto) -> dict:
@@ -86,6 +116,7 @@ def analyze_ontology(onto) -> dict:
         "case_type_detected": _detect_case_type(patterns),
         "patterns": patterns,
         "summary_skeleton": [m.plain_explanation for m in patterns],
+        "immigration_risk": _immigration_risk(patterns),
         "counts": onto.counts() if hasattr(onto, "counts") else {},
     }
 

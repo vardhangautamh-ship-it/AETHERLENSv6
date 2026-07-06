@@ -361,6 +361,7 @@ def render_tactical_plan(tactical_plan: dict) -> list:
         act_rdel     = act.get("risk_if_delayed", "")
         act_rrev     = act.get("risk_if_reversed", "")
         act_reward   = act.get("reward", "")
+        act_review   = act.get("human_review", "")
 
         icon    = _PRIORITY_ICON.get(act_priority, "•")
         p_col   = _PRIORITY_COLOR.get(act_priority, DUST_PURPLE)
@@ -443,6 +444,12 @@ def render_tactical_plan(tactical_plan: dict) -> list:
         if act_reward:
             block.append(Paragraph(
                 _safe(f"  ★ Evidence secured: {act_reward}"), _STYLES["ai_analysis"]
+            ))
+
+        # Human-review marker — every action is decision-support requiring sign-off
+        if act_review:
+            block.append(Paragraph(
+                _safe(f"  ⚑ Human review: {act_review}"), _STYLES["flag"]
             ))
 
         block.append(Spacer(1, 3 * mm))
@@ -556,6 +563,13 @@ def generate_pdf(
         ("09. ANOMALIES + FLAGS",          "anomalies"),
         ("09B. PATTERN ANALYSIS",          "pattern_analysis"),
         ("10. DATA GAPS",                  "data_gaps"),
+    ]
+    # Section 09C — Immigration Violation Profile: only when indicators fired.
+    if report_data.get("immigration_profile"):
+        section_defs.insert(
+            [k for _, k in section_defs].index("pattern_analysis") + 1,
+            ("09C. IMMIGRATION VIOLATION PROFILE", "immigration_profile"))
+    section_defs += [
         ("11. SOURCE LOG",                 "source_log"),
         ("12. AI ENGINE NOTES",            "ai_notes"),
         ("13. LINKED PROFILES",            "linked_profiles"),
@@ -1023,12 +1037,22 @@ def build_platform_presence(person: dict, search_results: dict = None,
         "voucher", "delivery", "apply", "emi", "bill",
         "not found", "not_found", "unknown", "none",
     }
+    # Structural schema-label test from the ontology (single source): a value
+    # made only of data-schema words ("subscriber", "encryption",
+    # "platform_name") is a column label leaking through — never a real handle
+    # or platform name, whichever source (AI field, row, regex scan) offered it.
+    try:
+        from modules.ontology import _pa_is_schema_label as _is_schema_label
+    except Exception:
+        _is_schema_label = lambda *_a: False
 
     def _is_noise_handle(h: str) -> bool:
         if not h or str(h).strip() in ("", "Not found", "Not public"):
             return True
         lc = str(h).lstrip("@").lower().strip()
         if not lc:
+            return True
+        if _is_schema_label(lc):
             return True
         # Exact match first, then substring (only for non-empty tokens)
         if lc in _NOISE_HANDLES:
@@ -1040,6 +1064,8 @@ def build_platform_presence(person: dict, search_results: dict = None,
     platforms: dict = {}
 
     def _add(raw_name: str, entry: dict):
+        if _is_schema_label(raw_name):
+            return
         uname = entry.get("username", "")
         if _is_noise_handle(uname):
             return
@@ -1157,14 +1183,43 @@ def build_source_log(raw_documents: list, search_results: dict = None) -> list:
     return log or ["No sources logged."]
 
 
-def _build_risk_section(person: dict, agent_results: dict = None, raw_documents: list = None) -> dict:
+def _build_risk_section(person: dict, agent_results: dict = None, raw_documents: list = None,
+                        pattern_analysis: dict = None) -> dict:
     """
     Build section 16 — Risk Assessment.
     Always builds the full enriched anomaly list from person dict + raw document
     keyword scan, then runs RiskAgent with it — guarantees flags are never empty
     regardless of when anomaly_flags was populated upstream.
     NEVER returns empty — always has risk_score and risk_level.
+
+    Phase 1 Step 7: when §09B fired immigration patterns, their deterministic
+    confidence-weighted contribution (pattern_engine._immigration_risk) is added
+    to the base score, each point cited to its pattern. Evidence-based only —
+    the weights derive from fired patterns (documents, numbers, behaviour),
+    never from nationality, ethnicity or religion.
     """
+    # Deterministic immigration adder from the §09B section (0 when absent).
+    _imm = (pattern_analysis or {}).get("immigration_risk") or {}
+    _imm_pts = int(_imm.get("points") or 0)
+    _imm_factors = list(_imm.get("factors") or [])
+
+    def _apply_imm_weighting(score: int):
+        """Add the immigration points, re-derive the level on the same
+        thresholds RiskAgent uses, and return cited extra lines."""
+        if not _imm_pts:
+            return score, None, []
+        new_score = int(max(0, min(90, score + _imm_pts)))
+        if new_score >= 75:   new_level = "CRITICAL"
+        elif new_score >= 55: new_level = "HIGH"
+        elif new_score >= 35: new_level = "MEDIUM"
+        else:                 new_level = "LOW"
+        extra = [f"IMMIGRATION RISK WEIGHTING: +{_imm_pts} (deterministic, "
+                 f"evidence-based — from {len(_imm_factors)} fired immigration "
+                 f"pattern(s); no identity attributes used)"]
+        for f in _imm_factors:
+            extra.append(f"  [{f.get('pattern_name', f.get('pattern_id', '?'))}] "
+                         f"{f.get('confidence', '?')} — weight +{f.get('weight', 0)}")
+        return new_score, new_level, extra
     # ── Always build complete flag list from all sources ──────────────────────
     try:
         from modules.ai_agents import run_risk_agent
@@ -1221,10 +1276,15 @@ def _build_risk_section(person: dict, agent_results: dict = None, raw_documents:
         notes  = risk_data.get("mitigation_notes", "")
         summary = risk_data.get("summary", "")
 
+        score, _new_level, _imm_lines = _apply_imm_weighting(int(score or 0))
+        if _new_level:
+            level = _new_level
+
         lines = [
             f"RISK SCORE: {score}/100 — {level}",
             f"CONFIDENCE: {conf}/100",
         ]
+        lines.extend(_imm_lines)
         if summary:
             lines.append(f"SUMMARY: {summary}")
         if notes:
@@ -1246,6 +1306,10 @@ def _build_risk_section(person: dict, agent_results: dict = None, raw_documents:
             "content": f"[AI ANALYSIS] Risk score: {score}/100 — Level: {level}. Source: RiskAgent.",
             "confidence": int(conf),
             "items": lines,
+            # Structured copies of the values already rendered above — read by
+            # the Phase 1.5 targeting layer so it never parses display text.
+            "risk_score": int(score or 0),
+            "risk_level": str(level),
         }
 
     # Inline fallback: rule-based risk from person object
@@ -1263,10 +1327,13 @@ def _build_risk_section(person: dict, agent_results: dict = None, raw_documents:
         score = risk_result.get("risk_score", 0)
         level = risk_result.get("risk_level", "LOW")
         factors = risk_result.get("risk_factors", risk_result.get("factors", []))
+        score, _new_level, _imm_lines = _apply_imm_weighting(int(score or 0))
+        if _new_level:
+            level = _new_level
         lines = [
             f"RISK SCORE: {score}/100 — {level}",
             f"(Calculated inline — RiskAgent not available)",
-        ]
+        ] + _imm_lines
         for f in factors[:10]:
             if isinstance(f, dict):
                 lines.append(f"  [{f.get('factor','?')}] Weight: {f.get('weight',0)} — {str(f.get('evidence',''))[:80]}")
@@ -1274,12 +1341,18 @@ def _build_risk_section(person: dict, agent_results: dict = None, raw_documents:
             "content": f"[VERIFIED DATA] Risk score: {score}/100 — Level: {level}.",
             "confidence": 50,
             "items": lines,
+            "risk_score": int(score or 0),
+            "risk_level": str(level),
         }
     except Exception:
         return {
             "content": "[AI ANALYSIS] Risk assessment not available.",
             "confidence": 0,
             "items": ["Risk assessment data not available — run RiskAgent or reprocess."],
+            # No score exists on this path — None (never fabricate a number);
+            # the targeting layer ranks unscored cases last and says so.
+            "risk_score": None,
+            "risk_level": "UNKNOWN",
         }
 
 
@@ -1462,12 +1535,24 @@ def _build_extracted_intelligence_section(person: dict) -> dict:
 
     lines = []
 
-    # Emails
+    # Emails — per-file source attribution (same model as phones below); the
+    # source is the actual file(s) the address was extracted from, never a
+    # hardcoded label.
+    email_sources = person.get("email_sources", {}) or {}
     if emails:
         lines.append(f"EMAILS FOUND ({len(emails)}):")
         for email in emails[:10]:
+            srcs = email_sources.get(str(email).lower(), [])
+            if srcs:
+                src_label = ", ".join(srcs[:3])
+                if len(srcs) > 3:
+                    src_label += f" +{len(srcs) - 3} more"
+            elif (li_intel or {}).get("name"):
+                src_label = "LinkedIn intelligence"
+            else:
+                src_label = "document data"
             status = "VERIFIED" if sum(1 for c in confirmed if email in str(c)) > 1 else "SINGLE SOURCE"
-            lines.append(f"  {email} — Source: LinkedIn/profile data — {status}")
+            lines.append(f"  {email} — Source: {src_label} — {status}")
     else:
         lines.append("Emails: None found in public data.")
 
@@ -1510,11 +1595,13 @@ def _build_extracted_intelligence_section(person: dict) -> dict:
     else:
         lines.append("\nSocial handles: None confirmed beyond initial search.")
 
-    # Websites
+    # Websites — the only writer of websites_found today is the LinkedIn
+    # intelligence merge, so cite that when present; never a hardcoded label.
     if websites:
+        w_src = "LinkedIn intelligence" if (li_intel or {}).get("name") else "document data"
         lines.append(f"\nWEBSITES FOUND ({len(websites)}):")
         for w in websites[:5]:
-            lines.append(f"  {w} — Source: LinkedIn/profile data — SINGLE SOURCE")
+            lines.append(f"  {w} — Source: {w_src} — SINGLE SOURCE")
     else:
         lines.append("Websites: None found in public data.")
 
@@ -1877,43 +1964,13 @@ def _build_sections_local(
             and n.get("label", "").lower() != subject_lbl
         ]
 
-    # ── Supplement thin associations with available intelligence signals ────────
-    # When fewer than 3 named associates exist, add platform and phone signals so
-    # §08 is never empty for CDR/financial-only investigations.
-    #
-    # Fix 2 (type-aware §08): locations are NOT promoted here. An address — and
-    # especially cross-file institutional-address boilerplate like
-    # "Manesar Industrial Area" — is not a Key Association. Locations have their
-    # own report section; surfacing them here mislabels boilerplate as a contact.
-    if len(raw_associations) < 3:
-        _assoc_seen = {a.get("label", "").lower() for a in raw_associations}
-        # Platforms confirmed on
-        for plat in person.get("platforms_confirmed", []):
-            if plat.lower() not in _assoc_seen and len(raw_associations) < 6:
-                raw_associations.append({"label": plat, "centrality": 0.1, "node_type": "platform"})
-                _assoc_seen.add(plat.lower())
-        # Key phone numbers as contact signals (max 2)
-        _ph_added = 0
-        for ph in person.get("phones_found", []):
-            ph_str = ph if isinstance(ph, str) else str(ph)
-            if ph_str and ph_str.lower() not in _assoc_seen and _ph_added < 2 and len(raw_associations) < 6:
-                raw_associations.append({"label": ph_str, "centrality": 0.05, "node_type": "contact"})
-                _assoc_seen.add(ph_str.lower())
-                _ph_added += 1
-
-    def _assoc_label(n: dict) -> str:
-        lbl   = n.get("label", "")
-        ntype = n.get("node_type", "")
-        cent  = n.get("centrality", 0)
-        if ntype == "platform":
-            return f"{lbl} (confirmed platform)"
-        if ntype == "location":
-            return f"{lbl} (location)"
-        if ntype == "contact":
-            return f"{lbl} (contact number)"
-        return f"{lbl} (centrality: {cent})"
-
-    conns = [_assoc_label(n) for n in raw_associations]
+    # Phase 0.5 Step 2: §08 lists only NAMED entities (person/org/alias graph
+    # nodes here; the typed-ontology merge happens in the post-§09B override in
+    # _generate_report_inner). The old "pad with platforms and phone numbers
+    # when thin" supplement is gone — a phone number is not an associate, and a
+    # thin section is more honest than a padded one.
+    conns = [f"{n.get('label', '')} (centrality: {n.get('centrality', 0)})"
+             for n in raw_associations if n.get("label")]
 
     # ── Collect anomalies from ALL sources ───────────────────────────────────
     _anom_seen: set = set()
@@ -2091,6 +2148,140 @@ def _build_sections_local(
     }
 
 
+def _build_association_lines(onto, graph_data) -> list:
+    """Phase 0.5 Step 2 — §05/§08 association lines from the typed ontology.
+
+    The single deterministic source for Key Associations / Network Map
+    connections. Merges, deduplicated case-insensitively:
+      1. typed Persons (non-subject) and Organizations from the ontology
+      2. person-typed nodes of the relationship graph (humans named on rows)
+      3. the graph-summary top_associations (already person/org/alias filtered)
+    Every line is a NAMED entity with its kind and a source citation. Never
+    padded with phones/platforms/locations — those are not associations.
+    """
+    import re as _lre
+    try:
+        import networkx as _lnx
+    except Exception:
+        _lnx = None
+    try:
+        from modules.entity_resolution import is_bad_subject_name as _is_bad
+    except Exception:
+        _is_bad = lambda *a, **k: False
+    # Reuse the ontology's structural name test and org vocabulary — the single
+    # source for "looks like a personal name" / "sounds like an organisation".
+    try:
+        from modules.ontology import (_pa_personish as _personish,
+                                      _pa_any_token as _any_token,
+                                      _PA_NON_PERSON_TOKENS as _ORG_TOKENS)
+    except Exception:
+        _personish = lambda *a, **k: True
+        _any_token = lambda *a, **k: False
+        _ORG_TOKENS = ()
+
+    def _tok(s) -> str:
+        return _lre.sub(r"[^a-z0-9]", "", str(s or "").lower())
+
+    subject_tok = _tok(getattr(onto, "subject_name", ""))
+    # Prefer the ONTOLOGY's graph: build_ontology converts a directed upstream
+    # graph to an undirected copy and enriches it with money-routing nodes
+    # (counterparty orgs, account/wallet-holder parties), so it is always a
+    # superset of the raw graph_data graph.
+    graph = getattr(onto, "graph", None)
+    if graph is None:
+        graph = (graph_data or {}).get("graph")
+    centrality = {}
+    if _lnx is not None and graph is not None:
+        try:
+            if graph.number_of_nodes() > 0:
+                centrality = {_tok(n): round(c, 3)
+                              for n, c in _lnx.degree_centrality(graph).items()}
+        except Exception:
+            centrality = {}
+
+    _SOURCE_LABELS = {"counterparty": "transaction records", "resolution": "entity resolution",
+                      "graph": "relationship graph", "record contact": "contact columns in source records"}
+
+    def _src(raw) -> str:
+        raw = str(raw or "").strip()
+        return _SOURCE_LABELS.get(raw, raw) or "case documents"
+
+    entries: dict = {}   # token -> entry dict; first writer wins (typed onto first)
+
+    def _add(label, kind, detail, source):
+        label = str(label or "").strip()
+        t = _tok(label)
+        if not t or t == subject_tok or t in entries:
+            return
+        if kind == "person":
+            if len(label) < 3 or _is_bad(label):
+                return
+            if not _personish(label):
+                # Not structurally a personal name. If it reads like an
+                # organisation (matches the org vocabulary), keep it as one —
+                # a front company IS a key association, just not a human.
+                # Handles/garbage labels are dropped, never shown as people.
+                if _any_token(label, _ORG_TOKENS):
+                    kind, detail = "organization", detail or ""
+                else:
+                    return
+        entries[t] = {"label": label, "kind": kind, "detail": detail,
+                      "source": source, "centrality": centrality.get(t, 0.0)}
+
+    # 1) typed ontology entities — persons then organizations
+    for p in getattr(onto, "persons", []) or []:
+        if getattr(p, "is_subject", False):
+            continue
+        role = str(getattr(p, "role", "") or "").strip()
+        _add(getattr(p, "name", ""), "person", role, _src(getattr(p, "source", "")))
+    for o in getattr(onto, "organizations", []) or []:
+        bits = [str(getattr(o, "type", "") or "").strip() or "legitimate"]
+        juris = str(getattr(o, "jurisdiction", "") or "").strip()
+        if juris:
+            bits.append(juris)
+        if getattr(o, "offshore", False):
+            bits.append("offshore")
+        _add(getattr(o, "name", ""), "organization", ", ".join(bits),
+             _src(getattr(o, "source", "")))
+
+    # 2) person- and org-typed graph nodes (money-routing parties, row
+    # contacts, account/wallet-holder entities). The two graph builders store
+    # the kind under different keys — read both. "entity"-typed party nodes
+    # (account_holder / wallet_holder values that are not personal names) are
+    # listed as organizations only when they match the org vocabulary — that is
+    # how the subject's front entity, named in full on the money rows, is cited.
+    if graph is not None:
+        try:
+            for node, data in graph.nodes(data=True):
+                ntype = str(data.get("node_type") or data.get("type") or "").lower()
+                label = data.get("label", node)
+                if ntype == "person":
+                    _add(label, "person", "", "relationship graph")
+                elif ntype in ("org", "organization"):
+                    _add(label, "organization", "", "relationship graph")
+                elif ntype == "entity" and _any_token(label, _ORG_TOKENS):
+                    _add(label, "organization", "", "party on transaction records")
+        except Exception:
+            pass
+
+    # 3) graph-summary associates (get_key_associations output: person/org/alias)
+    for n in ((graph_data or {}).get("summary", {}) or {}).get("top_associations", []) or []:
+        ntype = str(n.get("node_type", "")).lower()
+        kind = "organization" if ntype == "org" else "person"
+        _add(n.get("label") or n.get("name"), kind, "", "relationship graph")
+
+    ranked = sorted(entries.values(),
+                    key=lambda e: (-e["centrality"],
+                                   0 if e["kind"] == "person" else 1,
+                                   e["label"].lower()))
+    lines = []
+    for e in ranked[:8]:
+        head = f"{e['kind']} — {e['detail']}" if e["detail"] else e["kind"]
+        cent = f", centrality: {e['centrality']}" if e["centrality"] > 0 else ""
+        lines.append(f"{e['label']} ({head}{cent}) — Source: {e['source']}")
+    return lines
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # SECTIONS -> PDF DATA ADAPTER
 # ══════════════════════════════════════════════════════════════════════════════
@@ -2118,6 +2309,14 @@ def _render_pattern_analysis_text(result: dict) -> str:
             lines.append(f"  Triggered by: {'; '.join(p.triggers_met)}")
         if p.supporting_sources:
             lines.append(f"  Sources: {', '.join(p.supporting_sources)}")
+    # Phase 1 HARD ETHICAL CONSTRAINT — stated in output whenever an
+    # immigration indicator appears (mirrors the constraint documented at the
+    # head of the immigration section in pattern_rules.py).
+    if any(str(getattr(p, "case_type", "")).lower() == "immigration" for p in patterns):
+        lines.append("")
+        lines.append("NOTE: Immigration indicators above are evidence-based only "
+                     "(documents, numbers, behaviour). No indicator uses "
+                     "nationality, ethnicity, or religion, alone or otherwise.")
     return "\n".join(lines)
 
 
@@ -2174,6 +2373,7 @@ def _build_pattern_analysis_section(result: dict) -> dict:
             {
                 "pattern_id": p.pattern_id,
                 "pattern_name": p.pattern_name,
+                "case_type": p.case_type,
                 "confidence": p.confidence,
                 "explanation": p.plain_explanation,
                 "triggers": list(p.triggers_met),
@@ -2182,6 +2382,67 @@ def _build_pattern_analysis_section(result: dict) -> dict:
             for p in patterns
         ],
         "pattern_count": len(patterns),
+        # Phase 1 Step 7 — deterministic, confidence-weighted immigration risk
+        # contribution (consumed by §16). Evidence-based only.
+        "immigration_risk": dict(result.get("immigration_risk") or {}),
+    }
+
+
+# Visible in every Immigration Violation Profile — the Phase 1 HARD ETHICAL
+# CONSTRAINT, stated where the reader of the profile will see it.
+_IMMIGRATION_PROFILE_DISCLAIMER = (
+    "EVIDENCE-BASED ONLY: every indicator in this profile derives from "
+    "documents, numbers, and behaviour cited above. No indicator uses "
+    "nationality, ethnicity, or religion, alone or otherwise. This profile is "
+    "decision support — it requires human review and authorises nothing by "
+    "itself."
+)
+
+
+def _build_immigration_profile_section(pa_section: dict) -> dict | None:
+    """§09C Immigration Violation Profile — a deterministic, cited synthesis of
+    the immigration patterns already detected in §09B.
+
+    Pure projection of the §09B section dict (the single source of truth built
+    from the typed ontology): no new analysis, no LLM, no per-pipeline
+    branching — both pipelines pass through the same call site. Returns None
+    when no immigration pattern fired (a profile with nothing in it would be
+    noise, not honesty)."""
+    if not isinstance(pa_section, dict):
+        return None
+    imm = [p for p in (pa_section.get("patterns") or [])
+           if str(p.get("case_type", "")).lower() == "immigration"]
+    if not imm:
+        return None
+
+    strongs = sum(1 for p in imm if p.get("confidence") == "STRONG")
+    items = []
+    for p in imm:
+        items.append(f"{str(p.get('pattern_name', '')).upper()} "
+                     f"[{p.get('confidence', '?')}] — {p.get('explanation', '')}")
+        for t in (p.get("triggers") or []):
+            items.append(f"    evidence: {t}")
+        if p.get("sources"):
+            items.append(f"    sources: {', '.join(p['sources'])}")
+
+    _ir = pa_section.get("immigration_risk") or {}
+    if _ir.get("points"):
+        items.append(f"RISK CONTRIBUTION: +{_ir['points']} to §16 "
+                     f"(deterministic, confidence-weighted; see §16 for the "
+                     f"per-pattern breakdown)")
+    items.append(_IMMIGRATION_PROFILE_DISCLAIMER)
+
+    return {
+        "header": "[DETERMINISTIC ANALYSIS] Immigration Violation Profile",
+        "content": (
+            f"[DETERMINISTIC ANALYSIS] {len(imm)} immigration indicator(s) "
+            f"detected ({strongs} STRONG). Case type: "
+            f"{str(pa_section.get('case_type', 'undetermined')).upper()}. "
+            f"Evidence-based only — see disclaimer."
+        ),
+        "confidence": min(90, 30 + 20 * strongs + 10 * (len(imm) - strongs)),
+        "items": items,
+        "pattern_count": len(imm),
     }
 
 
@@ -2285,6 +2546,11 @@ def _sections_to_pdf_data(sections: dict) -> dict:
     s09b = sections.get("pattern_analysis")
     if isinstance(s09b, dict):
         result["pattern_analysis"] = s09b
+    # Section 09C — Immigration Violation Profile (flat cited lines; the
+    # generic list renderer handles it). Only present when indicators fired.
+    s09c = sections.get("immigration_profile")
+    if isinstance(s09c, dict) and s09c.get("items"):
+        result["immigration_profile"] = [s09c.get("content", "")] + list(s09c["items"])
     # Section 18 — pass full tactical_plan dict through for rich PDF rendering
     if isinstance(s18, dict) and s18.get("actions"):
         result["tactical_plan"] = s18
@@ -2639,8 +2905,14 @@ def _generate_report_inner(
     # graph / timeline / phones, and runs the deterministic pattern engine. No
     # per-pipeline special-casing (the R-E lesson). The optional LLM narrative is
     # added later (Step 5) and never originates a conclusion.
+    # Phase 0.5: the typed ontology is built ONCE here and kept (`_onto`) so the
+    # deterministic section overrides below read from the same single source the
+    # pattern rules analyse. build_ontology + analyze_ontology is exactly what
+    # run_pattern_analysis does internally — no behaviour change for §09B.
+    _onto = None
     try:
-        from modules.pattern_engine import run_pattern_analysis
+        from modules.pattern_engine import analyze_ontology
+        from modules.ontology import build_ontology
         _pa_flags = list(sections.get("anomalies_and_flags", {}).get("flags", []) or [])
         # Flatten structured source rows from every document so dated deletion/
         # legal/comm events keep their dates (HOP 3). Empty for OSINT (no docs).
@@ -2650,49 +2922,7 @@ def _generate_report_inner(
         # enforcement references live here, not in the structured rows.
         _pa_texts = [str(_d.get("raw_text") or _d.get("full_text") or _d.get("text") or "")
                      for _d in (raw_documents or [])]
-        # ── TEMP DIAGNOSTIC (remove after diagnosis) — PA_DEBUG live-input dump ──
-        if os.environ.get("PA_DEBUG"):
-            _pa_ents = (graph_data or {}).get("entities", [])
-            _pa_graph = (graph_data or {}).get("graph")
-            print("\n========== [PA_DEBUG] LIVE §09B INPUTS TO run_pattern_analysis ==========")
-            print(f"  person.name           : {person.get('confirmed_name') or person.get('name')!r}")
-            print(f"  raw_documents         : {len(raw_documents or [])} doc(s)")
-            for _d in (raw_documents or []):
-                _sr = _d.get("structured_rows") or []
-                _rt = str(_d.get("raw_text") or _d.get("full_text") or _d.get("text") or "")
-                print(f"     - {str(_d.get('filename') or _d.get('name') or '?')[:44]:44} "
-                      f"structured_rows={len(_sr):<4} raw_text_len={len(_rt)}")
-            print(f"  records (total)       : {len(_pa_records)}")
-            _rec_cols = sorted({k for r in _pa_records for k in r.keys()}) if _pa_records else []
-            print(f"     record columns     : {_rec_cols}")
-            print(f"  texts (total)         : {len(_pa_texts)}  nonempty={sum(1 for t in _pa_texts if t.strip())}")
-            _joined = " \n".join(_pa_texts).lower()
-            print(f"     texts has '2023-06-22' : {'2023-06-22' in _joined}")
-            print(f"     texts has 'cert-in'    : {'cert-in' in _joined or 'cert in' in _joined}")
-            print(f"     texts has 'delet'      : {'delet' in _joined}")
-            print(f"  financial_data (assets_data) : {len(assets_data or [])} row(s)")
-            _fd_cols = sorted({k for r in (assets_data or []) if isinstance(r, dict) for k in r.keys()})
-            print(f"     financial columns  : {_fd_cols}")
-            _fd_blob = " ".join(str(v) for r in (assets_data or []) if isinstance(r, dict)
-                                for v in r.values()).lower()
-            print(f"     fin has 'ransom'   : {'ransom' in _fd_blob}")
-            print(f"     fin has 'mixer'    : {'mixer' in _fd_blob}")
-            print(f"     fin has 'offshore' : {'offshore' in _fd_blob}")
-            print(f"  entities (graph_data) : {len(_pa_ents)} node(s)")
-            _ent_types = {}
-            for _e in _pa_ents:
-                _t = str((_e or {}).get('type') or '?')
-                _ent_types[_t] = _ent_types.get(_t, 0) + 1
-            print(f"     entity types       : {_ent_types}")
-            print(f"     org nodes          : {[str((_e or {}).get('label') or (_e or {}).get('name')) for _e in _pa_ents if 'org' in str((_e or {}).get('type','')).lower()]}")
-            try:
-                _gn = _pa_graph.number_of_nodes() if _pa_graph is not None else None
-                _ge = _pa_graph.number_of_edges() if _pa_graph is not None else None
-            except Exception:
-                _gn = _ge = "?"
-            print(f"  graph (graph_data)    : nodes={_gn} edges={_ge} type={type(_pa_graph).__name__}")
-            print("=========================================================================\n")
-        _pa_result = run_pattern_analysis(
+        _onto = build_ontology(
             person=person,
             entities=(graph_data or {}).get("entities", []),
             flags=_pa_flags,
@@ -2702,11 +2932,21 @@ def _generate_report_inner(
             financial_data=assets_data,
             records=_pa_records,
             texts=_pa_texts,
+            documents=raw_documents,
         )
+        _pa_result = analyze_ontology(_onto)
         sections["pattern_analysis"] = _build_pattern_analysis_section(_pa_result)
         print(f"[REPORT] Pattern analysis: "
               f"{sections['pattern_analysis']['pattern_count']} pattern(s), "
               f"case_type={_pa_result.get('case_type_detected')}")
+        # §09C Immigration Violation Profile (Phase 1 Step 9) — deterministic
+        # projection of the immigration patterns above. SAME call site for both
+        # pipelines (OSINT + FUSION converge here); absent when none fired.
+        _imm_sec = _build_immigration_profile_section(sections["pattern_analysis"])
+        if _imm_sec:
+            sections["immigration_profile"] = _imm_sec
+            print(f"[REPORT] Immigration profile: "
+                  f"{_imm_sec['pattern_count']} indicator(s).")
         # OPTIONAL narrative — runs AFTER the deterministic patterns exist and is
         # purely additive. Any failure here leaves all conclusions intact.
         try:
@@ -2726,6 +2966,46 @@ def _generate_report_inner(
             "patterns": [], "pattern_count": 0,
         }
 
+    # ── Phase 0.5 Step 2 — §05/§08 read the typed ontology ────────────────────
+    # Key Associations and Network Map consume NAMED, TYPED, cited entities from
+    # the single ontology built above, merged with the graph-summary associates.
+    # Deterministic override on BOTH report paths (Gemini and local), same
+    # pattern as the platform-presence rebuild below. No padding: when few named
+    # associates exist the section stays thin instead of showing phone numbers.
+    try:
+        if _onto is not None:
+            _assoc_lines = _build_association_lines(_onto, graph_data)
+            if _assoc_lines:
+                _ka = sections.get("key_associations")
+                _ka = dict(_ka) if isinstance(_ka, dict) else {}
+                _ka["associations"] = _assoc_lines
+                _ka["content"] = (
+                    f"[VERIFIED DATA] {len(_assoc_lines)} named association(s) "
+                    f"from typed case entities (persons/organizations, cited)."
+                )
+                _ka["confidence"] = max(int(_ka.get("confidence") or 0), 40)
+                sections["key_associations"] = _ka
+
+                _gn = (graph_data or {}).get("summary", {}).get("nodes", 0)
+                _ge = (graph_data or {}).get("summary", {}).get("edges", 0)
+                if not _gn and getattr(_onto, "graph", None) is not None:
+                    try:
+                        _gn = _onto.graph.number_of_nodes()
+                        _ge = _onto.graph.number_of_edges()
+                    except Exception:
+                        pass
+                _nm = sections.get("network_map_summary")
+                _nm = dict(_nm) if isinstance(_nm, dict) else {}
+                _nm["connections"] = _assoc_lines
+                _nm["content"] = (
+                    f"[VERIFIED DATA] Graph: {_gn} nodes, {_ge} edges. "
+                    f"{len(_assoc_lines)} named connection(s) listed."
+                )
+                _nm["confidence"] = max(int(_nm.get("confidence") or 0), 50)
+                sections["network_map_summary"] = _nm
+    except Exception as _asse:
+        print(f"[REPORT] Ontology association override non-fatal: {_asse}")
+
     # Always inject sections 13–17 (Gemini doesn't generate them)
     if "linked_profiles" not in sections:
         sections["linked_profiles"] = _build_linked_profiles_section(person)
@@ -2734,7 +3014,9 @@ def _generate_report_inner(
     if "account_timeline" not in sections:
         sections["account_timeline"] = _build_account_timeline_section(person)
     # Sections 16 + 17 always injected regardless of Gemini
-    sections["risk_assessment"] = _build_risk_section(person, agent_results, raw_documents)
+    sections["risk_assessment"] = _build_risk_section(
+        person, agent_results, raw_documents,
+        pattern_analysis=sections.get("pattern_analysis"))
     sections["next_steps"]      = _build_next_steps_section(agent_results, person)
     # Fix 1D: rebuild source log from actual documents
     if raw_documents:
@@ -2760,6 +3042,73 @@ def _generate_report_inner(
             },
         }
 
+    # ── Phase 0.5 Step 3 — §03/§04 read the typed ontology ────────────────────
+    # Placed AFTER the legacy platform rebuild above so typed evidence wins.
+    # §03: when the ontology holds platform accounts (platform-named columns on
+    # source rows, per-file cited), they ARE the section — a handle appears only
+    # if a username-bearing column supplied one. When no typed accounts exist,
+    # the legacy section (now schema-label-gated) stands.
+    # §04: for document-based cases the typed locations ARE the section — a
+    # location must come from a location-named column or a location-labelled
+    # text line, each cited to its actual source file. Headers/letterheads have
+    # no label, so they can never re-enter. OSINT runs (no documents) keep the
+    # legacy path.
+    try:
+        if _onto is not None:
+            _accts = list(getattr(_onto, "platform_accounts", []) or [])
+            if _accts:
+                _plats = {}
+                for _a in _accts:
+                    _pname = str(_a.platform).strip().title()
+                    if _pname and _pname not in _plats:
+                        _plats[_pname] = {
+                            "handle":    _a.handle or "Not found",
+                            "url":       _a.url or "Not found",
+                            "confirmed": True,
+                            "source":    _a.source or "case documents",
+                        }
+                if _plats:
+                    sections["platform_presence"] = {
+                        "content": (
+                            f"[VERIFIED DATA] Confirmed on {len(_plats)} platform(s): "
+                            f"{', '.join(_plats)} (platform-typed source columns, per-file cited)."
+                        ),
+                        "confidence": min(len(_plats) * 20, 90),
+                        "platforms": _plats,
+                    }
+            elif raw_documents and not plat_map:
+                # Document-based case with NO typed platform accounts and no
+                # gated legacy platforms: replace whatever the AI path emitted
+                # (Gemini sometimes surfaces column labels like 'platform_name'
+                # as platforms) with an honest empty section. Structural rule:
+                # in a document case a platform exists only with typed evidence.
+                sections["platform_presence"] = {
+                    "content": ("[VERIFIED DATA] No confirmed platform accounts "
+                                "extracted from source documents."),
+                    "confidence": 0,
+                    "platforms": {},
+                }
+            if raw_documents:
+                _loc_lines = []
+                for _l in list(getattr(_onto, "locations", []) or []):
+                    _loc_lines.append(f"{_l.name} — Source: {_l.source or 'case documents'}")
+                    if len(_loc_lines) >= 8:
+                        break
+                sections["public_location_data"] = {
+                    "content": (
+                        f"[VERIFIED DATA] {len(_loc_lines)} location(s) from "
+                        f"location-typed evidence (source columns / labelled fields, "
+                        f"per-file cited)."
+                        if _loc_lines else
+                        "[VERIFIED DATA] No location stated in location-typed evidence."
+                    ),
+                    "confidence": 60 if _loc_lines else 0,
+                    "locations": _loc_lines or
+                        ["No location found in location-typed source columns or labelled fields."],
+                }
+    except Exception as _s3e:
+        print(f"[REPORT] Ontology §03/§04 override non-fatal: {_s3e}")
+
     # Section 18 — Tactical Operation Plan (always runs — no assets gate)
     tactical_plan_result = (agent_results or {}).get("tactical_plan")
     if not (isinstance(tactical_plan_result, dict) and tactical_plan_result.get("actions")):
@@ -2775,10 +3124,15 @@ def _generate_report_inner(
             anom_sec = sections.get("anomalies_and_flags", {})
             for fl in (anom_sec.get("flags", []) or []):
                 tp_anomalies.append(str(fl))
+            # Pass the authoritative §09B case type so the tactical plan uses the
+            # single source of truth (Step 7 detector) instead of re-deriving it.
+            _tp_case_type = str(
+                (sections.get("pattern_analysis") or {}).get("case_type") or "").lower()
             tactical_plan_result = run_tactical_plan_agent(
                 person,
                 assets_data or [],
-                {"anomalies": tp_anomalies, "person": person, "subject": subject},
+                {"anomalies": tp_anomalies, "person": person, "subject": subject,
+                 "case_type": _tp_case_type},
                 user_id,
             )
         except Exception as _tp_exc:

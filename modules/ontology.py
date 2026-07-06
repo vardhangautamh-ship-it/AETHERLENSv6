@@ -2364,19 +2364,29 @@ def build_digital_twin(all_data_sources: dict, raw_documents: list = None) -> On
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# PATTERN-ANALYSIS ONTOLOGY LAYER  (Step 2)
+# TYPED CASE ONTOLOGY  (Phase 0.5 backbone)
 # ══════════════════════════════════════════════════════════════════════════════
-# A LIGHTWEIGHT, typed projection of the resolved case used solely by
-# modules/pattern_rules.py to run deterministic IF-THEN pattern detection.
+# A LIGHTWEIGHT, typed projection of the resolved case. build_ontology() below
+# constructs it ONCE per report (report_generator._generate_report_inner keeps
+# it as `_onto`), and it is the SINGLE source for:
+#   * §09B pattern analysis  — pattern_engine.analyze_ontology(_onto) runs the
+#     deterministic IF-THEN rules in pattern_rules.py over it;
+#   * §05 Network Map / §08 Key Associations — named persons/organizations;
+#   * §03 Platform Presence — PlatformAccount entities (platform-typed source
+#     columns, per-file cited);
+#   * §04 Location Data — Location entities (location-typed columns / labelled
+#     fields, per-file cited).
 #
 # This is intentionally SEPARATE in purpose from the digital-twin Entities above
 # (PersonEntity, PhoneEntity, …), which are heavyweight graph nodes carrying ids,
-# confidence, and DB persistence. The pattern layer is an in-memory, read-only
-# *view*: each entity exposes exactly — and only — the attributes a pattern rule
-# reads (the contract documented at the top of pattern_rules.py). They live in
-# this one ontology module (no second ontology file); the names do not collide
-# with the *Entity classes. Every field below earns its place by being read by a
-# rule — nothing speculative.
+# confidence, and DB persistence, and which serve the app's digital-twin views
+# (app.py build_digital_twin) and §16 risk scoring — NOT the report sections
+# listed above. The typed layer is an in-memory, read-only *view*: each entity
+# exposes exactly — and only — the attributes a consumer reads (pattern rules'
+# contract is documented at the top of pattern_rules.py). They live in this one
+# ontology module (no second ontology file); the names do not collide with the
+# *Entity classes. Every field below earns its place by being read by a rule or
+# a report section — nothing speculative.
 #
 # The graph relationships used by the rules (e.g. NETWORK_HUB, SHELL_LAYERING)
 # reuse the EXISTING NetworkX graph from relationship_mapper — no parallel graph.
@@ -2447,6 +2457,30 @@ class CommChannel:
 
 
 @dataclass
+class Location:
+    """A place tied to the case by location-typed evidence: a location-named
+    column on a source row, or a location-labelled line in document text.
+    Unlabelled lines (headers, letterheads, classification stamps) carry no
+    label and can never enter. Consumed by §04 and, since Phase 1, by the
+    BORDER_MOVEMENT_CLUSTER immigration rule."""
+    name: str = ""
+    kind: str = "stated"          # stated | tower | address — from the evidence
+    source: str = ""              # the actual source file(s)
+
+
+@dataclass
+class PlatformAccount:
+    """An online platform account attested by a platform-named column on a
+    source row. The handle is kept ONLY when a username-bearing column supplied
+    it and it passes the schema-label test — a column label ("subscriber",
+    "encryption") is never a handle. Consumed by §03 — no pattern rule reads it."""
+    platform: str = ""
+    handle: str = ""
+    url: str = ""
+    source: str = ""              # the actual source file(s)
+
+
+@dataclass
 class LegalProceeding:
     """A legal/enforcement event. kind ∈ loc|enforcement|inquiry|notice.
     (rules: OFFSHORE_FLIGHT_RISK, ENFORCEMENT_HISTORY_ESCALATION,
@@ -2493,6 +2527,8 @@ class Ontology:
     legal_proceedings: list = field(default_factory=list)
     deletion_events: list = field(default_factory=list)
     timeline_events: list = field(default_factory=list)
+    locations: list = field(default_factory=list)           # §04 (no rule reads)
+    platform_accounts: list = field(default_factory=list)   # §03 (no rule reads)
 
     def counts(self) -> dict:
         """Population summary — handy for tests and the report header."""
@@ -2503,6 +2539,8 @@ class Ontology:
             "legal_proceedings": len(self.legal_proceedings),
             "deletion_events": len(self.deletion_events),
             "timeline_events": len(self.timeline_events), "flags": len(self.flags),
+            "locations": len(self.locations),
+            "platform_accounts": len(self.platform_accounts),
         }
 
 
@@ -2668,6 +2706,36 @@ _PA_ENFORCEMENT_INDICATORS = _PA_ENFORCEMENT_AGENCIES | {
 # Person-name-ish columns used to build the relationship graph from records.
 _PA_COL_CONTACT = {"contactname", "contact", "peer", "associate", "counterpart",
                    "party", "peername", "alias", "handler", "supplier"}
+
+# Location-typed evidence vocabulary — §04 admits ONLY values whose column name
+# (or text-line label) contains one of these WORDS (word-level match: the header
+# is split on separators, so "tower_location" matches via "location" while
+# "allocation" does not). Extend with one word to support a new header.
+_PA_COL_LOCATION = {"location", "address", "city", "residence", "residency",
+                    "home", "hometown", "place", "district", "region", "town",
+                    "village", "locality", "state"}
+
+# Generic data-schema label words. A value whose words ALL come from this set is
+# a column label / record descriptor leaking through as data ("subscriber",
+# "encryption", "platform_name") — never a real handle, platform, or place.
+# Structural test, not a blocklist of observed artifacts: any label-shaped
+# value is rejected, including combinations ("user id", "account status").
+_PA_SCHEMA_LABEL_TOKENS = {
+    "platform", "username", "handle", "user", "userid", "subscriber",
+    "subscription", "encryption", "encrypted", "account", "status", "action",
+    "device", "metadata", "record", "records", "data", "notes",
+    "note", "name", "type", "id", "code", "ref", "line", "column", "field",
+    "value", "unknown", "anonymous", "confirmed", "pending", "verified",
+    "date", "time", "source", "restricted", "classified", "confidential",
+    "profile", "exit", "node", "log", "entry"}
+
+
+def _pa_is_schema_label(value) -> bool:
+    """True when EVERY word of `value` is a generic schema/label word — the
+    structural test that keeps column labels ('subscriber', 'platform_name')
+    from surfacing as usernames, platforms, or locations."""
+    words = [w for w in _pa_re.split(r"[^a-z0-9]+", _pa_norm(value)) if w]
+    return bool(words) and all(w in _PA_SCHEMA_LABEL_TOKENS for w in words)
 _PA_YEAR_RE = _pa_re.compile(r"\b(19|20)\d{2}\b")
 
 
@@ -3065,7 +3133,7 @@ def _pa_normalize_entities(entities) -> dict:
 
 def build_ontology(person, entities=None, flags=None, timeline=None,
                    graph=None, phones=None, financial_data=None, records=None,
-                   texts=None) -> Ontology:
+                   texts=None, documents=None) -> Ontology:
     """THE consolidation point: raw entity-resolution output → typed Ontology.
 
     Defensive by design — every argument is optional and each field is parsed
@@ -3087,6 +3155,11 @@ def build_ontology(person, entities=None, flags=None, timeline=None,
                        origin for deletion/legal/comm events. When a date column
                        and the semantic share a row, the date is preserved; flag
                        text (which is dateless) is only a last-resort fallback.
+      documents      : list of ingest-result dicts (filename + structured_rows +
+                       raw text). The per-FILE origin for the typed §03 platform
+                       accounts and §04 locations, so provenance (the actual
+                       source file) travels with each value. Optional — rule
+                       inputs above are unaffected when omitted.
     """
     entities = _pa_normalize_entities(entities)   # HOP 1: list-or-dict → dict
     person = person or {}
@@ -3111,6 +3184,22 @@ def build_ontology(person, entities=None, flags=None, timeline=None,
         if nm and nm != onto.subject_name:
             onto.persons.append(Person(name=nm, role=str(_pa_get(p, "role", "") or ""),
                                        is_subject=False, source=str(_pa_get(p, "source", "") or "")))
+
+    # Contacts named on structured rows (call records' contact_name, handler,
+    # supplier, …) become typed Persons — the humans §08 cites. Same contact-column
+    # vocabulary and structural name test _pa_graph_from_records uses; dedup by
+    # token; the supplied graph is NOT modified (graph rules see no new nodes).
+    _seen_person = {_pa_token(p.name) for p in onto.persons}
+    for row in _pa_listify(records):
+        if not isinstance(row, dict):
+            continue
+        for col, val in row.items():
+            if _pa_token(col) not in _PA_COL_CONTACT:
+                continue
+            nm = str(val or "").strip()
+            if _pa_personish(nm) and _pa_token(nm) not in _seen_person:
+                onto.persons.append(Person(name=nm, is_subject=False, source="record contact"))
+                _seen_person.add(_pa_token(nm))
 
     # ── flags (arg + person.anomaly_flags + behavioral_flags) ────────────────
     onto.flags = _pa_flatten_flags(flags, _pa_get(person, "anomaly_flags"),
@@ -3359,33 +3448,123 @@ def build_ontology(person, entities=None, flags=None, timeline=None,
             date=str(edate or ""), significance=str(esig or "LOW"),
             source=str(_pa_get(ev, "source", "") or ""), description=str(edesc or "")))
 
-    # ── TEMP DIAGNOSTIC (remove after diagnosis) — env-gated, no logic change ──
-    import os as _os
-    if _os.environ.get("PA_DEBUG"):
-        print("\n========== [PA_DEBUG] build_ontology() POPULATED ONTOLOGY ==========")
-        print(f"  subject_name   : {onto.subject_name!r}")
-        print(f"  arg types      : entities={type(entities).__name__} "
-              f"financial_data={type(financial_data).__name__} "
-              f"flags={type(flags).__name__} phones={type(phones).__name__}")
-        print(f"  counts         : {onto.counts()}")
-        print(f"  PhoneNumbers   ({len(onto.phones)}): "
-              f"{[(p.number, p.type) for p in onto.phones]}")
-        print(f"  Organizations  ({len(onto.organizations)}): "
-              f"{[(o.name, o.type, o.jurisdiction, o.offshore) for o in onto.organizations]}")
-        print(f"  Transactions   ({len(onto.transactions)}): "
-              f"{[(t.direction, t.amount, t.cross_border, t.structured) for t in onto.transactions]}")
-        print(f"  Properties     ({len(onto.properties)}): "
-              f"{[(p.jurisdiction, p.foreign) for p in onto.properties]}")
-        print(f"  CommChannels   ({len(onto.comm_channels)}): "
-              f"{[(c.type, c.encrypted, c.foreign_exit) for c in onto.comm_channels]}")
-        print(f"  LegalProceed.  ({len(onto.legal_proceedings)}): "
-              f"{[(lp.kind, lp.agency, lp.status, lp.date) for lp in onto.legal_proceedings]}")
-        print(f"  DeletionEvents ({len(onto.deletion_events)}): "
-              f"{[(d.timestamp, d.target) for d in onto.deletion_events]}")
-        print(f"  TimelineEvents ({len(onto.timeline_events)}): "
-              f"{[(e.date, e.significance) for e in onto.timeline_events][:8]}")
-        print(f"  flags ({len(onto.flags)}): {onto.flags}")
-        print("===================================================================\n")
-    # ── END TEMP DIAGNOSTIC ──────────────────────────────────────────────────
+    # ── typed §03/§04 evidence — platform accounts + locations (Phase 0.5 Step 3)
+    # Harvested per DOCUMENT so provenance (the actual source file) travels with
+    # every value. Admission is structural: a platform must come from a
+    # platform-named column; a handle only from a username-bearing column; a
+    # location only from a location-named column or a location-labelled text
+    # line. Unlabelled lines (headers, letterheads) carry no label and can never
+    # become locations; label-shaped values ("subscriber", "platform_name") are
+    # rejected by _pa_is_schema_label. Column vocabularies are shared with
+    # entity_resolution — ONE vocabulary, two readers. No pattern rule reads
+    # either list, so §09B is provably unaffected.
+    try:
+        from modules.entity_resolution import (
+            _PLATFORM_COL_NAMES as _er_plat, _HANDLE_COL_NAMES as _er_handle,
+            _URL_COL_NAMES as _er_url, _STATUS_COL_NAMES as _er_status,
+            _CONFIRMED_STATUS_VALUES as _er_confirmed,
+            _NOISE_HANDLE_TOKENS as _er_noise)
+    except Exception:                        # keep this module importable alone
+        _er_plat = {"platform", "site", "service", "network", "social"}
+        _er_handle = {"username", "handle", "user", "account", "screen_name"}
+        _er_url = {"url", "link", "profile", "profile_url"}
+        _er_status = {"status", "state", "verification", "verified", "confirmed"}
+        _er_confirmed = {"confirmed", "verified", "active", "ok", "true", "yes", "valid"}
+        _er_noise = set()
+    _plat_cols = {_pa_token(c) for c in _er_plat}
+    _handle_cols = {_pa_token(c) for c in _er_handle}
+    _url_cols = {_pa_token(c) for c in _er_url}
+    _status_cols = {_pa_token(c) for c in _er_status}
+    _exit_cols = {_pa_token(c) for c in _PA_COL_EXITNODE}
+
+    def _noise_handle(h) -> bool:
+        lc = str(h or "").lstrip("@").lower().strip()
+        return (not lc or _pa_is_schema_label(lc)
+                or lc in _er_noise or any(t and t in lc for t in _er_noise))
+
+    def _loc_col(header) -> bool:
+        """Word-level match: 'tower_location' → yes via 'location';
+        'allocation' → no; VPN-exit columns are channels, not places."""
+        if _pa_token(header) in _exit_cols:
+            return False
+        words = [w for w in _pa_re.split(r"[^a-z0-9]+", _pa_norm(header)) if w]
+        return any(w in _PA_COL_LOCATION for w in words)
+
+    _loc_by_token, _acct_by_token = {}, {}
+
+    def _add_location(val, kind, fname):
+        v = str(val or "").strip()
+        if len(v) < 3 or _pa_is_schema_label(v) or _PA_DATE_RE.search(v):
+            return
+        if sum(ch.isdigit() for ch in v) > len(v) // 2:   # codes/IPs, not places
+            return
+        k = _pa_token(v)
+        if not k:
+            return
+        ex = _loc_by_token.get(k)
+        if ex is None:
+            loc = Location(name=v, kind=kind, source=fname)
+            _loc_by_token[k] = loc
+            onto.locations.append(loc)
+        elif fname not in ex.source and len(ex.source) < 120:
+            ex.source += f", {fname}"
+
+    for doc in _pa_listify(documents):
+        if not isinstance(doc, dict):
+            continue
+        fname = (str(doc.get("filename") or doc.get("name") or "").strip()
+                 or "uploaded document")
+        for row in _pa_listify(doc.get("structured_rows")):
+            if not isinstance(row, dict):
+                continue
+            plat = handle = url = status = ""
+            for col, val in row.items():
+                ct, v = _pa_token(col), str(val or "").strip()
+                if not v or v.lower() in ("none", "nan"):
+                    continue
+                if ct in _plat_cols and not plat:
+                    plat = v
+                elif ct in _handle_cols and not handle:
+                    handle = v
+                elif ct in _url_cols and not url:
+                    url = v
+                elif ct in _status_cols and not status:
+                    status = v.lower()
+                if _loc_col(col):
+                    _kind = ("tower" if "tower" in ct else "address"
+                             if _pa_any_token(col, ("address", "home", "residence"))
+                             else "stated")
+                    _add_location(v, _kind, fname)
+            if not plat or _pa_is_schema_label(plat):
+                continue
+            if status and status not in _er_confirmed:
+                continue                       # explicitly non-confirmed → skip
+            if _noise_handle(handle):
+                handle = ""
+            pk = _pa_token(plat)
+            ex = _acct_by_token.get(pk)
+            if ex is None:
+                acct = PlatformAccount(platform=plat, handle=handle.lstrip("@"),
+                                       url=url, source=fname)
+                _acct_by_token[pk] = acct
+                onto.platform_accounts.append(acct)
+            else:
+                if handle and not ex.handle:   # a later row supplies the handle
+                    ex.handle = handle.lstrip("@")
+                if url and not ex.url:
+                    ex.url = url
+                if fname not in ex.source and len(ex.source) < 120:
+                    ex.source += f", {fname}"
+        # Location-LABELLED text lines ("Home address: Salt Lake…") — the label
+        # IS the typed evidence; a bare header line has no label, so it never
+        # matches. Long prefixes are prose, not labels.
+        for line in str(doc.get("raw_text") or doc.get("full_text")
+                        or doc.get("text") or "").splitlines():
+            label, sep, val = line.partition(":")
+            if not sep or len(label.strip()) > 30:
+                continue
+            if _loc_col(label):
+                _add_location(val, "address" if _pa_any_token(
+                    label, ("address", "home", "residence")) else "stated", fname)
 
     return onto

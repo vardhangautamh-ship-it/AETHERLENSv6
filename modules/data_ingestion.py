@@ -190,6 +190,11 @@ NAME_STOPWORDS = {
     # Operation / investigation title words — never part of a human name
     "Cyber", "Incident", "Inquiry", "Investigation", "Operation",
     "Ghostwire", "Jupiter", "Sector", "Case",
+    # Document role words that precede a name in case-file prose ("Subject
+    # Bashir Alam Ansari operates…") and bleed into the capture as a leading
+    # token — never part of the name itself.
+    "Subject", "Suspect", "Accused", "Alias", "Primary", "Victim",
+    "Witness", "Respondent", "Complainant", "Applicant", "Petitioner",
 }
 
 
@@ -204,12 +209,17 @@ def _normalize_name_match(raw: str) -> str | None:
 
       * violation/label column bleed  ->  'Abbas Qureshi Overspeeding'
       * doubled-name (column restart) ->  'Farhan Abbas Qureshi Farhan'
+      * leading role-word bleed       ->  'Subject Bashir Alam Ansari'
 
-    Strips trailing noise tokens (NAME_STOPWORDS — cities, violations, labels)
-    and collapses a trailing token that merely repeats an earlier one. Returns
-    the cleaned 2-4 word name, or None if nothing valid survives.
+    Strips leading and trailing noise tokens (NAME_STOPWORDS — cities,
+    violations, labels, document role words) and collapses a trailing token
+    that merely repeats an earlier one. Returns the cleaned 2-4 word name,
+    or None if nothing valid survives.
     """
     words = raw.split()
+    # Drop leading role/title tokens (case-file prose: "Subject <name> …").
+    while len(words) > 2 and words[0] in NAME_STOPWORDS:
+        words.pop(0)
     # Drop trailing noise tokens (e.g. a violation column that bled onto the end).
     while len(words) > 2 and words[-1] in NAME_STOPWORDS:
         words.pop()
@@ -1056,6 +1066,29 @@ def ingest_file(
 
     # Normalize entities
     entities = normalize_entities(raw_text, filename)
+
+    # ── Whole-cell gate for STRUCTURED files (RC-02 fix) ──────────────────────
+    # For CSV/XLSX the free-text name scanner runs over a space-padded table
+    # render (df.to_string), so a capture can span TWO adjacent cells
+    # ("Daniyal Farooqui Session" = name cell + platform cell) or take part of
+    # one ("Suresh Nair" from "Vikram Suresh Nair"). In a structured file every
+    # genuine name IS a complete cell, so keep only captures that match a whole
+    # cell value (case/whitespace-insensitive). Purely structural — no
+    # vocabulary — and prose files (PDF/TXT) are untouched.
+    if structured_rows and entities.get("names"):
+        try:
+            from modules.entity_resolution import normalize_name_key as _nkey
+        except Exception:
+            _nkey = lambda s: " ".join(str(s or "").lower().split())
+        _cell_keys = {
+            _nkey(v) for row in structured_rows if isinstance(row, dict)
+            for v in row.values() if str(v or "").strip()
+        }
+        _kept = [n for n in entities["names"] if _nkey(n.get("value", "")) in _cell_keys]
+        if len(_kept) != len(entities["names"]):
+            _dropped = [n["value"] for n in entities["names"] if n not in _kept]
+            print(f"[INGEST] Dropped {len(_dropped)} cross-cell name artifact(s): {_dropped[:5]}")
+        entities["names"] = _kept
 
     # Prepend primary_subject into names list so it ranks first
     if primary_subject:
