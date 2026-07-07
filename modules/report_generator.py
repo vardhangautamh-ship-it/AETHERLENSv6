@@ -1920,6 +1920,46 @@ def _build_timeline_intelligence_section(
     }
 
 
+# Maximal run of 4+ name-cased tokens — the shortest text that can contain a
+# doubled 2-word name. Dates ("2023-03-22") and code tokens ("CRYPTO_PU") are
+# not name-cased, so they can never be part of a matched run.
+_NAME_RUN_RE = re.compile(r"(?:[A-Z][a-z'’.\-]+(?:[ \t]+|$)){4,}")
+
+
+def _clean_timeline_display(text: str) -> str:
+    """Collapse a doubled-name column-restart artifact in a timeline event's
+    DISPLAY text (e.g. "Vikram Suresh Nair Vikram Suresh Nair CRYPTO_PU" ->
+    "Vikram Suresh Nair CRYPTO_PU"). Display-only — the event dict and every
+    analysis path are untouched.
+
+    The collapse itself is done by the single canonical name normaliser
+    (data_ingestion._normalize_name_match) so this path can never diverge from
+    the agent/Step-5 cleaning. A run is only handed to the normaliser when it
+    carries the column-restart signature — its trailing token(s) restart the
+    run's own opening token(s) — so legitimately distinct adjacent names
+    ("Anil Kumar Sunil Kumar", caller/receiver columns) pass through unchanged.
+    """
+    try:
+        from modules.data_ingestion import _normalize_name_match as _nnm
+    except Exception:
+        return text
+
+    def _fix(m):
+        run = m.group(0)
+        words = run.split()
+        low = [w.lower() for w in words]
+        # Column-restart signature: some trailing block repeats the run's own
+        # opening block ("A B C A B C" or the truncated "A B C A").
+        if not any(low[-k:] == low[:k] for k in range(1, len(words) // 2 + 1)):
+            return run
+        cleaned = _nnm(" ".join(words))
+        if cleaned and cleaned != " ".join(words):
+            return cleaned + run[len(run.rstrip()):]  # keep trailing whitespace
+        return run
+
+    return _NAME_RUN_RE.sub(_fix, str(text or ""))
+
+
 def _build_sections_local(
     person:          dict,
     search_results:  dict,
@@ -1941,7 +1981,9 @@ def _build_sections_local(
 
     locations  = person.get("location_stated", [])
     events     = [
-        f"{e['normalized']}: {e.get('context', e.get('description', ''))[:60]} — Source: {e['source']}"
+        f"{e['normalized']}: "
+        f"{_clean_timeline_display(e.get('context', e.get('description', '')))[:60]}"
+        f" — Source: {e['source']}"
         for e in tl.get("events", [])[:20]
     ]
 
@@ -2740,7 +2782,8 @@ def _generate_report_inner(
         "timeline": {
             "event_count": (timeline_data or {}).get("count", 0),
             "events": [
-                (e.get("normalized", ""), e.get("source", ""), e.get("context", "")[:60])
+                (e.get("normalized", ""), e.get("source", ""),
+                 _clean_timeline_display(e.get("context", ""))[:60])
                 for e in (timeline_data or {}).get("events", [])[:25]
             ],
             "gaps":      (timeline_data or {}).get("gaps", []),
