@@ -415,8 +415,8 @@ def analyze_behavioral_patterns(
     """
     Clean signal-vs-noise behavioral analysis.
 
-    Separates *genuine* behavioral signals (night-burst activity, burner-phone
-    diversity, VPN use) from *passive noise* (receiving marketing spam,
+    Separates *genuine* behavioral signals (night-burst activity, multi-line
+    phone diversity, VPN use) from *passive noise* (receiving marketing spam,
     newsletter/alert emails that the subject did not send).
 
     Args:
@@ -455,11 +455,15 @@ def analyze_behavioral_patterns(
             "Late night / night-time burst activity detected across multiple sources"
         )
 
-    # Multiple distinct phones → possible burner/secondary number strategy
+    # Multiple distinct phones → secondary-number strategy possible. Phone count
+    # alone cannot establish a burner; that determination is deterministic
+    # (§09B OPERATIONAL_SECURITY reads PhoneNumber.type), so this AI-labelled
+    # flag never asserts "burner" — §07 and §09B can't contradict each other.
     unique_phones = list({str(p).strip() for p in phones if p})
     if len(unique_phones) >= 5:
         flags.append(
-            "Multiple phone numbers in use (possible burner/secondary numbers)"
+            "Multiple phone numbers in use (secondary numbers possible — "
+            "see deterministic burner assessment in Pattern Analysis)"
         )
 
     # Spam exposure only flagged when *extreme* volume co-occurs with night ops —
