@@ -643,6 +643,45 @@ def _entry_indicators(onto) -> list[str]:
     return _dedup_texts(hits)
 
 
+# Source values synthesised INSIDE the ontology builder rather than read from a
+# case file (LegalProceeding/CommChannel rows from _pa_events_from_pairs carry
+# the literal "record"). A "sources:" line must cite actual files, so these
+# never enter a rule's supporting_sources — the same evidence's file of origin
+# arrives via the timeline-event that carried its text (_text_sources).
+_PLACEHOLDER_SOURCES = {"record"}
+
+
+def _text_sources(onto, hits) -> list[str]:
+    """Source files of the timeline events whose descriptions supplied the given
+    _scannable_texts hits (matched by the same normalised-prefix key
+    _dedup_texts uses). Flags carry no source and contribute nothing."""
+    keys = {_norm(h)[:80] for h in (hits or []) if _norm(h)[:80]}
+    out = set()
+    for ev in _attr(onto, "timeline_events", []) or []:
+        d = str(_attr(ev, "description", "") or "")
+        if d and _norm(d)[:80] in keys:
+            src = str(_attr(ev, "source", "") or "").strip()
+            if src and _norm(src) not in _PLACEHOLDER_SOURCES:
+                out.add(src)
+    return sorted(out)
+
+
+def _merge_sources(*source_lists) -> list[str]:
+    """Union of already-collected source lists, placeholder-free and sorted.
+    Timeline-event sources carry a "Document: " display prefix while entity
+    sources carry the bare filename — strip the prefix so the same file is
+    cited once, as its actual filename."""
+    out = set()
+    for lst in source_lists:
+        for s in lst or []:
+            s = str(s).strip()
+            if s.lower().startswith("document:"):
+                s = s.split(":", 1)[1].strip()
+            if s and _norm(s) not in _PLACEHOLDER_SOURCES:
+                out.add(s)
+    return sorted(out)
+
+
 def rule_foreign_sim_corroborated(onto) -> PatternMatch | None:
     """FOREIGN_SIM_CORROBORATED — foreign-origin lines + ≥2 behavioural classes.
 
@@ -679,6 +718,16 @@ def rule_foreign_sim_corroborated(onto) -> PatternMatch | None:
 
     triggers = [f"{len(foreign)} foreign-origin phone line(s) "
                 f"(one signal among several — never sole)"] + classes
+    # Sources mirror the cited evidence exactly: the foreign lines plus every
+    # behavioural class that fired above — nothing more, nothing less.
+    sources = _merge_sources(
+        _sources(foreign),
+        _sources(remit) if len(remit) >= 3 else [],
+        _text_sources(onto, fraud),
+        _sources(borders),
+        _sources(phones) if len(phones) >= 4 else [],
+        _text_sources(onto, entry),
+    )
     confidence = "STRONG" if len(classes) >= 3 else "MODERATE"
     explanation = (
         f"Foreign-origin phone lines corroborated by {len(classes)} independent "
@@ -692,7 +741,7 @@ def rule_foreign_sim_corroborated(onto) -> PatternMatch | None:
         confidence=confidence,
         triggers_met=triggers,
         plain_explanation=explanation,
-        supporting_sources=_sources(foreign, remit, borders),
+        supporting_sources=sources,
     )
 
 
@@ -776,7 +825,10 @@ def rule_document_fraud_cluster(onto) -> PatternMatch | None:
         confidence=confidence,
         triggers_met=triggers,
         plain_explanation=explanation,
-        supporting_sources=_sources(official),
+        # The fraud-indicator texts themselves are the primary cited evidence;
+        # their files of origin come via the timeline events that carried them.
+        supporting_sources=_merge_sources(_text_sources(onto, inds),
+                                          _sources(official)),
     )
 
 
@@ -813,7 +865,8 @@ def rule_sim_farming_signature(onto) -> PatternMatch | None:
         confidence=confidence,
         triggers_met=triggers,
         plain_explanation=explanation,
-        supporting_sources=_sources(lines),
+        supporting_sources=_merge_sources(_sources(lines),
+                                          _text_sources(onto, farm_flags)),
     )
 
 
@@ -850,7 +903,8 @@ def rule_border_movement_cluster(onto) -> PatternMatch | None:
         confidence=confidence,
         triggers_met=triggers,
         plain_explanation=explanation,
-        supporting_sources=_sources(borders),
+        supporting_sources=_merge_sources(_sources(borders),
+                                          _text_sources(onto, moves)),
     )
 
 
@@ -889,7 +943,8 @@ def rule_entry_record_inconsistency(onto) -> PatternMatch | None:
         confidence=confidence,
         triggers_met=triggers,
         plain_explanation=explanation,
-        supporting_sources=_sources(official),
+        supporting_sources=_merge_sources(_text_sources(onto, inds),
+                                          _sources(official)),
     )
 
 
