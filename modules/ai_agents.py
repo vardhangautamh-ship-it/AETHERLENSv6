@@ -293,16 +293,21 @@ def validate_agent_output(agent_output: dict, confirmed_entities: list) -> dict:
 
 # ══════════════════════════════════════════════════════════════════════════════
 # AGENT 1 — RISK ASSESSMENT (Hybrid v2)
-# Deterministic base_score + keyword weights → LLM only for explanation text.
-# Hard-cap applied when data is sparse so we never overstate confidence.
+# Deterministic base_score (saturating count model) + the severity keyword
+# tables below for the per-factor display weights → LLM only for explanation
+# text. Hard-cap applied when data is sparse so we never overstate confidence.
 # ══════════════════════════════════════════════════════════════════════════════
 
-# Severity-weighted keywords spanning all Indian crime types
+# Severity-weighted keywords spanning all Indian crime types — the vocabulary
+# behind _factor_weight (per-factor §16 display weights). Extensible sets, no
+# case-specific literals.
 _RISK_HIGH_SEVERITY: list = [
     # Financial / PMLA / narcotics
     ("PMLA",                  18), ("NDPS",              18), ("NCB",             15),
     ("HAWALA",                15), ("CASH DEPOSIT",      12), ("FEMA",            15),
-    ("ED ",                   12), ("MONEY LAUNDER",     18),
+    ("ED ",                   12), ("MONEY LAUNDER",     18), ("ECIR",            18),
+    ("KICKBACK",              15), ("BENAMI",            15), ("LAYERING",        15),
+    ("SHELL",                 12),
     # Cyber / IT Act
     ("IT ACT",                20), ("INFORMATION TECHNOLOGY", 18),
     ("SECTION 43",            18), ("SECTION 66",        18), ("SECTION 69",      18),
@@ -332,6 +337,27 @@ _RISK_MEDIUM_SEVERITY: list = [
     ("UAE",       8), ("+971",        8), ("SCRAPING",    8),
     ("VPN",       6), ("NIGHT",       5), ("2AM",         6), ("1AM", 6),
 ]
+
+def _factor_weight(text) -> int:
+    """Deterministic per-factor severity weight for the §16 display (1-10).
+
+    Matches the factor/evidence text against the severity keyword tables
+    above, so an active PMLA/ECIR proceeding renders heavier than an opsec
+    note or a generic volume line. DISPLAY ONLY: the overall risk score is
+    the saturating count model in run_risk_agent and never reads these
+    weights — differentiation here cannot inflate the score.
+    """
+    t = str(text or "").upper()
+    if t.startswith(("ANOMALIES DETECTED", "DATA SOURCES")):
+        return 2                        # generic volume notes, not evidence
+    best = 0
+    for kw, w in _RISK_HIGH_SEVERITY + _RISK_MEDIUM_SEVERITY:
+        if w > best and kw in t:
+            best = w
+    if not best:
+        return 5                        # unmatched factor text — neutral middle
+    return max(1, min(10, round(best / 2)))
+
 
 _MITIGATION_BY_LEVEL = {
     "LOW":      "Continue routine monitoring. No immediate action required.",
@@ -419,8 +445,6 @@ def run_risk_agent(
     # Soft ceiling 90, floor 0 — only the most extreme cases approach the ceiling.
     base_score = int(max(0, min(90, round(base_score))))
 
-    keyword_factors: list = []
-
     # Deterministic level (always derived from score — LLM cannot override)
     if base_score >= 75:   level = "CRITICAL"
     elif base_score >= 55: level = "HIGH"
@@ -472,14 +496,19 @@ Return ONLY valid JSON (no markdown, no code blocks):
         print(f"[RISK] LLM explanation failed: {e}")
 
     # ── STEP 3: MERGE — deterministic values always win ────────────────────────
-    key_factors = llm_result.get("key_factors") or [
-        f.get("factor", "") for f in keyword_factors[:4]
-    ] or [f"Anomalies detected: {n_anomalies}", f"Data sources: {sources}"]
+    # Factor list: the LLM's explanation factors when the engine answered,
+    # else the top confirmed flags ranked by severity — evidence-based; the
+    # generic volume notes appear only when a case has no flags at all.
+    key_factors = list(llm_result.get("key_factors") or [])
+    if not key_factors:
+        key_factors = ([f[:90] for f in sorted(flags, key=lambda f: -_factor_weight(f))[:4]]
+                       or [f"Anomalies detected: {n_anomalies}", f"Data sources: {sources}"])
 
-    risk_factors = (
-        [{"factor": kf, "weight": 10, "evidence": kf, "source": "hybrid"} for kf in key_factors[:5]]
-        if key_factors else keyword_factors[:5]
-    )
+    # Per-factor severity weight (1-10, deterministic, display-only) — an
+    # active enforcement proceeding no longer renders at the same weight as a
+    # soft indicator. base_score above is already fixed and never reads these.
+    risk_factors = [{"factor": kf, "weight": _factor_weight(kf), "evidence": kf,
+                     "source": "hybrid"} for kf in key_factors[:5]]
     # De-duplicate factors by normalised text so the same underlying flag never
     # appears twice under slightly different labels (e.g. "IT Act indicator" and
     # "Violation Flagged indicator" both describing one IT-Act flag).
