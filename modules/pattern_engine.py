@@ -39,13 +39,40 @@ _CONFIDENCE_RANK = {"STRONG": 0, "MODERATE": 1, "WEAK": 2}
 _CASE_PRIORITY = [PR.FINANCIAL, PR.CYBER, PR.IMMIGRATION, PR.GENERAL]
 
 
-def _detect_case_type(patterns) -> str:
+def _evidence_case_type(onto) -> str:
+    """Evidence fallback for the GENERAL branch (patterns fired, none typed).
+
+    The financial rules encode NARROW typologies (structuring, offshore
+    routing); a corruption/kickback case with rich typed money movement can
+    miss every one of them while being plainly financial — the detector would
+    then report GENERAL despite the ontology holding typed transactions and
+    shell entities. This tier classifies from that evidence directly:
+    deterministic counts over the typed ontology, no rule logic involved, and
+    a fired typed pattern always outranks it (we only get here when none
+    fired). Cyber/immigration rule coverage is broad enough that their cases
+    fire typed patterns, so no equivalent tier exists for them.
+    """
+    txns = PR._attr(onto, "transactions", []) or []
+    orgs = PR._attr(onto, "organizations", []) or []
+    shells = [o for o in orgs
+              if PR._norm(PR._attr(o, "type")) in ("shell", "front")]
+    # Financial character = repeated typed money movement, or money movement
+    # routed through shell/front entities. A single stray payment row stays
+    # GENERAL (conservatism over completeness).
+    if len(txns) >= 3 or (txns and shells):
+        return PR.FINANCIAL
+    return PR.GENERAL
+
+
+def _detect_case_type(patterns, onto=None) -> str:
     """Deterministic case-type detection from the fired patterns.
 
     Financial/cyber/immigration patterns determine the case type; the
     cross-cutting general patterns (NETWORK_HUB, TIMELINE_CLUSTER) only break a
     tie or stand alone if nothing else fired. STRONG matches count double so a
     single strong signal outweighs several weak ones — still fully deterministic.
+    When ONLY general patterns fired, the typed ontology evidence (if supplied)
+    breaks the blindness — see _evidence_case_type.
     """
     if not patterns:
         return "undetermined"
@@ -69,8 +96,8 @@ def _detect_case_type(patterns) -> str:
             best_strong = max(strongs.get(ct, 0) for ct in tied)
             tied = [ct for ct in tied if strongs.get(ct, 0) == best_strong]
         return tied[0]
-    # only general patterns fired
-    return PR.GENERAL
+    # Only general patterns fired — fall back to typed ontology evidence.
+    return _evidence_case_type(onto) if onto is not None else PR.GENERAL
 
 
 # ── Phase 1 Step 7 — immigration risk weighting (evidence-based) ──────────────
@@ -113,7 +140,7 @@ def analyze_ontology(onto) -> dict:
     patterns = [m for _, m in fired]
 
     return {
-        "case_type_detected": _detect_case_type(patterns),
+        "case_type_detected": _detect_case_type(patterns, onto),
         "patterns": patterns,
         "summary_skeleton": [m.plain_explanation for m in patterns],
         "immigration_risk": _immigration_risk(patterns),
