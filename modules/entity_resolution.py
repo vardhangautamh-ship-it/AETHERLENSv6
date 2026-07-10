@@ -397,11 +397,20 @@ _NAME_SUFFIX_WORDS = {
 
 # Canonical anchored person-name matcher for STRUCTURED single-cell values
 # (CSV/Excel cells, resolved subject strings). Anchored ^...$ so it validates a
-# whole stripped cell as 2–4 Titlecase words; \s+ is safe here because a single
-# cell never spans columns or lines. Single source of truth — imported by
+# whole stripped cell; \s+ is safe here because a single cell never spans
+# columns or lines. Single source of truth — imported by
 # data_ingestion.extract_primary_subject_from_bytes and
 # relationship_mapper so the two never drift apart.
-RE_PERSON_NAME_CELL = re.compile(r"^([A-Z][a-z]{1,20}(?:\s+[A-Z][a-z]{1,20}){1,3})$")
+# A token is a Titlecase word OR a single-letter initial ("R."), 2–4 tokens,
+# at most one comma ("Kumar, Ramesh"), and at least one FULL word — so
+# "R. Ramesh Kumar", "R. Kumar", "Ramesh Kumar R.", "Kumar, Ramesh" all
+# validate while "R. S." (initials only) and org/label cells do not.
+RE_PERSON_NAME_CELL = re.compile(
+    r"^(?=[^,]*(?:,[^,]*)?$)"                       # at most one comma
+    r"((?=(?:[A-Z]\.,?\s+)*[A-Z][a-z])"             # ≥1 full Titlecase word
+    r"(?:[A-Z][a-z]{1,20}|[A-Z]\.)"
+    r"(?:,?\s+(?:[A-Z][a-z]{1,20}|[A-Z]\.)){1,3})$"
+)
 
 # Social-platform tokens that can never appear in a real human name.
 # Shared by _is_platform_suffix(), is_bad_subject_name(), and detect_all_conflicts().
@@ -866,6 +875,291 @@ def extract_platforms_from_rows(raw_documents: list) -> dict:
         "usernames":                 usernames,
         "confirmed_linked_profiles": linked,
     }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# IDENTIFIER→PERSON BINDING (anchor-based identity, step 1)
+# ══════════════════════════════════════════════════════════════════════════════
+# Identity is anchored on HARD identifiers (phone / account / gov-ID), never on
+# name spelling. This index records which name-forms each hard identifier
+# co-occurs with at ROW level, with ROLE-AWARE pairing so a row that mentions
+# two people (a CDR row has caller AND receiver) never cross-binds one
+# person's identifier to the other person's name:
+#   • token-shared headers bind (account_holder ↔ account_last4);
+#   • PHONE columns may fall back to the nearest name column by position
+#     (CDR convention: subject_name↔caller_number, contact_name↔receiver_number);
+#   • emails / IPs / refs NEVER bind positionally — a receipt's mailbox or a
+#     shared device IP on someone else's row must not fuse two people.
+# Wrong merges are invisible and catastrophic; unbound is always the safe state.
+
+_BIND_GENERIC_TOKENS = {"name", "number", "num", "no", "id", "code", "type",
+                        "last4", "last", "digits", "value", "full"}
+_BIND_REF_TOKENS     = {"ref", "reference", "txn", "transaction", "order",
+                        "receipt", "invoice", "case", "record", "row", "serial",
+                        "device", "ip", "tower", "duration", "amount", "date",
+                        "time", "seconds"}
+_BIND_PHONE_TOKENS   = {"phone", "mobile", "msisdn", "cell", "number",
+                        "tel", "telephone"}
+_BIND_ACCOUNT_TOKENS = {"account", "acct", "iban", "upi", "wallet"}
+_BIND_GOVID_TOKENS   = {"pan", "aadhaar", "aadhar", "passport", "voter",
+                        "licence", "license", "sim", "imei"}
+_BIND_EMAIL_TOKENS   = {"email", "mail"}
+
+
+def _bind_header_tokens(col) -> set:
+    return {t for t in re.split(r"[^a-z0-9]+", str(col).lower().strip()) if t}
+
+
+def _bind_id_col_type(col) -> str | None:
+    """Classify a column as a hard-identifier carrier, or None. Ref/event
+    columns (txn refs, order ids, device IPs, towers) are explicitly excluded —
+    they identify events or shared infrastructure, not people."""
+    toks = _bind_header_tokens(col)
+    if toks & _BIND_REF_TOKENS:
+        return None
+    if toks & _BIND_ACCOUNT_TOKENS:
+        return "account"
+    if toks & _BIND_GOVID_TOKENS:
+        return "govid"
+    if toks & _BIND_EMAIL_TOKENS:
+        return "email"
+    if toks & _BIND_PHONE_TOKENS:
+        return "phone"
+    return None
+
+
+def _bind_norm_phone(v) -> str | None:
+    digits = re.sub(r"\D", "", str(v or ""))
+    return digits[-10:] if len(digits) >= 10 else None
+
+
+def build_identifier_bindings(raw_documents: list) -> dict:
+    """Row-level hard-identifier → name-form index over all structured rows.
+
+    Returns {key: {"type": ..., "names": {form: count}, "sources": set,
+                   "display": original-ish value}}
+    where key is "phone:<last10>", "acct:<value>", "govid:<value>",
+    "email:<lowercased>". Name cells are validated with the same shared
+    person-shape + stopword machinery the extractor uses — a header or org
+    cell can never enter the index as a person."""
+    from modules.data_ingestion import (_is_name_column, NAME_STOPWORDS,
+                                        FUSION_NAME_SKIPLIST, _ORG_NAME_WORDS)
+
+    def _clean_name_cell(v) -> str | None:
+        v = " ".join(str(v or "").split())
+        if not v or v in FUSION_NAME_SKIPLIST or not RE_PERSON_NAME_CELL.match(v):
+            return None
+        toks = v.split()
+        while len(toks) > 2 and toks[-1].lower() in {t.lower() for t in toks[:-1]}:
+            toks.pop()
+        v = " ".join(toks)
+        if not RE_PERSON_NAME_CELL.match(v):
+            return None
+        words = [w for w in re.split(r"[,\s]+", v) if w]
+        if any(w in NAME_STOPWORDS or w in _ORG_NAME_WORDS for w in words):
+            return None
+        return v
+
+    index: dict = {}
+    for doc in raw_documents or []:
+        rows = (doc or {}).get("structured_rows") or []
+        src = str((doc or {}).get("filename") or (doc or {}).get("source") or "")
+        if not rows:
+            continue
+        cols = list(rows[0].keys()) if isinstance(rows[0], dict) else []
+        name_cols = [c for c in cols if _is_name_column(c)]
+        # A name column is never itself an identifier carrier (account_holder
+        # is the holder's NAME; treating it as an account key would create
+        # self-binding noise entries).
+        id_cols = [(c, t) for c in cols
+                   if c not in name_cols and (t := _bind_id_col_type(c))]
+        if not name_cols or not id_cols:
+            continue
+        col_pos = {c: i for i, c in enumerate(cols)}
+
+        # Per-column pairing decided once per file (schema-level, not per-row)
+        pairing: dict = {}
+        for id_col, id_type in id_cols:
+            id_toks = _bind_header_tokens(id_col) - _BIND_GENERIC_TOKENS
+            shared = [nc for nc in name_cols
+                      if id_toks & (_bind_header_tokens(nc) - _BIND_GENERIC_TOKENS)]
+            if shared:
+                pairing[id_col] = shared
+            elif id_type == "phone":
+                # Positional fallback for phones only: nearest name column;
+                # a distance tie is ambiguous → bind to none (conservative).
+                dists = sorted((abs(col_pos[nc] - col_pos[id_col]), nc)
+                               for nc in name_cols)
+                if len(dists) == 1 or dists[0][0] < dists[1][0]:
+                    pairing[id_col] = [dists[0][1]]
+
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            for id_col, id_type in id_cols:
+                bound_name_cols = pairing.get(id_col)
+                if not bound_name_cols:
+                    continue
+                raw_val = str(row.get(id_col) or "").strip()
+                if not raw_val:
+                    continue
+                if id_type == "phone":
+                    norm = _bind_norm_phone(raw_val)
+                    key = f"phone:{norm}" if norm else None
+                elif id_type == "email":
+                    key = f"email:{raw_val.lower()}" if _EMAIL_RE.fullmatch(raw_val) else None
+                else:
+                    val = raw_val.lower()
+                    key = f"{'acct' if id_type == 'account' else 'govid'}:{val}" \
+                        if len(val) >= 2 else None
+                if not key:
+                    continue
+                for nc in bound_name_cols:
+                    name = _clean_name_cell(row.get(nc))
+                    if not name:
+                        continue
+                    ent = index.setdefault(key, {"type": id_type, "names": {},
+                                                 "sources": set(),
+                                                 "display": raw_val})
+                    ent["names"][name] = ent["names"].get(name, 0) + 1
+                    if src:
+                        ent["sources"].add(src)
+    return index
+
+
+def _pick_canonical(forms_counts: dict) -> str:
+    """Most complete full form of an identity: max full words, then max
+    tokens, prefer commaless, then most-attested, then lexicographic.
+    Fully deterministic."""
+    def sort_key(f):
+        toks = [t for t in re.split(r"[,\s]+", f) if t]
+        full = sum(1 for t in toks if len(t.rstrip(".")) > 1)
+        return (-full, -len(toks), "," in f, -forms_counts.get(f, 0), f.lower())
+    return sorted(forms_counts, key=sort_key)[0]
+
+
+def build_anchor_identities(raw_documents: list) -> list[dict]:
+    """Conservative anchor-based identity clustering over the binding index.
+
+    Two name-forms belong to one identity ONLY when they share a hard
+    identifier (phone / account / gov-ID / email); transitivity runs through
+    shared identifiers only. Name similarity plays NO part: forms with no
+    shared anchor stay separate no matter how alike they look — a missed
+    merge is a visible, recoverable error, a wrong merge is invisible and
+    catastrophic. Every merged identity records the identifier(s) that
+    justified it (merge_evidence), so each merge is auditable and reversible.
+    """
+    index = build_identifier_bindings(raw_documents)
+    parent: dict = {}
+    forms_of: dict = {}   # norm key -> {verbatim form: count}
+
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    for key, ent in index.items():
+        ks = []
+        for f, c in ent["names"].items():
+            k = normalize_name_key(f)
+            if k not in parent:
+                parent[k] = k
+                forms_of[k] = {}
+            forms_of[k][f] = forms_of[k].get(f, 0) + c
+            ks.append(k)
+        for other in ks[1:]:
+            ra, rb = find(ks[0]), find(other)
+            if ra != rb:
+                parent[rb] = ra
+
+    clusters: dict = {}
+    for k in parent:
+        clusters.setdefault(find(k), set()).add(k)
+
+    identities = []
+    for members in clusters.values():
+        forms_counts: dict = {}
+        for k in members:
+            for f, c in forms_of[k].items():
+                forms_counts[f] = forms_counts.get(f, 0) + c
+        anchor_map = {
+            key: sorted(ent["names"])
+            for key, ent in index.items()
+            if {normalize_name_key(f) for f in ent["names"]} & members
+        }
+        canonical = _pick_canonical(forms_counts)
+        identities.append({
+            "canonical":      canonical,
+            "aliases":        sorted(f for f in forms_counts if f != canonical),
+            "forms":          forms_counts,
+            "anchors":        sorted(anchor_map),
+            "anchor_map":     anchor_map,
+            # The audit trail: each entry is an identifier that bound ≥2
+            # forms — the exact justification for every merge in the cluster.
+            "merge_evidence": [{"identifier": key, "binds": binds}
+                               for key, binds in sorted(anchor_map.items())
+                               if len(binds) >= 2],
+            "phones":         sorted(index[a]["display"] for a in anchor_map
+                                     if index[a]["type"] == "phone"),
+            "accounts":       sorted(index[a]["display"] for a in anchor_map
+                                     if index[a]["type"] == "account"),
+            "sources":        sorted(set().union(*(index[a]["sources"]
+                                     for a in anchor_map)) if anchor_map else set()),
+        })
+    identities.sort(key=lambda i: (-sum(i["forms"].values()), i["canonical"].lower()))
+    return identities
+
+
+# Subject-role header words — a name column whose header carries one of these
+# is a "this row is ABOUT this person" column, and its values vote for who
+# the case's subject is. Contact/associate/counterparty columns do not vote.
+_SUBJECT_ROLE_TOKENS = {"subject", "suspect", "target", "primary", "accused"}
+
+
+def resolve_subject_identity(raw_documents: list, identities: list,
+                             fallback_name: str = "") -> dict | None:
+    """Pick THE subject among anchor identities by cluster-aware voting.
+
+    Votes = occurrences of each identity's forms in subject-role columns,
+    plus each document's own primary_subject pick. Voting by CLUSTER is the
+    point: one person's votes no longer split across five spellings while a
+    distinct person's single spelling concentrates (the exact mechanism that
+    crowned the wrong subject on multi-form cases). Deterministic tie-breaks:
+    fallback-name membership, then total attestation, then canonical name.
+    """
+    if not identities:
+        return None
+    by_form = {}
+    for ident in identities:
+        for f in ident["forms"]:
+            by_form[normalize_name_key(f)] = ident
+    votes = {id(ident): 0 for ident in identities}
+
+    for doc in raw_documents or []:
+        ps = str((doc or {}).get("primary_subject") or "").strip()
+        ident = by_form.get(normalize_name_key(ps)) if ps else None
+        if ident is not None:
+            votes[id(ident)] += 1
+        for row in (doc or {}).get("structured_rows") or []:
+            if not isinstance(row, dict):
+                continue
+            for col, val in row.items():
+                toks = _bind_header_tokens(col)
+                if not (toks & _SUBJECT_ROLE_TOKENS):
+                    continue
+                ident = by_form.get(normalize_name_key(" ".join(str(val or "").split())))
+                if ident is not None:
+                    votes[id(ident)] += 1
+
+    fb = normalize_name_key(fallback_name or "")
+    def rank(ident):
+        return (-votes[id(ident)],
+                0 if fb and fb in {normalize_name_key(f) for f in ident["forms"]} else 1,
+                -sum(ident["forms"].values()),
+                ident["canonical"].lower())
+    best = sorted(identities, key=rank)[0]
+    return best if votes[id(best)] > 0 else None
 
 
 _ENTITY_SKIP = [
@@ -1425,6 +1719,59 @@ def resolve_entity_from_multiple_docs(raw_documents: list) -> tuple[dict, str]:
     # Per-file source attribution for §14 report rendering (mirrors phones)
     person["email_sources"] = build_email_source_map(raw_documents)
 
+    # ── Anchor-based identity resolution (deterministic, conservative) ────────
+    # Identity is keyed on hard identifiers, never on name spelling. The
+    # cluster containing the subject supplies the canonical display name and
+    # the recorded aliases; distinct people (no shared anchor) stay separate.
+    try:
+        _identities = build_anchor_identities(raw_documents)
+    except Exception as _ide:
+        print(f"[RESOLVE] anchor identities non-fatal: {_ide}")
+        _identities = []
+    if _identities:
+        person["anchor_identities"] = _identities
+        _subj_ident = resolve_subject_identity(raw_documents, _identities,
+                                               fallback_name=primary_name)
+        if _subj_ident is not None:
+            if normalize_name_key(primary_name) != normalize_name_key(_subj_ident["canonical"]):
+                print(f"[RESOLVE] Subject canonicalised via anchors: "
+                      f"{primary_name!r} -> {_subj_ident['canonical']!r}")
+            primary_name = _subj_ident["canonical"]
+            person["confirmed_name"] = primary_name
+            person["name"] = primary_name
+            # Recorded aliases of the merged identity replace token-similarity
+            # "variants": every alias here shares a hard identifier with the
+            # subject, and no distinct person's form can enter this list.
+            person["name_variants"] = list(_subj_ident["aliases"])
+            person["subject_identity"] = _subj_ident
+            for _ev in _subj_ident.get("merge_evidence", []):
+                print(f"[RESOLVE] Alias merge on {_ev['identifier']}: {_ev['binds']}")
+
+        # Phones attributed to their TRUE owners. The case-wide inventory is
+        # kept (patterns that measure case infrastructure read it), but every
+        # number carries the canonical owner its rows bind it to — so §14 can
+        # show who each line belongs to and OPERATIONAL_SECURITY can count
+        # only the subject's own lines. Unbound numbers stay unattributed
+        # (owner ""), preserving behaviour for prose-only cases.
+        _owner_of = {}
+        for _i in _identities:
+            for _ph in _i.get("phones", []):
+                _k10 = re.sub(r"\D", "", str(_ph))[-10:]
+                if _k10:
+                    _owner_of[_k10] = _i["canonical"]
+        person["case_phones"] = [
+            {"number": p, "owner": _owner_of.get(re.sub(r"\D", "", str(p))[-10:], "")}
+            for p in safe_list(person.get("phones_found", []))
+        ]
+        # Benami attribution: accounts consolidate to the identity whose
+        # forms hold them — the subject's variant-name accounts land on the
+        # subject; a distinct person's account stays theirs.
+        person["account_attribution"] = [
+            {"account": a, "owner": _i["canonical"],
+             "via_aliases": sorted(_i["anchor_map"].get(f"acct:{a.lower()}", []))}
+            for _i in _identities for a in _i.get("accounts", [])
+        ]
+
     # Permanent: conflict detection across all sources
     if primary_name != "Unknown Subject":
         detect_all_conflicts(raw_documents, primary_name, person)
@@ -1844,6 +2191,23 @@ def detect_all_conflicts(
 
     seen_variants: set = set()
     _primary_key = normalize_name_key(primary_name)
+    # Anchor-identity guards: name-token overlap is NOT identity evidence.
+    # A form sharing a hard identifier with the subject is the SAME person
+    # (an alias, never a conflict); a form anchored to a DIFFERENT identity
+    # is a DISTINCT person (never a "variant" of the subject — calling it one
+    # is the wrong-merge narrative). Only names with NO anchor evidence at
+    # all remain eligible for the genuine-ambiguity NAME_CONFLICT flag.
+    _subject_form_keys: set = set()
+    _other_form_owner: dict = {}   # normalized form -> canonical of its identity
+    for _ident in safe_list(person_object.get("anchor_identities", [])):
+        _fkeys = {normalize_name_key(f) for f in (_ident.get("forms") or {})}
+        _fkeys.add(normalize_name_key(safe_str(_ident.get("canonical", ""))))
+        if _primary_key in _fkeys:
+            _subject_form_keys = _fkeys
+        else:
+            for _fk in _fkeys:
+                _other_form_owner[_fk] = safe_str(_ident.get("canonical", ""))
+    _collided_identities: set = set()
     # RC-02: every variant candidate goes through the SINGLE canonical name
     # normaliser before comparison, whatever path built the entities list —
     # a leading role word ("Subject Arjun Mehta") or trailing column bleed is
@@ -1863,6 +2227,9 @@ def detect_all_conflicts(
             if normalize_name_key(name) == _primary_key \
                     or normalize_name_key(name) in seen_variants:
                 continue
+            _name_key = normalize_name_key(name)
+            if _name_key in _subject_form_keys:
+                continue   # anchor-verified alias of the subject — same person
             name_parts = set(name.lower().split())
             overlap    = primary_parts & name_parts
             # Minimum overlap threshold: a single shared surname (e.g., "Khan")
@@ -1871,6 +2238,25 @@ def detect_all_conflicts(
             # that "Khan Ali" does not conflict with "Zafar Ahmed Khan".
             min_overlap = 2 if len(primary_parts) >= 2 else 1
             if overlap and len(overlap) >= min_overlap and len(name) > 4:
+                # A lookalike name anchored to a DIFFERENT identity is a
+                # distinct person, not a variant. Emit an explicit
+                # do-not-conflate collision note (once per identity) instead
+                # of the NAME_CONFLICT "Variant" claim.
+                if _name_key in _other_form_owner:
+                    _owner = _other_form_owner[_name_key]
+                    seen_variants.add(_name_key)
+                    if _owner not in _collided_identities:
+                        _collided_identities.add(_owner)
+                        conflicts.append({
+                            "type":     "NAME_COLLISION_DISTINCT",
+                            "flag":     (
+                                f"SIMILAR NAME — DISTINCT PERSON: '{_owner}' shares name"
+                                f" tokens with subject '{primary_name}' but is anchored to"
+                                f" different hard identifiers — do not conflate"
+                            ),
+                            "severity": "MEDIUM",
+                        })
+                    continue
                 # Suppress platform-name artefacts and double-name artefacts
                 if _is_name_with_suffix(primary_name, name):
                     continue

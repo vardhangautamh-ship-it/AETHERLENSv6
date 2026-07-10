@@ -151,8 +151,15 @@ RE_ADDRESS = re.compile(
 # producing "Zafar Ahmed Khan\nCase"; [ \t]+ restricts the inter-word gap to
 # space/tab so a match never crosses a line boundary. Single source of truth —
 # also used by extract_primary_subject_from_text's frequency pass below.
+# A token is a Titlecase word OR a single-letter initial ("R."), with at least
+# one FULL word required, so "R. Ramesh Kumar" / "Ramesh Kumar R." match as a
+# whole instead of a truncated sub-span. No comma forms in free text (prose
+# commas separate list items, not surname order). Trailing (?![A-Za-z]) stands
+# in for \b because a terminal initial ends in "." where \b cannot assert.
 RE_NAME = re.compile(
-    r"\b([A-Z][a-z]{1,20}(?:[ \t]+[A-Z][a-z]{1,20}){1,3})\b"
+    r"\b((?=(?:[A-Z]\.[ \t]+)*[A-Z][a-z])"
+    r"(?:[A-Z][a-z]{1,20}|[A-Z]\.)"
+    r"(?:[ \t]+(?:[A-Z][a-z]{1,20}|[A-Z]\.)){1,3})(?![A-Za-z])"
 )
 
 # Common words to exclude from name candidates
@@ -169,7 +176,8 @@ NAME_STOPWORDS = {
     # but are never part of a person's name — prevents "Bank Nariman Point",
     # "Bandra Worli Sea Link", "Andheri Station" etc. from being extracted as subjects.
     "Bank", "Branch", "Point", "Link", "Bridge", "Sea", "Bay", "Port",
-    "Station", "Airport", "Highway", "Flyover", "Junction", "Naka",
+    "Station", "Airport", "Highway", "Flyover", "Junction", "Naka", "Nagar",
+    "Government",
     "Tower", "Plaza", "Mall", "Complex", "Centre", "Center",
     "Park", "Garden", "Market", "Masjid", "Mandir", "Chowk",
     "Marg", "Bandra", "Worli", "Nariman", "Andheri", "Borivali",
@@ -244,13 +252,90 @@ FUSION_NAME_SKIPLIST = {
     "Entry Type", "Record Type", "File Name",
 }
 
-# Columns that contain real person names in structured data
+# Columns that contain real person names in structured data.
+# Exact-match set for the PRIMARY-SUBJECT picker only (subject selection must
+# not let broad role columns outvote the subject). Entity-candidate coverage
+# uses the general _is_name_column() test below instead.
 NAME_COLUMNS = {
     "name", "subject", "person", "caller_name", "receiver_name",
     "full_name", "contact_name", "person_name", "subject_name",
     "caller", "receiver", "contact",
     "associate", "known_contact", "relative_name", "relative",
 }
+
+# Person-role words that mark a column as name-bearing when its header carries
+# no explicit "name" token ("account_holder", "counterparty", "director").
+# Header semantics choose the COLUMN; value shape + stopwords admit each CELL —
+# so id/ref/amount columns and org-valued columns contribute nothing.
+_NAME_ROLE_WORDS = {
+    "holder", "director", "beneficiary", "payee", "payer", "sender",
+    "receiver", "caller", "callee", "contact", "associate", "party",
+    "counterparty", "owner", "subject", "person", "suspect", "victim",
+    "witness", "nominee", "guarantor", "applicant", "relative", "handler",
+    "agent", "employee", "employer",
+}
+
+
+def _is_name_column(col: str) -> bool:
+    """General name-column detection by header semantics: the header's LAST
+    word is "name" (subject_name, director_name, full_name) or a person-role
+    word (account_holder, counterparty, caller). Last-word rule keeps
+    "subject_line" / "tower_location" out. No per-case column lists."""
+    parts = [p for p in re.split(r"[^a-z]+", str(col).lower().strip()) if p]
+    return bool(parts) and (parts[-1] == "name" or parts[-1] in _NAME_ROLE_WORDS)
+
+
+# Generic company-name vocabulary — an org styled in Titlecase ("Nightjar
+# Manpower Solutions" in an account_holder column) must not become a person.
+# Local to the column extractor: the prose path keeps its existing behaviour
+# (org names there feed the graph/shell analysis unchanged).
+_ORG_NAME_WORDS = {
+    "Solutions", "Consultancy", "Enterprises", "Services", "Industries",
+    "Trading", "Holdings", "Logistics", "Exports", "Imports", "Agencies",
+    "Infra", "Projects", "Manpower", "Overseas", "Pvt", "Ltd", "Llp", "LLP",
+}
+
+
+def _extract_names_from_rows(structured_rows: list) -> list[dict]:
+    """Person-name candidates read directly from every name-typed column of
+    structured rows. The free-text scanner reads the padded table render and
+    misses cell forms its regex cannot span ("R. Kumar", "Kumar, Ramesh");
+    reading the cells closes that gap while the shared cell shape
+    (RE_PERSON_NAME_CELL) plus stopword/skiplist checks keep headers, refs,
+    amounts, and org names from ever becoming people."""
+    from modules.entity_resolution import RE_PERSON_NAME_CELL as _cell_re
+    found, seen = [], set()
+    for row in structured_rows or []:
+        if not isinstance(row, dict):
+            continue
+        for col, val in row.items():
+            if not _is_name_column(col):
+                continue
+            v = " ".join(str(val or "").split())
+            if not v or v in FUSION_NAME_SKIPLIST or not _cell_re.match(v):
+                continue
+            # Same doubled-name collapse the free-text normaliser applies: a
+            # trailing token repeating an earlier one is a data-entry artifact
+            # ("Daniyal Farooqui Daniyal Farooqui" cell), not part of the name.
+            _toks = v.split()
+            while len(_toks) > 2 and _toks[-1].lower() in {t.lower() for t in _toks[:-1]}:
+                _toks.pop()
+            v = " ".join(_toks)
+            if not _cell_re.match(v):
+                continue
+            words = [w for w in re.split(r"[,\s]+", v) if w]
+            if any(w in NAME_STOPWORDS or w in _ORG_NAME_WORDS for w in words):
+                continue
+            if v in seen:
+                continue
+            seen.add(v)
+            found.append({
+                "value":     v,
+                "type":      "name",
+                "ambiguous": len(words) == 2,
+                "context":   f"column:{col}",
+            })
+    return found
 
 # ── Subject / flag / location extractors ──────────────────────────────────────
 
@@ -1089,6 +1174,20 @@ def ingest_file(
             _dropped = [n["value"] for n in entities["names"] if n not in _kept]
             print(f"[INGEST] Dropped {len(_dropped)} cross-cell name artifact(s): {_dropped[:5]}")
         entities["names"] = _kept
+
+    # Column-driven person names: read every name-typed column directly so
+    # cell forms the text-render regex cannot span still enter the candidate
+    # pipeline. Placed after the whole-cell gate — these values ARE whole
+    # cells by construction, so the gate must not re-filter them.
+    if structured_rows:
+        _col_names = _extract_names_from_rows(structured_rows)
+        if _col_names:
+            _existing_vals = {n.get("value") for n in entities.get("names", [])}
+            _added = [n for n in _col_names if n["value"] not in _existing_vals]
+            if _added:
+                entities.setdefault("names", []).extend(_added)
+                print(f"[INGEST] Column-typed name(s) added: "
+                      f"{[n['value'] for n in _added][:8]}")
 
     # Prepend primary_subject into names list so it ranks first
     if primary_subject:
