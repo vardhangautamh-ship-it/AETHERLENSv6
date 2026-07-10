@@ -2727,7 +2727,7 @@ _PA_SCHEMA_LABEL_TOKENS = {
     "note", "name", "type", "id", "code", "ref", "line", "column", "field",
     "value", "unknown", "anonymous", "confirmed", "pending", "verified",
     "date", "time", "source", "restricted", "classified", "confidential",
-    "profile", "exit", "node", "log", "entry"}
+    "profile", "exit", "node", "log", "entry", "flag", "flags"}
 
 
 def _pa_is_schema_label(value) -> bool:

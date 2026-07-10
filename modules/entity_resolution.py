@@ -709,6 +709,25 @@ _NOISE_HANDLE_TOKENS: frozenset = frozenset({
 })
 
 
+def _is_noise_handle(handle) -> bool:
+    """True when a candidate username is not a user-supplied value: empty, a
+    spam/noise token, or a data-schema label ("FLAGS", "subscriber") leaking
+    through from a header or field name. The single handle gate — every path
+    that accepts a handle (AI overlay, row extraction, clean_person_object,
+    §03 builder) uses this test, so no extractor admits a label the others
+    reject."""
+    h = str(handle or "").lstrip("@").lower().strip()
+    if not h:
+        return True
+    if h in _NOISE_HANDLE_TOKENS or any(t in h for t in _NOISE_HANDLE_TOKENS if t):
+        return True
+    try:
+        from modules.ontology import _pa_is_schema_label
+        return _pa_is_schema_label(h)
+    except Exception:
+        return False
+
+
 def clean_person_object(person: dict) -> dict:
     """
     Centralised, aggressive sanitisation of a person dict — call at every
@@ -736,8 +755,7 @@ def clean_person_object(person: dict) -> dict:
     noisy_platforms: set = set()
     clean_unames: dict   = {}
     for plat, handle in list((person.get("usernames") or {}).items()):
-        h = str(handle).lstrip("@").lower().strip()
-        if not h or h in _NOISE_HANDLE_TOKENS or any(t in h for t in _NOISE_HANDLE_TOKENS if t):
+        if _is_noise_handle(handle):
             noisy_platforms.add(plat.lower())
             print(f"[CLEAN_PERSON] Rejected handle {handle!r} for {plat}")
         else:
@@ -755,7 +773,7 @@ def clean_person_object(person: dict) -> dict:
     clean_profiles = []
     for profile in (person.get("confirmed_linked_profiles") or []):
         h = str(profile.get("username", "")).lstrip("@").lower().strip()
-        if h and (h in _NOISE_HANDLE_TOKENS or any(t in h for t in _NOISE_HANDLE_TOKENS if t)):
+        if h and _is_noise_handle(h):
             continue
         clean_profiles.append(profile)
     person["confirmed_linked_profiles"] = clean_profiles
@@ -830,9 +848,8 @@ def extract_platforms_from_rows(raw_documents: list) -> dict:
             if status and status not in _CONFIRMED_STATUS_VALUES:
                 continue   # explicitly non-confirmed (e.g. SPAM) → skip
 
-            h = handle.lstrip("@").lower().strip()
-            if not h or h in _NOISE_HANDLE_TOKENS or any(t in h for t in _NOISE_HANDLE_TOKENS if t):
-                continue   # noise handle (@reels, @spam, …) → skip
+            if _is_noise_handle(handle):
+                continue   # noise/label handle (@reels, @spam, FLAGS, …) → skip
 
             url = _col(_URL_COL_NAMES).strip()
             if plat.lower() not in {p.lower() for p in platforms}:
@@ -1355,11 +1372,10 @@ def resolve_entity_from_multiple_docs(raw_documents: list) -> tuple[dict, str]:
         cn = ai_person.get("confirmed_name", "").replace("\n", " ").replace("\r", " ").strip()
         if cn and not is_bad_subject_name(cn, raw_documents):
             person["confirmed_name"] = cn
-        # usernames: strip noise handles before merging
+        # usernames: strip noise/label handles before merging
         ai_unames = ai_person.get("usernames") or {}
         for plat, handle in ai_unames.items():
-            h = str(handle).lstrip("@").lower().strip()
-            if h and h not in _NOISE_HANDLE_TOKENS and not any(t in h for t in _NOISE_HANDLE_TOKENS if t):
+            if not _is_noise_handle(handle):
                 person["usernames"][plat] = handle
         person["data_sources"] = all_sources
         method_used = ai_method

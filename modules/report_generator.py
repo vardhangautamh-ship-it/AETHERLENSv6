@@ -972,37 +972,41 @@ def inject_keyword_flags_from_docs(person: dict, raw_documents: list) -> dict:
 # Each tuple: (compiled_pattern, canonical_platform_name, url_template_or_empty)
 # Used by build_platform_presence() as a last-resort source when all structured
 # fields (platforms_confirmed, usernames, join_dates) are empty.
+# Value-position rule: the "Platform: handle" separator is same-line only
+# ([: \t], never \n). A platform word at end-of-line has no value; letting the
+# separator cross the newline captures the FIRST TOKEN OF THE NEXT LINE — a
+# section heading or field label ("FLAGS", "Burner phones:"), not a handle.
 import re as _re
 _PLATFORM_HANDLE_PATTERNS = [
     # GitHub — URL form: github.com/username  or  "GitHub: username"
     (_re.compile(r'github\.com/([A-Za-z0-9][A-Za-z0-9_-]{0,38})(?:[/?#\s,\)]|$)', _re.I),
      "GitHub", "https://github.com/{u}"),
-    (_re.compile(r'\bgithub\b[:\s]+@?([A-Za-z0-9][A-Za-z0-9_-]{1,38})(?=\s|$|[,;])', _re.I),
+    (_re.compile(r'\bgithub\b[: \t]+@?([A-Za-z0-9][A-Za-z0-9_-]{1,38})(?=\s|$|[,;])', _re.I),
      "GitHub", "https://github.com/{u}"),
     # Instagram — URL or @handle context
     (_re.compile(r'instagram\.com/([A-Za-z0-9_.]{1,30})(?:[/?#\s,\)]|$)', _re.I),
      "Instagram", "https://instagram.com/{u}"),
-    (_re.compile(r'\binstagram\b[:\s]+@?([A-Za-z0-9_.]{1,30})(?=\s|$|[,;])', _re.I),
+    (_re.compile(r'\binstagram\b[: \t]+@?([A-Za-z0-9_.]{1,30})(?=\s|$|[,;])', _re.I),
      "Instagram", ""),
     # Hugging Face
     (_re.compile(r'huggingface\.co/([A-Za-z0-9_-]{1,39})(?:[/?#\s,\)]|$)', _re.I),
      "Hugging Face", "https://huggingface.co/{u}"),
-    (_re.compile(r'(?:hugging\s*face|hf)[:\s]+@?([A-Za-z0-9_-]{1,39})(?=\s|$|[,;])', _re.I),
+    (_re.compile(r'(?:hugging\s*face|hf)[: \t]+@?([A-Za-z0-9_-]{1,39})(?=\s|$|[,;])', _re.I),
      "Hugging Face", ""),
     # Telegram
     (_re.compile(r't\.me/([A-Za-z0-9_]{5,32})(?:[/?#\s,\)]|$)', _re.I),
      "Telegram", "https://t.me/{u}"),
-    (_re.compile(r'\btelegram\b[:\s]+@?([A-Za-z0-9_]{5,32})(?=\s|$|[,;])', _re.I),
+    (_re.compile(r'\btelegram\b[: \t]+@?([A-Za-z0-9_]{5,32})(?=\s|$|[,;])', _re.I),
      "Telegram", ""),
     # Twitter / X
     (_re.compile(r'(?:twitter\.com|x\.com)/([A-Za-z0-9_]{1,15})(?:[/?#\s,\)]|$)', _re.I),
      "Twitter", "https://twitter.com/{u}"),
-    (_re.compile(r'\btwitter\b[:\s]+@?([A-Za-z0-9_]{1,15})(?=\s|$|[,;])', _re.I),
+    (_re.compile(r'\btwitter\b[: \t]+@?([A-Za-z0-9_]{1,15})(?=\s|$|[,;])', _re.I),
      "Twitter", ""),
     # LinkedIn
     (_re.compile(r'linkedin\.com/in/([A-Za-z0-9_-]{2,50})(?:[/?#\s,\)]|$)', _re.I),
      "LinkedIn", "https://linkedin.com/in/{u}"),
-    (_re.compile(r'\blinkedin\b[:\s]+@?([A-Za-z0-9_-]{2,50})(?=\s|$|[,;])', _re.I),
+    (_re.compile(r'\blinkedin\b[: \t]+@?([A-Za-z0-9_-]{2,50})(?=\s|$|[,;])', _re.I),
      "LinkedIn", ""),
     # Reddit
     (_re.compile(r'reddit\.com/u(?:ser)?/([A-Za-z0-9_-]{3,20})(?:[/?#\s,\)]|$)', _re.I),
@@ -1029,14 +1033,6 @@ def build_platform_presence(person: dict, search_results: dict = None,
     Normalises platform keys to title-case so "github"/"GitHub"/"GITHUB"
     all collapse to a single "Github" entry (no Section 03 duplicates).
     """
-    # Handles that are spam / noise labels — never show as confirmed accounts.
-    _NOISE_HANDLES = {
-        "spam", "reels", "offers", "alerts", "newsletter", "promo",
-        "marketing", "notification", "otp", "fraud", "credit", "loan",
-        "insurance", "winner", "cashback", "reward", "prize", "discount",
-        "voucher", "delivery", "apply", "emi", "bill",
-        "not found", "not_found", "unknown", "none",
-    }
     # Structural schema-label test from the ontology (single source): a value
     # made only of data-schema words ("subscriber", "encryption",
     # "platform_name") is a column label leaking through — never a real handle
@@ -1045,19 +1041,17 @@ def build_platform_presence(person: dict, search_results: dict = None,
         from modules.ontology import _pa_is_schema_label as _is_schema_label
     except Exception:
         _is_schema_label = lambda *_a: False
+    # Shared handle gate (noise tokens + schema labels) — the same test every
+    # extraction path uses, so §03 can never admit a handle the pipeline rejects.
+    try:
+        from modules.entity_resolution import _is_noise_handle as _shared_noise_handle
+    except Exception:
+        _shared_noise_handle = lambda h: not str(h or "").strip()
 
     def _is_noise_handle(h: str) -> bool:
         if not h or str(h).strip() in ("", "Not found", "Not public"):
             return True
-        lc = str(h).lstrip("@").lower().strip()
-        if not lc:
-            return True
-        if _is_schema_label(lc):
-            return True
-        # Exact match first, then substring (only for non-empty tokens)
-        if lc in _NOISE_HANDLES:
-            return True
-        return any(tok and tok in lc for tok in _NOISE_HANDLES)
+        return _shared_noise_handle(h)
 
     # _seen maps normalised-lowercase key → canonical display name
     _seen: dict = {}
