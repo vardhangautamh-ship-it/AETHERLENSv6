@@ -599,6 +599,25 @@ def run_pattern_agent(ontology_data: dict, user_id: str = "system") -> dict:
 # AGENT 3 — INVESTIGATIVE NEXT STEPS
 # ══════════════════════════════════════════════════════════════════════════════
 
+# Modality stems an AI-generated step may name ONLY when the case's own data
+# (flags, entities, source filenames) names them. §17 carries statutory
+# citations, so a generic crime-trope specific ("cryptocurrency tracing" in a
+# case with no crypto) reads as a case fact the officer cannot check.
+# Stems, not words, so singular/plural both match ("tech compan" covers
+# company/companies). Extensible stop-set: add a stem to guard a new modality;
+# a stem present anywhere in the case data is always allowed through.
+_NS_MODALITY_STEMS = (
+    "crypto", "bitcoin", "blockchain", "dark web", "tech compan",
+    "technology compan", "hawala", "narcotic", "casino", "gambling", "betting",
+)
+
+
+def _ns_ungrounded_terms(step_text: str, case_blob: str) -> list:
+    """Modality stems the step names that the lower-cased case data does not."""
+    t = str(step_text or "").lower()
+    return [m for m in _NS_MODALITY_STEMS if m in t and m not in case_blob]
+
+
 _NEXT_STEP_PROMPT = (
     "You are NextStepAgent, an investigative guidance AI.\n"
     "Based on the intelligence report, suggest the next 5 lawful investigative steps.\n"
@@ -655,34 +674,49 @@ def run_next_step_agent(report: dict, user_id: str = "system") -> dict:
 
     print(f"[NEXTSTEP] flags={len(flag_list)} financial={has_financial} certin={has_certin}")
 
+    # Procedural notes only — each restates what the triggering flags already
+    # say and adds the required legal procedure. Never assert an entity or
+    # counterparty type the flags do not name (the old "USD payments confirmed
+    # to foreign tech companies" template line put a fabricated case fact into
+    # a statute-citing section on every financial case).
     extra = []
     if has_financial:
         extra.append(
-            "International USD payments confirmed to foreign tech companies. "
-            "FEMA 1999 applies. Include bank records subpoena."
+            "Financial-transfer flags are present above. FEMA 1999 may apply — "
+            "include a bank records subpoena step tied to those flags."
         )
     if has_certin:
         extra.append(
-            "Active CERT-In inquiry open. Reference case in steps. "
-            "Include server log preservation."
+            "A CERT-In flag is present above. Reference it in the steps and "
+            "include server log preservation."
         )
     if has_deletion:
         extra.append(
-            "Evidence deletion confirmed. Device seizure urgent. "
-            "Include forensic preservation."
+            "An evidence-deletion flag is present above. Include urgent device "
+            "seizure and forensic preservation."
         )
-    extra_str = "\n".join(extra)
+    extra_str = "\n".join(extra) or "None."
+
+    # Grounding facts: the same confirmed-entity block every guarded agent uses.
+    grounding = build_grounding_context(person)
 
     prompt = (
         "You are a senior legal analyst."
-        " Generate exactly 5 specific investigative next steps for this case.\n\n"
+        " Generate up to 5 specific investigative next steps for this case —"
+        " only as many as the confirmed facts below support.\n\n"
         f"Subject: {person_name}\n"
         f"Locations: {locations}\n\n"
         "CONFIRMED FLAGS:\n"
         f"{flag_text}\n\n"
-        "IMPORTANT CONTEXT:\n"
+        "CONFIRMED ENTITIES FROM SOURCE DOCUMENTS:\n"
+        f"{grounding}\n\n"
+        "PROCEDURAL NOTES:\n"
         f"{extra_str}\n\n"
         "Rules:\n"
+        "- Use ONLY the facts listed above. Do NOT introduce any entity,"
+        " organisation type, payment modality, asset class, or location that"
+        " does not appear in the flags or confirmed entities.\n"
+        "- Fewer well-grounded steps are better than five padded ones.\n"
         "- Each step must address a specific flag above\n"
         "- Cite exact Indian law section\n"
         "- State required authorisation\n"
@@ -700,6 +734,11 @@ def run_next_step_agent(report: dict, user_id: str = "system") -> dict:
         "}]}"
     )
 
+    # Everything the case actually states, lower-cased — the reference a step's
+    # modality terms are checked against. Includes full flag texts (not the
+    # 120-char prompt truncation) and the grounding block (entities, sources).
+    case_blob = " ".join([" ".join(flag_list), grounding, person_name, locations]).lower()
+
     try:
         result_text = _call_ai(prompt, max_tokens=1500)
         clean = re.sub(r"```(?:json)?|```", "", result_text).strip()
@@ -707,17 +746,30 @@ def run_next_step_agent(report: dict, user_id: str = "system") -> dict:
         if m:
             parsed   = json.loads(m.group())
             ai_steps = parsed.get("steps", [])
-            if ai_steps:
+            # Grounded-only gate: a step naming a modality the case data never
+            # mentions is template/trope bleed — it must not be emitted at all
+            # in a statute-citing section. Dropping every step falls through
+            # to the rule-based path, which only speaks from the flags.
+            kept = []
+            for s in ai_steps[:5]:
+                probe = f"{s.get('action', '')} {s.get('fills_gap', '')}"
+                novel = _ns_ungrounded_terms(probe, case_blob)
+                if novel:
+                    print(f"[NEXTSTEP] Dropped ungrounded AI step "
+                          f"(introduces {novel}): {probe[:90]!r}")
+                    continue
+                kept.append(s)
+            if kept:
                 normalised = []
-                for idx, s in enumerate(ai_steps[:5], 1):
+                for idx, s in enumerate(kept, 1):
                     normalised.append({
                         "step":                   s.get("action", ""),
                         "action":                 s.get("action", ""),
-                        "step_number":            s.get("step_number", idx),
+                        "step_number":            idx,
                         "legal_basis":            s.get("legal_basis", ""),
                         "authorization":          s.get("authorization", ""),
                         "authorization_required": s.get("authorization", ""),
-                        "priority":               s.get("step_number", idx),
+                        "priority":               idx,
                         "value":                  s.get("priority", "HIGH"),
                         "fills_gap":              s.get("fills_gap", ""),
                     })
