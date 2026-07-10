@@ -263,8 +263,17 @@ def rule_offshore_flight_risk(onto) -> PatternMatch | None:
 
 def rule_operational_security(onto) -> PatternMatch | None:
     """OPERATIONAL_SECURITY — multiple lines + encrypted channels (+ VPN)."""
-    phones = _attr(onto, "phones", []) or []
+    all_phones = _attr(onto, "phones", []) or []
     channels = _attr(onto, "comm_channels", []) or []
+
+    # This pattern describes the SUBJECT's own compartmentalisation, so it
+    # counts only lines owned by the subject (plus unattributed lines, which
+    # is the whole inventory on prose-only cases with no row bindings).
+    # Other people's phones on the same case rows are their lines, not the
+    # subject's tradecraft.
+    subj = _norm(_attr(onto, "subject_name"))
+    phones = [ph for ph in all_phones
+              if not _norm(_attr(ph, "owner")) or _norm(_attr(ph, "owner")) == subj]
 
     burners = [ph for ph in phones if _norm(_attr(ph, "type")) == "burner"]
     encrypted = [c for c in channels

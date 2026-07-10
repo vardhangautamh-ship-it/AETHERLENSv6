@@ -2406,11 +2406,13 @@ class Person:
 @dataclass
 class PhoneNumber:
     """A phone line. type ∈ domestic|international|burner.
-    (rules: OPERATIONAL_SECURITY, OFFSHORE_FLIGHT_RISK)"""
+    owner = canonical name of the anchor identity the line is bound to
+    ("" when unattributed). (rules: OPERATIONAL_SECURITY, OFFSHORE_FLIGHT_RISK)"""
     number: str = ""
     type: str = "domestic"
     country: str = ""
     source: str = ""
+    owner: str = ""
 
 
 @dataclass
@@ -2739,12 +2741,32 @@ def _pa_is_schema_label(value) -> bool:
 _PA_YEAR_RE = _pa_re.compile(r"\b(19|20)\d{2}\b")
 
 
+# Statute names whose trailing year is the ACT's year, not an event date
+# ("PMLA 2002", "FEMA 1999", "IT Act 2000"). A year captured this way must
+# never become a proceeding/event date — it fabricates decade-long
+# "enforcement history" spans. Generic act vocabulary, extensible.
+_PA_STATUTE_YEAR_RE = _pa_re.compile(
+    r"\b(?:pmla|fema|ndps|dpdp|ipc|crpc|bnss|bns|it\s+act|pc\s+act|sebi\s+act|"
+    r"companies\s+act|telegraph\s+act|passport\s+act|foreigners\s+act|"
+    r"aadhaar\s+act|prevention\s+of\s+(?:corruption|money\s+laundering)(?:\s+act)?)"
+    r"[\s,–—-]*((?:19|20)\d{2})\b", _pa_re.IGNORECASE)
+
+
+def _pa_statute_years(text) -> set:
+    """Years in `text` that belong to statute names, never to events."""
+    return {m.group(1) for m in _PA_STATUTE_YEAR_RE.finditer(str(text or ""))}
+
+
 def _pa_year_date(text) -> str:
-    """Synthesise a YYYY-01-01 date from the first 4-digit year in text (e.g. a
-    year embedded in an enforcement reference 'SEBI/WTM/2019/2207'). Returns ''
-    when no year is present — never invents one."""
-    m = _PA_YEAR_RE.search(str(text or ""))
-    return f"{m.group(0)}-01-01" if m else ""
+    """Synthesise a YYYY-01-01 date from the first NON-STATUTE 4-digit year in
+    text (e.g. a year embedded in an enforcement reference 'SEBI/WTM/2019/2207').
+    Returns '' when no such year is present — never invents one, and never
+    reads an act's year ('PMLA 2002') as an event year."""
+    skip = _pa_statute_years(text)
+    for m in _PA_YEAR_RE.finditer(str(text or "")):
+        if m.group(0) not in skip:
+            return f"{m.group(0)}-01-01"
+    return ""
 
 
 # High-significance event vocabulary (drives TimelineEvent.significance when the
@@ -2780,6 +2802,12 @@ def _pa_events_from_pairs(pairs) -> tuple:
     for blob, rdate, exit_val in pairs:
         if not blob:
             continue
+        # A date whose year is a statute year named in this very line
+        # ("ECIR — PMLA 2002") is the Act's year, not an event date — an
+        # upstream synthesiser may have promoted it. Dateless is the safe
+        # failure; a fabricated year span is the harmful one.
+        if rdate and rdate[:4] in _pa_statute_years(blob):
+            rdate = ""
         if _pa_any_token(blob, _PA_DELETION_TOKENS):
             dels.append(DeletionEvent(timestamp=rdate, target="", source="record"))
         if _pa_any_token(blob, _PA_LOC_TOKENS):
@@ -2792,8 +2820,10 @@ def _pa_events_from_pairs(pairs) -> tuple:
             if _pa_any_token(blob, (ind,)):
                 agency = ind.upper() if ind in _PA_ENFORCEMENT_AGENCIES else ""
                 # year embedded in a reference (e.g. 'PPT/DEL/2017/0094') when the
-                # line carries no full date — escalation counts distinct YEARS.
-                legals.append(LegalProceeding(agency=agency, date=rdate or _pa_year_date(blob),
+                # line carries no full date — escalation counts distinct YEARS
+                # (_pa_year_date itself skips statute years).
+                legals.append(LegalProceeding(agency=agency,
+                                              date=rdate or _pa_year_date(blob),
                                               kind="enforcement", source="record"))
                 break
         for app in _PA_ENCRYPTED_APPS:
@@ -3215,7 +3245,8 @@ def build_ontology(person, entities=None, flags=None, timeline=None,
             ptype = ph.get("type") or _pa_classify_phone(num, tags)
             onto.phones.append(PhoneNumber(number=str(num), type=ptype,
                                            country=str(ph.get("country", "") or ""),
-                                           source=str(ph.get("source", "") or "")))
+                                           source=str(ph.get("source", "") or ""),
+                                           owner=str(ph.get("owner", "") or "")))
         else:
             num = str(ph)
             onto.phones.append(PhoneNumber(number=num, type=_pa_classify_phone(num, []),
@@ -3408,6 +3439,16 @@ def build_ontology(person, entities=None, flags=None, timeline=None,
             onto.comm_channels.append(c)
     if not onto.comm_channels:
         onto.comm_channels = _pa_channels_from_flags(onto.flags)
+    # "encrypted" alone is a descriptor, not a channel. When any NAMED
+    # encrypted app is present ("PROTONMAIL + TELEGRAM ENCRYPTION"), the bare
+    # word is the same evidence restated — it must not add +1 to the §09B
+    # channel count. With no named app it stands as the only signal and stays.
+    if any(c.encrypted and c.type != "encrypted" for c in onto.comm_channels):
+        _n0 = len(onto.comm_channels)
+        onto.comm_channels = [c for c in onto.comm_channels if c.type != "encrypted"]
+        if len(onto.comm_channels) != _n0:
+            print("[ONTOLOGY] Dropped generic 'encrypted' descriptor channel "
+                  "(named app channel(s) present)")
 
     # ── legal proceedings (explicit → records → flags) ────────────────────────
     explicit_legal = _pa_listify(_pa_get(entities, "legal_proceedings")
@@ -3420,6 +3461,22 @@ def build_ontology(person, entities=None, flags=None, timeline=None,
     onto.legal_proceedings.extend(rec_legals)
     if not onto.legal_proceedings:
         onto.legal_proceedings = _pa_legal_from_flags(onto.flags)
+    # De-duplicate to DISTINCT proceedings: the scanners above record one entry
+    # per MENTION (the same flag line recurs across files' text, rows, and §09
+    # flags), but §09B counts actions, not mentions. Identity of an action =
+    # (kind, agency, status, case_ref, year).
+    _seen_lp, _dedup_lp = set(), []
+    for lp in onto.legal_proceedings:
+        _k = (_pa_norm(lp.kind), str(lp.agency or "").upper(), _pa_norm(lp.status),
+              _pa_norm(getattr(lp, "case_ref", "")), str(lp.date or "")[:4])
+        if _k in _seen_lp:
+            continue
+        _seen_lp.add(_k)
+        _dedup_lp.append(lp)
+    if len(_dedup_lp) != len(onto.legal_proceedings):
+        print(f"[ONTOLOGY] Legal proceedings deduplicated: "
+              f"{len(onto.legal_proceedings)} mention(s) -> {len(_dedup_lp)} distinct")
+    onto.legal_proceedings = _dedup_lp
 
     # ── deletion events (explicit → records → flags) ──────────────────────────
     explicit_del = _pa_listify(_pa_get(entities, "deletion_events"))
