@@ -1550,8 +1550,17 @@ def _build_extracted_intelligence_section(person: dict) -> dict:
     else:
         lines.append("Emails: None found in public data.")
 
-    # Phones — per-file source attribution + carrier/region/line-type enrichment
+    # Phones — per-file source attribution + carrier/region/line-type enrichment.
+    # When anchor identities exist, every number also names its TRUE owner
+    # (the identity its source rows bind it to) — the subject is never
+    # credited with other people's lines.
     phone_sources = person.get("phone_sources", {})
+    _subject_name = str(person.get("confirmed_name") or "").strip()
+    _owner_by_num = {}
+    for _cp in person.get("case_phones") or []:
+        _num = str(_cp.get("number") or "")
+        if _num:
+            _owner_by_num[_num] = str(_cp.get("owner") or "")
     if phones:
         try:
             from modules.phone_enrichment import enrich_phone, format_enrichment_line
@@ -1566,15 +1575,36 @@ def _build_extracted_intelligence_section(person: dict) -> dict:
                     src_label += f" +{len(srcs) - 3} more"
             else:
                 src_label = "document data"
+            owner = _owner_by_num.get(phone, "")
+            if owner:
+                owner_label = (" — owner: SUBJECT" if owner == _subject_name
+                               else f" — owner: {owner}")
+            else:
+                owner_label = ""
             enrich_label = ""
             if enrich_phone:
                 try:
                     enrich_label = f" — {format_enrichment_line(enrich_phone(phone))}"
                 except Exception:
                     enrich_label = ""
-            lines.append(f"  {phone} — Source: {src_label} — EXTRACTED{enrich_label}")
+            lines.append(f"  {phone} — Source: {src_label} — EXTRACTED{owner_label}{enrich_label}")
     else:
         lines.append("Phone numbers: None found in public data.")
+
+    # Account attribution (benami consolidation) — each account named on the
+    # rows lands on the identity whose name-forms hold it: the subject's
+    # variant-name accounts consolidate to the subject; a distinct person's
+    # account stays theirs.
+    _accts = person.get("account_attribution") or []
+    if _accts:
+        lines.append(f"\nACCOUNT ATTRIBUTION ({len(_accts)}):")
+        for _a in _accts[:10]:
+            _own = str(_a.get("owner") or "")
+            _tag = "SUBJECT" if _own == _subject_name else _own
+            _via = _a.get("via_aliases") or []
+            _via_label = (f" (held under: {', '.join(_via[:4])})"
+                          if len(_via) > 1 else "")
+            lines.append(f"  account …{_a.get('account')} — owner: {_tag}{_via_label}")
 
     # Social handles from confirmed accounts
     social_handles = []
@@ -2184,7 +2214,7 @@ def _build_sections_local(
     }
 
 
-def _build_association_lines(onto, graph_data) -> list:
+def _build_association_lines(onto, graph_data, identities: list = None) -> list:
     """Phase 0.5 Step 2 — §05/§08 association lines from the typed ontology.
 
     The single deterministic source for Key Associations / Network Map
@@ -2194,6 +2224,11 @@ def _build_association_lines(onto, graph_data) -> list:
       3. the graph-summary top_associations (already person/org/alias filtered)
     Every line is a NAMED entity with its kind and a source citation. Never
     padded with phones/platforms/locations — those are not associations.
+
+    `identities` (anchor identities from entity resolution) canonicalises the
+    list: every name-form maps to its identity's canonical name, the subject's
+    own forms can never appear as associates, and one person's several
+    spellings collapse to a single associate entry (aliases shown inline).
     """
     import re as _lre
     try:
@@ -2219,6 +2254,20 @@ def _build_association_lines(onto, graph_data) -> list:
         return _lre.sub(r"[^a-z0-9]", "", str(s or "").lower())
 
     subject_tok = _tok(getattr(onto, "subject_name", ""))
+    # Identity canonicalisation maps: form-token -> (canonical, aliases)
+    _canon_of: dict = {}
+    _subject_form_toks: set = set()
+    for _ident in identities or []:
+        _canon = str(_ident.get("canonical", "") or "")
+        _forms = list((_ident.get("forms") or {}).keys()) or [_canon]
+        _is_subj = _tok(_canon) == subject_tok or any(
+            _tok(f) == subject_tok for f in _forms)
+        for _f in set(_forms) | {_canon}:
+            if _is_subj:
+                _subject_form_toks.add(_tok(_f))
+            else:
+                _canon_of[_tok(_f)] = (_canon,
+                                       [f for f in _ident.get("aliases", [])])
     # Prefer the ONTOLOGY's graph: build_ontology converts a directed upstream
     # graph to an undirected copy and enriches it with money-routing nodes
     # (counterparty orgs, account/wallet-holder parties), so it is always a
@@ -2247,6 +2296,17 @@ def _build_association_lines(onto, graph_data) -> list:
     def _add(label, kind, detail, source):
         label = str(label or "").strip()
         t = _tok(label)
+        # Anchor-identity canonicalisation: a subject name-form is the subject
+        # (never its own associate); a known form of another identity is shown
+        # once under its canonical name with aliases noted.
+        if t in _subject_form_toks:
+            return
+        if t in _canon_of:
+            _canon, _aliases = _canon_of[t]
+            label = _canon
+            t = _tok(_canon)
+            if _aliases and not detail:
+                detail = "alias: " + ", ".join(_aliases[:3])
         if not t or t == subject_tok or t in entries:
             return
         if kind == "person":
@@ -2316,6 +2376,57 @@ def _build_association_lines(onto, graph_data) -> list:
         cent = f", centrality: {e['centrality']}" if e["centrality"] > 0 else ""
         lines.append(f"{e['label']} ({head}{cent}) — Source: {e['source']}")
     return lines
+
+
+def _audit_section_consistency(sections: dict) -> list:
+    """Deterministic self-consistency audit: header-counts must equal the
+    items the same section actually lists, and §02's breakdown must agree
+    with §04. Mismatches are LOGGED (and returned), never written into the
+    user report — the goal is that a future divergence is caught in the run
+    log instead of shipping silently."""
+    import re as _care
+    problems = []
+
+    def _first_int(text):
+        m = _care.search(r"\b(\d+)\b", str(text or ""))
+        return int(m.group(1)) if m else None
+
+    s3 = sections.get("platform_presence") or {}
+    if "no confirmed platform" not in str(s3.get("content", "")).lower():
+        n = _first_int(s3.get("content"))
+        listed = len(s3.get("platforms") or {})
+        if n is not None and n != listed:
+            problems.append(f"§03 header says {n} platform(s), lists {listed}")
+
+    s4 = sections.get("public_location_data") or {}
+    locs = [l for l in (s4.get("locations") or [])
+            if "no location" not in str(l).lower()]
+    n = _first_int(s4.get("content"))
+    if n is not None and n != len(locs):
+        problems.append(f"§04 header says {n} location(s), lists {len(locs)}")
+
+    s5 = sections.get("network_map_summary") or {}
+    m = _care.search(r"(\d+)\s+named connection", str(s5.get("content", "")))
+    if m and int(m.group(1)) != len(s5.get("connections") or []):
+        problems.append(f"§05 header says {m.group(1)} connection(s), "
+                        f"lists {len(s5.get('connections') or [])}")
+
+    m = _care.search(r"(\d+)\s+location", str(sections.get("confidence_breakdown") or ""))
+    if m and int(m.group(1)) != len(locs):
+        problems.append(f"§02 breakdown says {m.group(1)} location(s), §04 lists {len(locs)}")
+
+    s8 = sections.get("key_associations") or {}
+    m = _care.search(r"(\d+)\s+named association", str(s8.get("content", "")))
+    if m and int(m.group(1)) != len(s8.get("associations") or []):
+        problems.append(f"§08 header says {m.group(1)} association(s), "
+                        f"lists {len(s8.get('associations') or [])}")
+
+    if problems:
+        for p in problems:
+            print(f"[CONSISTENCY] MISMATCH: {p}")
+    else:
+        print("[CONSISTENCY] All section header counts match their listed items.")
+    return problems
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -2870,7 +2981,9 @@ def _generate_report_inner(
         _graph_nodes = (graph_data or {}).get("summary", {}).get("nodes", 0)
 
         _emails    = person.get("emails_found", [])
-        _locations = person.get("locations_mentioned", [])
+        # location_stated is the populated field on document cases;
+        # locations_mentioned only exists on some OSINT paths.
+        _locations = person.get("location_stated") or person.get("locations_mentioned") or []
         # Breadth of confirmed online identity — the primary evidence type for
         # OSINT / live-search subjects, which carry no uploaded documents.
         _platforms = max(
@@ -2965,7 +3078,9 @@ def _generate_report_inner(
             flags=_pa_flags,
             timeline=timeline_data,
             graph=(graph_data or {}).get("graph"),
-            phones=person.get("phones_found", []),
+            # Owner-annotated inventory when anchor identities exist, so each
+            # PhoneNumber knows whose line it is; plain list otherwise.
+            phones=person.get("case_phones") or person.get("phones_found", []),
             financial_data=assets_data,
             records=_pa_records,
             texts=_pa_texts,
@@ -3011,7 +3126,9 @@ def _generate_report_inner(
     # associates exist the section stays thin instead of showing phone numbers.
     try:
         if _onto is not None:
-            _assoc_lines = _build_association_lines(_onto, graph_data)
+            _assoc_lines = _build_association_lines(
+                _onto, graph_data,
+                identities=person.get("anchor_identities"))
             if _assoc_lines:
                 _ka = sections.get("key_associations")
                 _ka = dict(_ka) if isinstance(_ka, dict) else {}
@@ -3023,22 +3140,43 @@ def _generate_report_inner(
                 _ka["confidence"] = max(int(_ka.get("confidence") or 0), 40)
                 sections["key_associations"] = _ka
 
-                _gn = (graph_data or {}).get("summary", {}).get("nodes", 0)
-                _ge = (graph_data or {}).get("summary", {}).get("edges", 0)
-                if not _gn and getattr(_onto, "graph", None) is not None:
+                # CANONICAL node/edge counts: the raw graph keys nodes on
+                # name-forms, so one person's five spellings count five times.
+                # Collapse every node through the anchor-identity map before
+                # counting, so the §05 header describes the same entities the
+                # section lists (self-loops between two spellings of one
+                # person vanish with the collapse).
+                _canon_map = {}
+                for _ident in person.get("anchor_identities") or []:
+                    for _f in list((_ident.get("forms") or {}).keys()) + [_ident.get("canonical", "")]:
+                        _canon_map[" ".join(str(_f).lower().split())] = _ident.get("canonical", "")
+                def _canon_node(n):
+                    _k = " ".join(str(n).lower().split())
+                    return _canon_map.get(_k, str(n))
+                _gn = _ge = 0
+                _g = getattr(_onto, "graph", None)
+                if _g is None:
+                    _g = (graph_data or {}).get("graph")
+                if _g is not None:
                     try:
-                        _gn = _onto.graph.number_of_nodes()
-                        _ge = _onto.graph.number_of_edges()
+                        _gn = len({_canon_node(n) for n in _g.nodes()})
+                        _ge = len({frozenset((_canon_node(u), _canon_node(v)))
+                                   for u, v in _g.edges()
+                                   if _canon_node(u) != _canon_node(v)})
                     except Exception:
-                        pass
+                        _gn = _ge = 0
+                if not _gn:
+                    _gn = (graph_data or {}).get("summary", {}).get("nodes", 0)
+                    _ge = (graph_data or {}).get("summary", {}).get("edges", 0)
                 _nm = sections.get("network_map_summary")
                 _nm = dict(_nm) if isinstance(_nm, dict) else {}
                 _nm["connections"] = _assoc_lines
                 _nm["content"] = (
-                    f"[VERIFIED DATA] Graph: {_gn} nodes, {_ge} edges. "
-                    f"{len(_assoc_lines)} named connection(s) listed."
+                    f"[VERIFIED DATA] Graph: {_gn} distinct entities, {_ge} edges "
+                    f"(aliases collapsed). {len(_assoc_lines)} named connection(s) listed."
                 )
                 _nm["confidence"] = max(int(_nm.get("confidence") or 0), 50)
+                _nm["canonical_nodes"] = _gn
                 sections["network_map_summary"] = _nm
     except Exception as _asse:
         print(f"[REPORT] Ontology association override non-fatal: {_asse}")
@@ -3146,6 +3284,38 @@ def _generate_report_inner(
     except Exception as _s3e:
         print(f"[REPORT] Ontology §03/§04 override non-fatal: {_s3e}")
 
+    # ── §02 count reconciliation (single source of truth) ─────────────────────
+    # The initial confidence computation ran before the ontology existed, so
+    # its location/graph inputs can disagree with what §04/§05 display.
+    # Recompute with the SAME function over the counts the sections actually
+    # list — §02 can then never contradict them.
+    try:
+        from modules.entity_resolution import calculate_stable_confidence as _csc2
+        _p4 = sections.get("public_location_data") or {}
+        _loc_lines = [l for l in (_p4.get("locations") or [])
+                      if "no location" not in str(l).lower()]
+        _gn2 = int((sections.get("network_map_summary") or {}).get("canonical_nodes") or 0)
+        if not _gn2:
+            _gn2 = (graph_data or {}).get("summary", {}).get("nodes", 0)
+        _cr2 = _csc2(
+            num_files       = len(raw_documents or []),
+            num_phones      = len(person.get("phones_found", []) or []),
+            num_timeline    = len((timeline_data or {}).get("events", []) or []),
+            num_graph_nodes = _gn2,
+            num_gaps        = len(person.get("data_gaps", []) or []),
+            num_emails      = len(person.get("emails_found", []) or []),
+            num_locations   = len(_loc_lines),
+            num_platforms   = len((sections.get("platform_presence") or {}).get("platforms") or {}),
+        )
+        sections["overall_confidence"]     = _cr2["confidence"]
+        sections["confidence_breakdown"]   = _cr2["breakdown"]
+        sections["confidence_explanation"] = _cr2["breakdown"]
+        print(f"[REPORT] §02 reconciled with displayed section counts: "
+              f"locations={len(_loc_lines)}, entities={_gn2}, "
+              f"confidence={_cr2['confidence']}/100")
+    except Exception as _rce:
+        print(f"[REPORT] §02 reconciliation non-fatal: {_rce}")
+
     # Section 18 — Tactical Operation Plan (always runs — no assets gate)
     tactical_plan_result = (agent_results or {}).get("tactical_plan")
     if not (isinstance(tactical_plan_result, dict) and tactical_plan_result.get("actions")):
@@ -3177,6 +3347,12 @@ def _generate_report_inner(
             tactical_plan_result = None
     if isinstance(tactical_plan_result, dict) and tactical_plan_result.get("actions"):
         sections["tactical_plan"] = tactical_plan_result
+
+    # Deterministic self-consistency audit (log-only; report untouched)
+    try:
+        _audit_section_consistency(sections)
+    except Exception as _aud_exc:
+        print(f"[CONSISTENCY] audit non-fatal: {_aud_exc}")
 
     # Convert sections to flat PDF data format
     pdf_data = _sections_to_pdf_data(sections)
