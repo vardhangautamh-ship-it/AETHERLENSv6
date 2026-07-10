@@ -1874,7 +1874,9 @@ def _build_timeline_intelligence_section(
             strength  = strength_data.get("strength", "UNVERIFIED")
             date_str  = ev.get("date", ev.get("normalized", ""))
             time_str  = ev.get("time", "")
-            desc      = ev.get("description", ev.get("context", ""))[:70]
+            # Same doubled-name collapse §06 uses (clean first, then slice).
+            desc      = _clean_timeline_display(
+                ev.get("description", ev.get("context", "")))[:70]
             src       = ev.get("source", "")[:50]
             ts        = f"{date_str} {time_str}".strip()
             lines.append(f"  [{strength}] {ts} — {desc} — Source: {src}")
