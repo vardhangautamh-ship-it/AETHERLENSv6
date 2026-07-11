@@ -1057,11 +1057,37 @@ def build_platform_presence(person: dict, search_results: dict = None,
     _seen: dict = {}
     platforms: dict = {}
 
-    def _add(raw_name: str, entry: dict):
+    # [VERIFIED DATA] source-presence gate (LLM boundary): on document cases,
+    # a handle must actually appear in the uploaded sources to render in §03 —
+    # person-field values can originate from the resolver LLM, and §03 is a
+    # [VERIFIED DATA] section, so an unverifiable handle is omitted, never
+    # asserted. OSINT/live-search cases (no documents) keep current behavior:
+    # the search results are their evidence base.
+    _doc_corpus = ""
+    if raw_documents:
+        _doc_corpus = "\n".join(
+            str(doc.get("raw_text", "") or doc.get("full_text", "") or doc.get("text", ""))
+            + "\n" + json.dumps(doc.get("structured_rows", []) or [], default=str)
+            for doc in raw_documents if isinstance(doc, dict)
+        ).lower()
+
+    def _handle_grounded(uname) -> bool:
+        if not _doc_corpus:
+            return True
+        u = str(uname or "").strip().lstrip("@").lower()
+        return bool(u) and u in _doc_corpus
+
+    def _add(raw_name: str, entry: dict, grounded: bool = False):
         if _is_schema_label(raw_name):
             return
         uname = entry.get("username", "")
         if _is_noise_handle(uname):
+            return
+        # grounded=True marks entries whose evidence IS the search result or
+        # document scan itself; person-field entries must trace to the docs.
+        if not grounded and not _handle_grounded(uname):
+            print(f"[REPORT] §03 dropped unverifiable handle {str(uname)[:40]!r} "
+                  f"({raw_name}): not present in uploaded sources")
             return
         key = raw_name.strip().lower()
         if key and key not in _seen:
@@ -1115,7 +1141,7 @@ def build_platform_presence(person: dict, search_results: dict = None,
                     "status":   "CONFIRMED",
                     "url":      result.get("url", "Not found"),
                     "username": result.get("username") or result.get("login") or "Not found",
-                })
+                }, grounded=True)   # the search result itself is the evidence
 
     # ── Source 6: raw document text — regex scan (FUSION last-resort) ─────────
     # When Bedrock/Gemini entity resolution fails to return structured platform
@@ -1138,7 +1164,7 @@ def build_platform_presence(person: dict, search_results: dict = None,
                             "status":   "CONFIRMED",
                             "url":      url_tpl.format(u=uname) if url_tpl else "Not found",
                             "username": uname,
-                        })
+                        }, grounded=True)   # extracted from the document text itself
 
     return platforms
 
@@ -1332,7 +1358,11 @@ def _build_risk_section(person: dict, agent_results: dict = None, raw_documents:
             if isinstance(f, dict):
                 lines.append(f"  [{f.get('factor','?')}] Weight: {f.get('weight',0)} — {str(f.get('evidence',''))[:80]}")
         return {
-            "content": f"[VERIFIED DATA] Risk score: {score}/100 — Level: {level}.",
+            # Rule-based fallback formula, but its inputs (locations, account
+            # keys) are resolver-fillable — never present it as verified fact.
+            "content": (f"[DETERMINISTIC ANALYSIS] Risk score: {score}/100 — "
+                        f"Level: {level} (rule-based fallback over resolved "
+                        f"profile fields)."),
             "confidence": 50,
             "items": lines,
             "risk_score": int(score or 0),
@@ -1606,6 +1636,21 @@ def _build_extracted_intelligence_section(person: dict) -> dict:
                           if len(_via) > 1 else "")
             lines.append(f"  account …{_a.get('account')} — owner: {_tag}{_via_label}")
 
+    # Identity-deception screen (Dimension 1) — deterministic identity
+    # meta-findings: fragmentation collapses, look-alike names kept separate,
+    # shared contact points held for verification. Rendered here (never in
+    # the anomaly/risk streams) so identity conclusions stay visibly cited.
+    _id_findings = person.get("identity_findings") or []
+    if _id_findings:
+        lines.append(f"\nIDENTITY DECEPTION SCREEN ({len(_id_findings)}) "
+                     f"[DETERMINISTIC ANALYSIS]:")
+        for _f in _id_findings[:10]:
+            lines.append(f"  {_f.get('finding', '')}")
+    elif person.get("anchor_identities"):
+        lines.append("\nIdentity deception screen [DETERMINISTIC ANALYSIS]: no "
+                     "fragmentation, look-alike collision, or shared-identifier "
+                     "ambiguity detected.")
+
     # Social handles from confirmed accounts
     social_handles = []
     for c in confirmed[:20]:
@@ -1743,8 +1788,12 @@ def _build_account_timeline_section(person: dict) -> dict:
     confidence = min(90, 40 + exact_count * 15)
 
     return {
+        # [AI ANALYSIS], not [VERIFIED DATA]: join dates arrive via the
+        # resolver/search extraction (LLM-fillable fields), not from verified
+        # uploaded documents — per-entry sources are listed for follow-up.
         "content": (
-            f"[VERIFIED DATA] Account timeline: {len(timeline)} platform(s) with date data. "
+            f"[AI ANALYSIS] Account timeline: {len(timeline)} platform(s) with date data "
+            f"(from resolved profile fields — verify against platform records). "
             f"Digital identity age: {age} year(s). "
             f"{len([f for f in flags if f.get('flag') not in ('OLDEST_ACCOUNT','NO_DATE_DATA')])} pattern flag(s) detected."
         ),
@@ -1986,71 +2035,34 @@ def _clean_timeline_display(text: str) -> str:
     return _NAME_RUN_RE.sub(_fix, str(text or ""))
 
 
-def _build_sections_local(
-    person:          dict,
-    search_results:  dict,
-    graph_data:      dict,
-    timeline_data:   dict,
-    behavioral_data: dict,
-    agent_results:   dict = None,
-    raw_documents:   list = None,
-    engines_used:    dict = None,
-) -> dict:
-    results = (search_results or {}).get("results", [])
-    name    = person.get("confirmed_name", "Not found")
-    tl      = timeline_data or {}
-    bd      = (behavioral_data or {}).get("assessment", {})
-    gd      = graph_data or {}
+def _assemble_anomaly_flags(person, tl, bd, raw_documents,
+                            deterministic_only: bool = False) -> list:
+    """Assemble the case anomaly/flag list from every pipeline source (§09).
 
-    def _src_list():
-        return list({r.get("url", "") for r in results if r.get("url", "")})
-
-    locations  = person.get("location_stated", [])
-    events     = [
-        f"{e['normalized']}: "
-        f"{_clean_timeline_display(e.get('context', e.get('description', '')))[:60]}"
-        f" — Source: {e['source']}"
-        for e in tl.get("events", [])[:20]
-    ]
-
-    behavior_content = (
-        "[AI ANALYSIS] " + (bd.get("analyst_notes") or "Not determined.") +
-        (f" Activity pattern: {bd['activity_pattern']}." if bd.get("activity_pattern") else "")
-    ) if bd else "[AI ANALYSIS] Not available — no behavioral data."
-
-    # ── Section 08: Key Associations — person/org/alias nodes only, subject excluded
-    # Use pre-filtered top_associations from graph_summary when available;
-    # fall back to filtering top_nodes by node_type for older graph_data payloads.
-    summary = gd.get("summary", {})
-    raw_associations = list(summary.get("top_associations") or [])
-    if not raw_associations:
-        # Fallback: filter top_nodes to person/org/alias, exclude subject
-        subject_lbl = name.lower()
-        raw_associations = [
-            n for n in summary.get("top_nodes", [])
-            if n.get("node_type", "unknown") in ("person", "org", "alias")
-            and n.get("label", "").lower() != subject_lbl
-        ]
-
-    # Phase 0.5 Step 2: §08 lists only NAMED entities (person/org/alias graph
-    # nodes here; the typed-ontology merge happens in the post-§09B override in
-    # _generate_report_inner). The old "pad with platforms and phone numbers
-    # when thin" supplement is gone — a phone number is not an associate, and a
-    # thin section is more honest than a padded one.
-    conns = [f"{n.get('label', '')} (centrality: {n.get('centrality', 0)})"
-             for n in raw_associations if n.get("label")]
-
-    # ── Collect anomalies from ALL sources ───────────────────────────────────
-    _anom_seen: set = set()
+    deterministic_only=True returns the subset the DETERMINISTIC §09B pattern
+    engine may read (LLM-boundary rule): entries of LLM origin — the
+    behavioral engine's own flags/anomalies (assessment["flags_ai_origin"],
+    plus the legacy assessment["anomalies"] bucket, which only an LLM ever
+    filled) and the OSINT account-creation flags (date math over LLM-fillable
+    join dates) — are excluded, so no AI text can satisfy a deterministic
+    pattern trigger. The stream is assembled from pipeline artifacts, never
+    from a report section, so an LLM-drafted section (Gemini report path) can
+    never feed it either. With the LLM off, both modes return the same list.
+    """
+    person, tl, bd = person or {}, tl or {}, bd or {}
+    _seen: set = set()
+    anomalies: list = []
 
     def _add_anomaly(entry: str):
         key = entry.lower()[:80]
-        if key not in _anom_seen and entry.strip():
-            _anom_seen.add(key)
+        if key not in _seen and entry.strip():
+            _seen.add(key)
             anomalies.append(entry)
 
-    anomalies: list = []
-    # Source 1: timeline anomalies
+    _ai_origin = {str(f).strip().lower()[:80]
+                  for f in (bd.get("flags_ai_origin") or [])}
+
+    # Source 1: timeline anomalies (deterministic detector)
     for a in tl.get("anomalies", []):
         _add_anomaly(f"{a.get('flag','?')}: {a.get('detail','')}")
     # Source 2: behavioral analysis — rule anomalies, AI anomalies, and behavioral flags.
@@ -2060,19 +2072,24 @@ def _build_sections_local(
         for ra in bd.get("rule_anomalies", []):
             _add_anomaly(f"{ra.get('flag','?')}: {ra.get('detail','')}")
         # bd["anomalies"] = AI-detected structural anomalies distinct from flags
-        for ba in bd.get("anomalies", []):
-            _add_anomaly(str(ba))
+        if not deterministic_only:
+            for ba in bd.get("anomalies", []):
+                _add_anomaly(str(ba))
         # bd["behavioral_flags"] = meaningful activity flags from behavioral analysis
         for bf in bd.get("behavioral_flags", []):
             bf_str = str(bf).strip()
+            if deterministic_only and bf_str.lower()[:80] in _ai_origin:
+                continue
             if bf_str and len(bf_str) > 20:
                 _add_anomaly(bf_str)
-    # Source 3: account creation pattern flags
-    for f in person.get("account_creation_flags", []):
-        if isinstance(f, dict):
-            _add_anomaly(f"[{f.get('severity','?')}] {f.get('detail', f.get('flag',''))}")
-        else:
-            _add_anomaly(str(f))
+    # Source 3: account creation pattern flags (OSINT: derived from join_dates,
+    # which the resolver LLM can fill — display-eligible, not pattern-eligible)
+    if not deterministic_only:
+        for f in person.get("account_creation_flags", []):
+            if isinstance(f, dict):
+                _add_anomaly(f"[{f.get('severity','?')}] {f.get('detail', f.get('flag',''))}")
+            else:
+                _add_anomaly(str(f))
     # Source 4: ingestion-level anomaly flags (may be dicts or strings)
     for f in person.get("anomaly_flags", []):
         if isinstance(f, dict):
@@ -2127,7 +2144,66 @@ def _build_sections_local(
         )
     else:
         _other_lines.extend(_cluster_lines)
-    anomalies = _other_lines
+    return _other_lines
+
+
+def _build_sections_local(
+    person:          dict,
+    search_results:  dict,
+    graph_data:      dict,
+    timeline_data:   dict,
+    behavioral_data: dict,
+    agent_results:   dict = None,
+    raw_documents:   list = None,
+    engines_used:    dict = None,
+) -> dict:
+    results = (search_results or {}).get("results", [])
+    name    = person.get("confirmed_name", "Not found")
+    tl      = timeline_data or {}
+    bd      = (behavioral_data or {}).get("assessment", {})
+    gd      = graph_data or {}
+
+    def _src_list():
+        return list({r.get("url", "") for r in results if r.get("url", "")})
+
+    locations  = person.get("location_stated", [])
+    events     = [
+        f"{e['normalized']}: "
+        f"{_clean_timeline_display(e.get('context', e.get('description', '')))[:60]}"
+        f" — Source: {e['source']}"
+        for e in tl.get("events", [])[:20]
+    ]
+
+    behavior_content = (
+        "[AI ANALYSIS] " + (bd.get("analyst_notes") or "Not determined.") +
+        (f" Activity pattern: {bd['activity_pattern']}." if bd.get("activity_pattern") else "")
+    ) if bd else "[AI ANALYSIS] Not available — no behavioral data."
+
+    # ── Section 08: Key Associations — person/org/alias nodes only, subject excluded
+    # Use pre-filtered top_associations from graph_summary when available;
+    # fall back to filtering top_nodes by node_type for older graph_data payloads.
+    summary = gd.get("summary", {})
+    raw_associations = list(summary.get("top_associations") or [])
+    if not raw_associations:
+        # Fallback: filter top_nodes to person/org/alias, exclude subject
+        subject_lbl = name.lower()
+        raw_associations = [
+            n for n in summary.get("top_nodes", [])
+            if n.get("node_type", "unknown") in ("person", "org", "alias")
+            and n.get("label", "").lower() != subject_lbl
+        ]
+
+    # Phase 0.5 Step 2: §08 lists only NAMED entities (person/org/alias graph
+    # nodes here; the typed-ontology merge happens in the post-§09B override in
+    # _generate_report_inner). The old "pad with platforms and phone numbers
+    # when thin" supplement is gone — a phone number is not an associate, and a
+    # thin section is more honest than a padded one.
+    conns = [f"{n.get('label', '')} (centrality: {n.get('centrality', 0)})"
+             for n in raw_associations if n.get("label")]
+
+    # ── Collect anomalies from ALL sources (shared assembler; §09 display
+    # keeps every source, including labelled AI-origin behavioral flags) ──────
+    anomalies = _assemble_anomaly_flags(person, tl, bd, raw_documents)
 
     gaps     = person.get("data_gaps", [])
     all_urls = _src_list()
@@ -3065,11 +3141,29 @@ def _generate_report_inner(
     try:
         from modules.pattern_engine import analyze_ontology
         from modules.ontology import build_ontology
-        _pa_flags = list(sections.get("anomalies_and_flags", {}).get("flags", []) or [])
+        # LLM-boundary: the DETERMINISTIC pattern engine reads a flag stream
+        # assembled from pipeline artifacts only (deterministic_only=True) —
+        # never from the §09 display section (which may carry the behavioral
+        # LLM's own flags, or be Gemini-drafted on that report path). No AI
+        # text can satisfy a deterministic pattern trigger.
+        _pa_flags = _assemble_anomaly_flags(
+            person, timeline_data or {},
+            (behavioral_data or {}).get("assessment", {}) or {},
+            raw_documents, deterministic_only=True)
+        _s9_flags = list(sections.get("anomalies_and_flags", {}).get("flags", []) or [])
+        _excluded = len(_s9_flags) - len(_pa_flags)
+        if _excluded > 0:
+            print(f"[REPORT] §09B pattern input: {_excluded} non-deterministic "
+                  f"flag(s) excluded from the deterministic stream.")
         # Flatten structured source rows from every document so dated deletion/
         # legal/comm events keep their dates (HOP 3). Empty for OSINT (no docs).
-        _pa_records = [r for _d in (raw_documents or [])
-                       for r in (_d.get("structured_rows") or []) if isinstance(r, dict)]
+        # Each row copy carries its origin file under the reserved _source_file
+        # key so typed Transactions stay per-file cited (cross-case mining and
+        # §09B supporting_sources read Transaction.source).
+        _pa_records = [
+            {**r, "_source_file": str(_d.get("filename") or _d.get("name") or "")}
+            for _d in (raw_documents or [])
+            for r in (_d.get("structured_rows") or []) if isinstance(r, dict)]
         # Raw narrative text (case notes, surveillance logs) — app names and
         # enforcement references live here, not in the structured rows.
         _pa_texts = [str(_d.get("raw_text") or _d.get("full_text") or _d.get("text") or "")
@@ -3194,6 +3288,74 @@ def _generate_report_inner(
     sections["risk_assessment"] = _build_risk_section(
         person, agent_results, raw_documents,
         pattern_analysis=sections.get("pattern_analysis"))
+    # ── Predicate-chain integrity (Dimension 2) ───────────────────────────────
+    # Load-bearing conclusions (§16 risk, §09B patterns, attributions) are
+    # annotated with the chain of foundational predicates they rest on; the
+    # conclusion confidence is BOUNDED by the weakest predicate, which is
+    # named with what would overturn it. Display-additive only — scores,
+    # levels, and fired patterns are measurements and are never altered.
+    if raw_documents:
+        try:
+            from modules.predicate_chain import annotate_conclusions
+            annotate_conclusions(sections, person, _onto, raw_documents)
+        except Exception as _pce:
+            print(f"[REPORT] Predicate chains non-fatal: {_pce}")
+        # ── Structural gap scan (Dimension 3) ─────────────────────────────────
+        # Hunts absences: unbound identifiers, one-way flows, footprint gaps,
+        # cold trails — each cited and labelled with its kind of unknown.
+        # Separate channel from person["data_gaps"] (which feeds confidence
+        # math); §10 gets a NEW items list so the profile-gap list object is
+        # never mutated.
+        try:
+            from modules.gap_detection import detect_structural_gaps, render_gap_lines
+            person["structural_gaps"] = detect_structural_gaps(
+                person, _onto, raw_documents)
+            _dg = sections.get("data_gaps")
+            if isinstance(_dg, dict) and isinstance(_dg.get("items"), list):
+                _dg["items"] = list(_dg["items"]) + render_gap_lines(
+                    person["structural_gaps"])
+                # generate_report works on a shallow COPY of person, so the
+                # section dict is the durable carrier of the structured gaps.
+                _dg["structural_gaps"] = person["structural_gaps"]
+            print(f"[REPORT] Structural gap scan: "
+                  f"{len(person['structural_gaps'])} gap(s) flagged.")
+        except Exception as _sge:
+            print(f"[REPORT] Structural gap scan non-fatal: {_sge}")
+        # ── Contradiction & inconsistency hunt (Dimension 4) ─────────────────
+        # Claims cross-checked against each other: timed anti-forensics,
+        # means mismatches, cross-document field conflicts, timeline
+        # impossibilities. Both sides cited, confidence on each, never
+        # resolved by guessing. Same §10 carrier and channel isolation as
+        # the gap scan.
+        try:
+            from modules.contradiction_hunt import (hunt_contradictions,
+                                                    render_contradiction_lines)
+            _contras = hunt_contradictions(person, _onto, raw_documents,
+                                           timeline_data)
+            person["contradiction_findings"] = _contras
+            _dg = sections.get("data_gaps")
+            if isinstance(_dg, dict) and isinstance(_dg.get("items"), list):
+                _dg["items"] = list(_dg["items"]) + render_contradiction_lines(
+                    _contras)
+                _dg["contradictions"] = _contras
+            print(f"[REPORT] Contradiction scan: {len(_contras)} finding(s).")
+        except Exception as _che:
+            print(f"[REPORT] Contradiction scan non-fatal: {_che}")
+        # ── Trail & circular-flow following (Dimension 5) ─────────────────────
+        # Multi-hop flows reconstructed on cited edges only, party names
+        # canonicalised through the anchor-identity layer. Broken trails say
+        # so; nothing is inferred. Rendered in §14 (extracted intelligence).
+        try:
+            from modules.trail_following import follow_trails, render_trail_lines
+            _trails = follow_trails(person, _onto, raw_documents)
+            person["trail_findings"] = _trails
+            _ei = sections.get("extracted_intelligence")
+            if isinstance(_ei, dict) and isinstance(_ei.get("items"), list):
+                _ei["items"] = list(_ei["items"]) + render_trail_lines(_trails)
+                _ei["trails"] = _trails
+            print(f"[REPORT] Trail reconstruction: {len(_trails)} finding(s).")
+        except Exception as _tfe:
+            print(f"[REPORT] Trail reconstruction non-fatal: {_tfe}")
     sections["next_steps"]      = _build_next_steps_section(agent_results, person)
     # Fix 1D: rebuild source log from actual documents
     if raw_documents:
