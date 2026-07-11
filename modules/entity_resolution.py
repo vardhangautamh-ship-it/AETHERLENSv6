@@ -1019,12 +1019,32 @@ def build_identifier_bindings(raw_documents: list) -> dict:
                     if not name:
                         continue
                     ent = index.setdefault(key, {"type": id_type, "names": {},
-                                                 "sources": set(),
+                                                 "sources": set(), "contexts": set(),
                                                  "display": raw_val})
                     ent["names"][name] = ent["names"].get(name, 0) + 1
+                    ent.setdefault("contexts", set()).add(str(id_col).lower().strip())
                     if src:
                         ent["sources"].add(src)
     return index
+
+
+# Column-header tokens that mark an identifier as SHARED INFRASTRUCTURE — an
+# office line, a work desk, a reception/switchboard number. Such a contact
+# point identifies a PLACE, not a person: it may legitimately co-occur with
+# several people's names without them being the same person.
+_SHARED_CONTEXT_TOKENS = {"office", "work", "desk", "landline", "reception",
+                          "switchboard", "helpdesk", "helpline", "shared",
+                          "common"}
+
+
+def _is_shared_context_identifier(ent) -> bool:
+    """True when EVERY column this identifier was bound from is a shared-
+    infrastructure column. One personal-context appearance (subject_number,
+    mobile, …) makes it personal again — strong evidence wins."""
+    ctxs = ent.get("contexts") or set()
+    if not ctxs:
+        return False
+    return all(_bind_header_tokens(c) & _SHARED_CONTEXT_TOKENS for c in ctxs)
 
 
 def _pick_canonical(forms_counts: dict) -> str:
@@ -1059,15 +1079,30 @@ def build_anchor_identities(raw_documents: list) -> list[dict]:
             x = parent[x]
         return x
 
-    for key, ent in index.items():
-        ks = []
-        for f, c in ent["names"].items():
+    # Register every bound name-form as a node first, then merge. A shared-
+    # infrastructure contact point (office / work / desk / landline column)
+    # identifies a PLACE, not a person: it registers its forms but never
+    # merges them — two independently-anchored people on one office line must
+    # not fuse. When such an identifier ends up spanning distinct identities
+    # it is recorded as CONTESTED on every party (flag, don't assert).
+    id_nodes: dict = {}
+    for key in sorted(index):
+        ent = index[key]
+        ks = set()
+        for f, c in sorted(ent["names"].items()):
             k = normalize_name_key(f)
             if k not in parent:
                 parent[k] = k
                 forms_of[k] = {}
             forms_of[k][f] = forms_of[k].get(f, 0) + c
-            ks.append(k)
+            ks.add(k)
+        id_nodes[key] = ks
+
+    weak_keys = {k for k in id_nodes if _is_shared_context_identifier(index[k])}
+    for key in sorted(id_nodes):
+        if key in weak_keys:
+            continue
+        ks = sorted(id_nodes[key])
         for other in ks[1:]:
             ra, rb = find(ks[0]), find(other)
             if ra != rb:
@@ -1078,7 +1113,8 @@ def build_anchor_identities(raw_documents: list) -> list[dict]:
         clusters.setdefault(find(k), set()).add(k)
 
     identities = []
-    for members in clusters.values():
+    ident_of_root: dict = {}
+    for root, members in clusters.items():
         forms_counts: dict = {}
         for k in members:
             for f, c in forms_of[k].items():
@@ -1089,7 +1125,7 @@ def build_anchor_identities(raw_documents: list) -> list[dict]:
             if {normalize_name_key(f) for f in ent["names"]} & members
         }
         canonical = _pick_canonical(forms_counts)
-        identities.append({
+        ident = {
             "canonical":      canonical,
             "aliases":        sorted(f for f in forms_counts if f != canonical),
             "forms":          forms_counts,
@@ -1097,18 +1133,193 @@ def build_anchor_identities(raw_documents: list) -> list[dict]:
             "anchor_map":     anchor_map,
             # The audit trail: each entry is an identifier that bound ≥2
             # forms — the exact justification for every merge in the cluster.
+            # Weak-context (shared-infrastructure) identifiers never justify
+            # a merge, so they never appear here.
             "merge_evidence": [{"identifier": key, "binds": binds}
                                for key, binds in sorted(anchor_map.items())
-                               if len(binds) >= 2],
+                               if len(binds) >= 2 and key not in weak_keys],
             "phones":         sorted(index[a]["display"] for a in anchor_map
                                      if index[a]["type"] == "phone"),
             "accounts":       sorted(index[a]["display"] for a in anchor_map
                                      if index[a]["type"] == "account"),
             "sources":        sorted(set().union(*(index[a]["sources"]
                                      for a in anchor_map)) if anchor_map else set()),
-        })
+            "contested_anchors":             [],
+            "shared_identifier_ambiguities": [],
+        }
+        identities.append(ident)
+        ident_of_root[root] = ident
+
+    # Contested identifiers: a weak-context contact point whose bound forms
+    # resolved into >=2 distinct identities. Recorded on every party so the
+    # deception screen can surface it and attribution logic can stand down.
+    for key in sorted(weak_keys):
+        roots = sorted({find(n) for n in id_nodes[key]})
+        if len(roots) < 2:
+            continue
+        ent = index[key]
+        entry = {
+            "identifier": key,
+            "type":       ent["type"],
+            "display":    ent["display"],
+            "sources":    sorted(ent["sources"]),
+            "parties":    sorted(ident_of_root[r]["canonical"] for r in roots),
+        }
+        for r in roots:
+            ident_of_root[r]["contested_anchors"].append(key)
+            ident_of_root[r]["shared_identifier_ambiguities"].append(entry)
+
     identities.sort(key=lambda i: (-sum(i["forms"].values()), i["canonical"].lower()))
     return identities
+
+
+# ── Identity-deception screen (Dimension 1) ──────────────────────────────────
+# Deterministic, cited META-findings about identity structure: fragmentation
+# collapses (many forms, one person), look-alike names kept separate, shared
+# contact points held for verification. A separate channel from anomaly_flags/
+# conflicts BY DESIGN: these describe how identity was resolved and must not
+# perturb the risk-scoring or pattern streams.
+
+_LOOKALIKE_RELATION_LABELS = {
+    "permutation":   "same name tokens in a different order",
+    "initial_form":  "one name is an initial-form of the other",
+    "shared_tokens": "two or more shared name tokens",
+    "initial_token": "shared leading initial plus a shared name token",
+}
+
+
+def _name_form_tokens(form) -> list:
+    return [t for t in re.split(r"[,\s]+", str(form or "").lower()) if t]
+
+
+def _lookalike_relation(fa: str, fb: str) -> str:
+    """Deliberate-similarity classifier for two name FORMS. Never a merge
+    signal — merges run on hard identifiers only. Returns a relation key or
+    "". Deterministic and symmetric."""
+    sa = [t.rstrip(".") for t in _name_form_tokens(fa)]
+    sb = [t.rstrip(".") for t in _name_form_tokens(fb)]
+    if not sa or not sb:
+        return ""
+    if sorted(sa) == sorted(sb) and sa != sb:
+        return "permutation"
+    if len(sa) == len(sb) and sa != sb:
+        full_eq = initials = 0
+        compatible = True
+        for x, y in zip(sa, sb):
+            if x == y:
+                if len(x) > 1:
+                    full_eq += 1
+            elif (len(x) == 1 and y.startswith(x)) or (len(y) == 1 and x.startswith(y)):
+                initials += 1
+            else:
+                compatible = False
+                break
+        if compatible and full_eq >= 1 and initials >= 1:
+            return "initial_form"
+    fulla = {t for t in sa if len(t) > 1}
+    fullb = {t for t in sb if len(t) > 1}
+    if len(fulla & fullb) >= 2:
+        return "shared_tokens"
+    lead_initial = ((len(sa[0]) == 1 and sb[0].startswith(sa[0]))
+                    or (len(sb[0]) == 1 and sa[0].startswith(sb[0])))
+    if lead_initial and (fulla & fullb):
+        return "initial_token"
+    return ""
+
+
+def screen_identity_deception(identities: list, primary_name: str = "") -> list:
+    """Explicit findings for the three identity-deception patterns, run on
+    every case with anchor identities. Flag-not-assert: nothing here merges or
+    splits — the findings cite what the anchor layer decided and what it
+    conservatively refused to decide. Every finding carries its sources."""
+    findings: list = []
+    if not identities:
+        return findings
+
+    # (i) fragmentation: several name-forms collapsed into one identity
+    for ident in identities:
+        forms = sorted(ident.get("forms") or {})
+        if len(forms) < 2:
+            continue
+        ev = [e["identifier"] for e in (ident.get("merge_evidence") or [])][:4]
+        srcs = (ident.get("sources") or [])[:4]
+        findings.append({
+            "type": "IDENTITY_FRAGMENTATION", "severity": "MEDIUM",
+            "parties": [ident.get("canonical", "")],
+            "identifiers": ev, "sources": srcs,
+            "finding": (
+                f"IDENTITY FRAGMENTATION: {len(forms)} name-forms "
+                f"({', '.join(repr(f) for f in forms)}) resolve to ONE subject "
+                f"'{ident.get('canonical', '')}' via shared hard identifier(s) "
+                f"{', '.join(ev) if ev else '(row-level bindings)'} — sources: "
+                f"{', '.join(srcs)}. Treat as one person; aliases recorded."
+            ),
+        })
+
+    # (ii)+(iii) look-alike names anchored to DIFFERENT identifiers: distinct
+    # people kept separate; said explicitly so nobody conflates them.
+    seen_pairs: set = set()
+    for i in range(len(identities)):
+        for j in range(i + 1, len(identities)):
+            a, b = identities[i], identities[j]
+            # Strongest relation across all form pairs wins: a token
+            # reversal must be reported as a reversal, not as the weaker
+            # shared-tokens hit that happens to sort first.
+            _rank = {"permutation": 0, "initial_form": 1,
+                     "initial_token": 2, "shared_tokens": 3}
+            rel, hit, best = "", ("", ""), 99
+            for fa in sorted(set(list(a.get("forms") or {}) + [a.get("canonical", "")])):
+                for fb in sorted(set(list(b.get("forms") or {}) + [b.get("canonical", "")])):
+                    r = _lookalike_relation(fa, fb)
+                    if r and _rank.get(r, 98) < best:
+                        best, rel, hit = _rank.get(r, 98), r, (fa, fb)
+            if not rel:
+                continue
+            pair_key = tuple(sorted((a.get("canonical", ""), b.get("canonical", ""))))
+            if pair_key in seen_pairs:
+                continue
+            seen_pairs.add(pair_key)
+            findings.append({
+                "type": "NAME_LOOKALIKE_DISTINCT", "severity": "MEDIUM",
+                "parties": list(pair_key),
+                "identifiers": (a.get("anchors") or [])[:2] + (b.get("anchors") or [])[:2],
+                "sources": sorted(set((a.get("sources") or [])[:2]
+                                      + (b.get("sources") or [])[:2])),
+                "finding": (
+                    f"SIMILAR NAMES — DISTINCT PERSONS: '{hit[0]}' and '{hit[1]}' "
+                    f"({_LOOKALIKE_RELATION_LABELS.get(rel, rel)}) share name tokens "
+                    f"but NO hard identifier; anchored separately "
+                    f"('{a.get('canonical', '')}': {', '.join((a.get('anchors') or [])[:2])}; "
+                    f"'{b.get('canonical', '')}': {', '.join((b.get('anchors') or [])[:2])}) "
+                    f"— kept separate; do not conflate."
+                ),
+            })
+
+    # shared contact points the merge layer refused to decide on
+    seen_ids: set = set()
+    for ident in identities:
+        for amb in ident.get("shared_identifier_ambiguities") or []:
+            key = amb.get("identifier", "")
+            if key in seen_ids:
+                continue
+            seen_ids.add(key)
+            findings.append({
+                "type": "SHARED_IDENTIFIER_AMBIGUITY", "severity": "MEDIUM",
+                "parties": list(amb.get("parties") or []),
+                "identifiers": [key], "sources": list(amb.get("sources") or []),
+                "finding": (
+                    f"SHARED IDENTIFIER — NOT MERGED: {amb.get('type', '')} "
+                    f"{amb.get('display', '')} appears with "
+                    f"{' and '.join(repr(p) for p in (amb.get('parties') or []))}, "
+                    f"each independently anchored — a shared-infrastructure contact "
+                    f"point (possible legitimately shared line OR undetected alias). "
+                    f"Flagged for officer verification; NOT merged. Sources: "
+                    f"{', '.join(amb.get('sources') or [])}."
+                ),
+            })
+
+    findings.sort(key=lambda f: (f["type"], f["finding"]))
+    return findings
 
 
 # Subject-role header words — a name column whose header carries one of these
@@ -1753,11 +1964,16 @@ def resolve_entity_from_multiple_docs(raw_documents: list) -> tuple[dict, str]:
         # show who each line belongs to and OPERATIONAL_SECURITY can count
         # only the subject's own lines. Unbound numbers stay unattributed
         # (owner ""), preserving behaviour for prose-only cases.
+        # Contested identifiers (shared contact points spanning identities)
+        # never single-attribute: no owner claim, no benami consolidation —
+        # the deception screen surfaces them for human verification instead.
+        _contested_keys = {k for _i in _identities
+                           for k in (_i.get("contested_anchors") or [])}
         _owner_of = {}
         for _i in _identities:
             for _ph in _i.get("phones", []):
                 _k10 = re.sub(r"\D", "", str(_ph))[-10:]
-                if _k10:
+                if _k10 and f"phone:{_k10}" not in _contested_keys:
                     _owner_of[_k10] = _i["canonical"]
         person["case_phones"] = [
             {"number": p, "owner": _owner_of.get(re.sub(r"\D", "", str(p))[-10:], "")}
@@ -1770,7 +1986,16 @@ def resolve_entity_from_multiple_docs(raw_documents: list) -> tuple[dict, str]:
             {"account": a, "owner": _i["canonical"],
              "via_aliases": sorted(_i["anchor_map"].get(f"acct:{a.lower()}", []))}
             for _i in _identities for a in _i.get("accounts", [])
+            if f"acct:{str(a).lower()}" not in _contested_keys
         ]
+        # Identity-deception screen (Dimension 1): explicit, cited findings
+        # for fragmentation / look-alike collisions / shared contact points.
+        # Kept OUT of anomaly_flags and conflicts by design — identity
+        # meta-findings must not perturb the risk or pattern streams.
+        person["identity_findings"] = screen_identity_deception(
+            _identities, primary_name)
+        for _fnd in person["identity_findings"]:
+            print(f"[IDENTITY SCREEN] {_fnd['type']}: {_fnd['finding'][:110]}")
 
     # Permanent: conflict detection across all sources
     if primary_name != "Unknown Subject":
