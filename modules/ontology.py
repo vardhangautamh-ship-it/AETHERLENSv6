@@ -3066,7 +3066,8 @@ def _pa_build_transaction(t, strict=False):
         date=str(_pa_get(t, "date") or _pa_pick(t, _PA_COL_DATE) or ""),
         direction=direction, amount=amount, cross_border=cross_border,
         counterparty=str(cp_val or ""), structured=structured,
-        source=str(_pa_get(t, "source") or _pa_get(t, "source_file") or ""))
+        source=str(_pa_get(t, "source") or _pa_get(t, "source_file")
+                   or _pa_get(t, "_source_file") or ""))
 
 
 def _pa_channels_from_flags(flags) -> list:
@@ -3404,7 +3405,10 @@ def build_ontology(person, entities=None, flags=None, timeline=None,
     for row in _pa_listify(records):
         if not isinstance(row, dict):
             continue
-        vals = [str(v) for v in row.values() if str(v).strip() not in ("", "None", "nan")]
+        # _source_file is provenance metadata, not row content — keeping the
+        # filename out of the blob so its words can't trip event vocabularies.
+        vals = [str(v) for k, v in row.items()
+                if k != "_source_file" and str(v).strip() not in ("", "None", "nan")]
         blob = " ".join(vals)
         rdate = _pa_first_date(str(_pa_pick(row, _PA_COL_DATE) or "")) or _pa_first_date(blob)
         _evpairs.append((blob, rdate, _pa_pick(row, _PA_COL_EXITNODE)))

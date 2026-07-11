@@ -36,6 +36,11 @@ EMPTY_ASSESSMENT = {
     "timezone_confidence":      0,
     "activity_pattern":         "",
     "behavioral_flags":         [],
+    # Provenance (Job A LLM-boundary): the subset of behavioral_flags (plus
+    # any LLM "anomalies") that the LLM itself authored. Display sections may
+    # show them ([AI ANALYSIS]); the deterministic §09B pattern input excludes
+    # them. Always [] on the rule-based path.
+    "flags_ai_origin":          [],
     "language_indicators":      [],
     "interest_clusters":        [],
     "network_influence_score":  0,
@@ -625,6 +630,10 @@ def _analyze_inner(subject_data: dict, structured_rows: list = None) -> tuple[di
             except Exception:
                 parsed = None
         if parsed:
+            # Job A LLM-boundary: record the LLM's OWN flags/anomalies before any
+            # rule-based content is mixed in, so provenance survives the merge.
+            _llm_flags = {str(f) for f in (parsed.get("behavioral_flags") or [])}
+            _llm_anoms = {str(a) for a in (parsed.get("anomalies") or [])}
             # Backfill missing keys with defaults
             for key, default in EMPTY_ASSESSMENT.items():
                 if key not in parsed:
@@ -668,6 +677,17 @@ def _analyze_inner(subject_data: dict, structured_rows: list = None) -> tuple[di
             parsed["night_activity_score"] = _abp.get("night_activity_score", 0)
             parsed["spam_exposure_level"]  = _abp.get("spam_exposure_level", "moderate")
             parsed["rule_anomalies"] = rule_anomalies
+            # Provenance: a flag counts as LLM-origin only if the LLM authored
+            # it AND no deterministic source (rule anomalies, pattern helper)
+            # produced the identical string — an AI flag that matches a
+            # rule-derived one is grounded, not hallucinated.
+            _det_strs = set()
+            if rule_anomalies:
+                _det_strs |= {f"{a['flag']}: {a['detail']}" for a in rule_anomalies}
+            _det_strs |= {str(f) for f in _abp.get("behavioral_flags", [])}
+            parsed["flags_ai_origin"] = sorted(
+                (({str(f) for f in parsed.get("behavioral_flags", [])} & _llm_flags)
+                 - _det_strs) | _llm_anoms)
             return parsed, engine_tag
 
     # All AI paths exhausted — rule-based only
@@ -678,4 +698,5 @@ def _analyze_inner(subject_data: dict, structured_rows: list = None) -> tuple[di
         existing  = result.get("behavioral_flags", [])
         result["behavioral_flags"] = rule_strs + [f for f in existing if f not in rule_strs]
     result["rule_anomalies"] = rule_anomalies
+    result["flags_ai_origin"] = []          # rule-based path — nothing is LLM-authored
     return result, "local"

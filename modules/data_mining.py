@@ -43,7 +43,16 @@ MINING_NOTICE = (
 # Values too generic to constitute an evidentiary link between two subjects.
 # Vocabulary-driven (compared after normalisation) — extend the vocabulary,
 # never special-case a single investigation.
-_GENERIC_TOKENS = {"unknown", "n a", "na", "none", "nil", "self", "cash", ""}
+_GENERIC_TOKENS = {"unknown", "n a", "na", "none", "nil", "self", "cash", "",
+                   # Transaction-TYPE descriptors that leak into counterparty
+                   # columns ("Counter withdrawal") — a banking phrase, not an
+                   # entity; two subjects sharing one can never be an
+                   # evidentiary link (generic-value vs entity-value rule).
+                   "counter withdrawal", "cash withdrawal", "counter deposit",
+                   "cash deposit", "atm withdrawal", "atm deposit",
+                   "self withdrawal", "cheque deposit", "cheque withdrawal",
+                   "withdrawal", "deposit", "transfer", "wire transfer",
+                   "bank transfer", "counter"}
 _GENERIC_LOCATIONS = {"india", "bharat"}
 
 _MIN_PHONE_DIGITS = 7   # below this a digit string is not a phone line
