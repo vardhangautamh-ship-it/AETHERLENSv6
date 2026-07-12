@@ -38,13 +38,20 @@ def check(label, ok):
 
 
 def case(subject, phones=(), orgs=(), counterparties=(), locations=()):
+    """Org/counterparty items may carry a third element — the hard identifier
+    (registration / account) the cross-case matcher links entities on."""
+    def _org(t):
+        return NS(name=t[0], type="front", jurisdiction="", offshore=False,
+                  source=t[1], registration=(t[2] if len(t) > 2 else ""))
+    def _txn(t):
+        return NS(date="2024-01-01", direction="out", amount=1, cross_border=False,
+                  counterparty=t[0], structured=False, source=t[1],
+                  counterparty_account=(t[2] if len(t) > 2 else ""))
     return {"subject": subject, "ontology": NS(
         subject_name=subject,
         phones=[NS(number=n, type="domestic", country="", source=s) for n, s in phones],
-        organizations=[NS(name=n, type="front", jurisdiction="", offshore=False,
-                          source=s) for n, s in orgs],
-        transactions=[NS(date="2024-01-01", direction="out", amount=1, cross_border=False,
-                         counterparty=c, structured=False, source=s) for c, s in counterparties],
+        organizations=[_org(t) for t in orgs],
+        transactions=[_txn(t) for t in counterparties],
         locations=[NS(name=n, kind="stated", source=s) for n, s in locations])}
 
 
@@ -54,12 +61,15 @@ print("=" * 72)
 
 # Star topology: HUB links to A (phone), B (org), C (counterparty). The leaves
 # share nothing with each other → HUB is a cut vertex; every spoke is a bridge.
+# Spokes: Hub–A via a shared phone, Hub–B via a shared org registration,
+# Hub–C via a shared counterparty account (all hard identifiers).
 star_mined = mine_case_set([
-    case("Hub", phones=[("+91900000001", "hub.csv")], orgs=[("Nexus Traders", "hub.pdf")],
-         counterparties=[("Beneficiary Z", "hub_bank.csv")]),
+    case("Hub", phones=[("+91900000001", "hub.csv")],
+         orgs=[("Nexus Traders", "hub.pdf", "CIN-NEX-1")],
+         counterparties=[("Beneficiary Z", "hub_bank.csv", "AC-BENZ-1")]),
     case("Leaf A", phones=[("+91900000001", "a.csv")]),
-    case("Leaf B", orgs=[("Nexus Traders", "b.pdf")]),
-    case("Leaf C", counterparties=[("Beneficiary Z", "c_bank.csv")])])
+    case("Leaf B", orgs=[("Nexus Traders", "b.pdf", "CIN-NEX-1")]),
+    case("Leaf C", counterparties=[("Beneficiary Z", "c_bank.csv", "AC-BENZ-1")])])
 g, edge_ev = build_network_graph(star_mined)
 check("graph nodes/edges match the miner's links (nothing fabricated)",
       set(g.nodes()) == {"Hub", "Leaf A", "Leaf B", "Leaf C"}
@@ -91,10 +101,14 @@ check("leaves are NOT flagged as structurally central",
           for n in star["central_nodes"] if n["subject"] != "Hub"))
 
 # Redundant triangle: A-B, B-C, A-C all linked → no cut vertex, no bridge.
+# Triangle edges: A–B via shared phone, A–C via shared org registration,
+# B–C via shared counterparty account (all hard identifiers).
 tri = suggest_network_dismantling(mine_case_set([
-    case("Subject A", phones=[("+91900000011", "a.csv")], orgs=[("Ring Org", "a.pdf")]),
-    case("Subject B", phones=[("+91900000011", "b.csv")], locations=[("Petrapole land port", "b.csv")]),
-    case("Subject C", orgs=[("Ring Org", "c.pdf")], locations=[("Petrapole land port", "c.csv")])]))
+    case("Subject A", phones=[("+91900000011", "a.csv")], orgs=[("Ring Org", "a.pdf", "CIN-RING-1")]),
+    case("Subject B", phones=[("+91900000011", "b.csv")],
+         counterparties=[("Ring Beneficiary", "b.csv", "AC-RING-9")]),
+    case("Subject C", orgs=[("Ring Org", "c.pdf", "CIN-RING-1")],
+         counterparties=[("Ring Beneficiary", "c.csv", "AC-RING-9")])]))
 check("redundant triangle reports NO bridges and NO cut vertex (honest structure)",
       tri["central_links"] == [] and tri["has_structural_bridges"] is False
       and tri["redundant_connectivity"] is True
@@ -143,13 +157,13 @@ check("empty/malformed input → empty graph, no crash",
 # Identity attributes live outside the cited links; the graph is built only
 # from links, so they can never create an edge or change centrality.
 id_a = suggest_network_dismantling(mine_case_set([
-    case("Hub", phones=[("+91900000001", "h.csv")], orgs=[("Nexus", "h.pdf")]),
+    case("Hub", phones=[("+91900000001", "h.csv")], orgs=[("Nexus", "h.pdf", "CIN-NX-2")]),
     case("Leaf A", phones=[("+91900000001", "a.csv")]),
-    case("Leaf B", orgs=[("Nexus", "b.pdf")])]))
+    case("Leaf B", orgs=[("Nexus", "b.pdf", "CIN-NX-2")])]))
 id_b_cases = [
-    case("Hub", phones=[("+91900000001", "h.csv")], orgs=[("Nexus", "h.pdf")]),
+    case("Hub", phones=[("+91900000001", "h.csv")], orgs=[("Nexus", "h.pdf", "CIN-NX-2")]),
     case("Leaf A", phones=[("+91900000001", "a.csv")]),
-    case("Leaf B", orgs=[("Nexus", "b.pdf")])]
+    case("Leaf B", orgs=[("Nexus", "b.pdf", "CIN-NX-2")])]
 id_b_cases[0]["ontology"].flags = ["Bangladeshi national", "Muslim"]
 id_b = suggest_network_dismantling(mine_case_set(id_b_cases))
 check("identity attributes never enter the graph or change centrality",
@@ -169,12 +183,14 @@ ring = mine_document_fraud_rings([
         subject_name="Forger A", flags=["Forged passport recovered", "Counterfeit visa found"],
         phones=[], transactions=[], locations=[],
         organizations=[NS(name="Supplier X", type="front", jurisdiction="", offshore=False,
-                          source="a.pdf")], timeline_events=[], legal_proceedings=[])},
+                          source="a.pdf", registration="CIN-SUPX-1")],
+        timeline_events=[], legal_proceedings=[])},
     {"subject": "Forger B", "ontology": NS(
         subject_name="Forger B", flags=["Tampered work permit seized", "Fake visa found"],
         phones=[], transactions=[], locations=[],
         organizations=[NS(name="Supplier X", type="front", jurisdiction="", offshore=False,
-                          source="b.pdf")], timeline_events=[], legal_proceedings=[])}])
+                          source="b.pdf", registration="CIN-SUPX-1")],
+        timeline_events=[], legal_proceedings=[])}])
 ring_sugg = suggest_network_dismantling(ring)
 check("accepts a specialised-miner result and grounds on its ring_links",
       ring_sugg["network"]["edge_count"] == 1

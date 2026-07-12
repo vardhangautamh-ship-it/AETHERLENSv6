@@ -44,15 +44,26 @@ def check(label, ok):
 
 
 def case(subject, phones=(), orgs=(), counterparties=(), locations=(), flags=()):
-    """Duck-typed case ontology matching the typed contract."""
+    """Duck-typed case ontology matching the typed contract. Org and
+    counterparty items may be (name, source) or (name, source, hard_id) —
+    the hard_id is the registration / counterparty account the cross-case
+    matcher links on (name alone only ever raises an UNVERIFIED flag)."""
+    def _org(t):
+        n, s = t[0], t[1]
+        reg = t[2] if len(t) > 2 else ""
+        return NS(name=n, type="legitimate", jurisdiction="", offshore=False,
+                  source=s, registration=reg)
+    def _txn(t):
+        c, s = t[0], t[1]
+        acct = t[2] if len(t) > 2 else ""
+        return NS(date="2024-01-01", direction="out", amount=10000,
+                  cross_border=False, counterparty=c, structured=False,
+                  source=s, counterparty_account=acct)
     return {"subject": subject, "ontology": NS(
         subject_name=subject, flags=list(flags),
         phones=[NS(number=n, type="domestic", country="", source=s) for n, s in phones],
-        organizations=[NS(name=n, type="legitimate", jurisdiction="", offshore=False,
-                          source=s) for n, s in orgs],
-        transactions=[NS(date="2024-01-01", direction="out", amount=10000,
-                         cross_border=False, counterparty=c, structured=False,
-                         source=s) for c, s in counterparties],
+        organizations=[_org(t) for t in orgs],
+        transactions=[_txn(t) for t in counterparties],
         locations=[NS(name=n, kind="stated", source=s) for n, s in locations])}
 
 
@@ -93,30 +104,38 @@ check("phone link citations keep BOTH raw forms with their sources",
       and two["links"][0]["citations"]["Subject B"][0] ==
       {"raw": "9613070011", "source": "b_cdr.csv"})
 
+# Cross-case org link now anchors on a shared REGISTRATION (hard identifier),
+# not the name. Name still displayed case/punctuation-insensitively.
 org_link = mine_case_set([
-    case("Subject A", orgs=[("Meridian Overseas Pvt. Ltd", "a_roc.pdf")]),
-    case("Subject B", orgs=[("MERIDIAN OVERSEAS PVT LTD", "b_txn.csv")])])
-check("shared organization matches case/punctuation-insensitively",
+    case("Subject A", orgs=[("Meridian Overseas Pvt. Ltd", "a_roc.pdf", "LLP-AAB-1234")]),
+    case("Subject B", orgs=[("MERIDIAN OVERSEAS PVT LTD", "b_txn.csv", "llp-aab-1234")])])
+check("shared organization links on a shared registration (hard id)",
       org_link["link_count"] == 1
-      and org_link["links"][0]["type"] == "shared_organization")
+      and org_link["links"][0]["type"] == "shared_organization"
+      and org_link["links"][0].get("hard_id"))
 
+# Counterparty anchors on a shared account; location still links by value at
+# this step (Weakness 3 removes sole-location links next).
 cp_loc = mine_case_set([
-    case("Subject A", counterparties=[("Hawala X", "a_bank.csv")],
+    case("Subject A", counterparties=[("Hawala X", "a_bank.csv", "AC-5500")],
          locations=[("Hili border checkpost", "a_move.csv")]),
-    case("Subject B", counterparties=[("hawala x", "b_bank.csv")],
+    case("Subject B", counterparties=[("hawala x", "b_bank.csv", "AC-5500")],
          locations=[("HILI BORDER CHECKPOST", "b_move.csv")])])
-check("shared counterparty and shared location both detected",
-      cp_loc["link_count"] == 2
-      and {l["type"] for l in cp_loc["links"]}
-      == {"shared_counterparty", "shared_location"})
+# Weakness 3: shared location is never a sole link. The counterparty account
+# links the two subjects; the shared location then CORROBORATES that link.
+check("shared counterparty (via account) links; shared location corroborates, not a 2nd link",
+      cp_loc["link_count"] == 1
+      and cp_loc["links"][0]["type"] == "shared_counterparty"
+      and len(cp_loc["location_corroborations"]) == 1
+      and not cp_loc["shared_location_context"])
 
 check("every link cites EVERY subject on it",
       all(set(l["citations"]) == set(l["subjects"])
           and all(l["citations"][s] for s in l["subjects"])
           for r in (two, org_link, cp_loc) for l in r["links"]))
 
-nosrc = mine_case_set([case("Subject A", counterparties=[("Hawala X", "")]),
-                       case("Subject B", counterparties=[("Hawala X", "b.csv")])])
+nosrc = mine_case_set([case("Subject A", counterparties=[("Hawala X", "", "AC-77")]),
+                       case("Subject B", counterparties=[("Hawala X", "b.csv", "AC-77")])])
 check("missing source labelled honestly, never invented",
       nosrc["link_count"] == 1
       and nosrc["links"][0]["citations"]["Subject A"][0]["source"]
@@ -170,10 +189,10 @@ print("=" * 72)
 chain = mine_case_set([
     case("Subject A", phones=[("+91-96130-70011", "a.csv")]),
     case("Subject B", phones=[("+91-96130-70011", "b.csv")],
-         orgs=[("Meridian Overseas", "b.pdf")]),
-    case("Subject C", orgs=[("Meridian Overseas", "c.pdf")]),
+         orgs=[("Meridian Overseas", "b.pdf", "CIN-MER-9")]),
+    case("Subject C", orgs=[("Meridian Overseas", "c.pdf", "CIN-MER-9")]),
     case("Subject D", phones=[("+91-90000-00009", "d.csv")])])
-check("A-B phone + B-C org → ONE transitive cluster of A,B,C",
+check("A-B phone + B-C org (shared registration) → ONE transitive cluster of A,B,C",
       chain["cluster_count"] == 1
       and chain["clusters"][0]["subjects"] == ["Subject A", "Subject B", "Subject C"]
       and chain["clusters"][0]["link_types"]
@@ -181,15 +200,20 @@ check("A-B phone + B-C org → ONE transitive cluster of A,B,C",
 check("unlinked subject reported as NOT implicated, outside every cluster",
       chain["unlinked_subjects"] == ["Subject D"])
 
+# Weakness 3: C and D share ONLY a location — that is NOT a link, so they do
+# not form a cluster; only the phone-linked A–B pair is a cluster. The shared
+# location surfaces as context, never an edge.
 pairs = mine_case_set([
     case("Subject A", phones=[("+91-96130-70011", "a.csv")]),
     case("Subject B", phones=[("+91-96130-70011", "b.csv")]),
     case("Subject C", locations=[("Moreh crossing", "c.csv")]),
     case("Subject D", locations=[("Moreh crossing", "d.csv")])])
-check("disjoint pairs stay separate clusters (deterministic order)",
-      pairs["cluster_count"] == 2
+check("phone pair clusters; a location-only pair does NOT (location is not a link)",
+      pairs["cluster_count"] == 1
       and pairs["clusters"][0]["subjects"] == ["Subject A", "Subject B"]
-      and pairs["clusters"][1]["subjects"] == ["Subject C", "Subject D"])
+      and any(set(c["subjects"]) == {"Subject C", "Subject D"}
+              for c in pairs["shared_location_context"])
+      and set(pairs["unlinked_subjects"]) == {"Subject C", "Subject D"})
 
 print("=" * 72)
 print("RESULT-LEVEL — determinism, honesty, notice, rendering")
@@ -223,8 +247,8 @@ check("rendered result shows clusters, per-subject citations, and the notice",
       and "UNLINKED SUBJECTS (no cited link — NOT implicated): Subject D" in txt)
 check("features dict (without ontology) accepted as mining input",
       mine_case_set([feats,
-                     {"subject": "Other", "counterparties":
-                      [{"raw": "Corridor Agent", "source": "o.csv"}]}])["link_count"] == 1)
+                     {"subject": "Other", "phones":
+                      [{"raw": "+91-96130-70011", "source": "o.csv"}]}])["link_count"] == 1)
 
 print("=" * 72)
 passed, total = sum(results), len(results)

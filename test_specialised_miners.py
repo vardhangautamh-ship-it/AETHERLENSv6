@@ -40,14 +40,22 @@ def check(label, ok):
 def onto(subject, phones=(), orgs=(), txns=(), locations=(), flags=(),
          timeline=(), legals=()):
     """Duck-typed case ontology matching the pattern-rule contract."""
+    def _org(t):
+        n, s = t[0], t[1]
+        reg = t[2] if len(t) > 2 else ""
+        return NS(name=n, type="front", jurisdiction="", offshore=False,
+                  source=s, registration=reg)
+    def _txn(t):
+        a, c, s = t[0], t[1], t[2]
+        acct = t[3] if len(t) > 3 else ""
+        return NS(date="2024-01-01", direction="out", amount=a,
+                  cross_border=True, counterparty=c, structured=False,
+                  source=s, counterparty_account=acct)
     return {"subject": subject, "ontology": NS(
         subject_name=subject, flags=list(flags), graph=None,
         phones=[NS(number=n, type=t, country="", source=s) for n, t, s in phones],
-        organizations=[NS(name=n, type="front", jurisdiction="", offshore=False,
-                          source=s) for n, s in orgs],
-        transactions=[NS(date="2024-01-01", direction="out", amount=a,
-                         cross_border=True, counterparty=c, structured=False,
-                         source=s) for a, c, s in txns],
+        organizations=[_org(t) for t in orgs],
+        transactions=[_txn(t) for t in txns],
         properties=[], comm_channels=[],
         legal_proceedings=[NS(agency="FRRO", status="active", date="2024-01-01",
                              case_ref="R", kind=k, source=s) for k, s in legals],
@@ -66,11 +74,12 @@ print("=" * 72)
 print("SIM-FARMING — flag via rule, ring via shared operator")
 print("=" * 72)
 
+# Ring anchors on the operator's shared REGISTRATION (hard id), not its name.
 sim = mine_sim_farming([
     onto("Farmer A", phones=burners("+91900010", "a_cdr.csv"),
-         orgs=[("SimOps Handler LLP", "a_roc.pdf")]),
+         orgs=[("SimOps Handler LLP", "a_roc.pdf", "LLP-SIM-42")]),
     onto("Farmer B", phones=burners("+91900020", "b_cdr.csv"),
-         orgs=[("SIMOPS HANDLER LLP", "b_txn.csv")]),
+         orgs=[("SIMOPS HANDLER LLP", "b_txn.csv", "llp-sim-42")]),
     onto("Solo Farmer C", phones=burners("+91900030", "c_cdr.csv")),
     onto("Not A Farmer", phones=[("+91900040001", "domestic", "d.csv"),
                                  ("+91900040002", "domestic", "d.csv")])])
@@ -97,10 +106,10 @@ print("=" * 72)
 doc = mine_document_fraud_rings([
     onto("Forger A", flags=["Forged passport recovered during search",
                             "Counterfeit visa sticker identified"],
-         orgs=[("Overseas Agent B", "a_seizure.pdf")]),
+         orgs=[("Overseas Agent B", "a_seizure.pdf", "CIN-OAB-7")]),
     onto("Forger B", flags=["Tampered work permit seized",
                             "Fake residence permit found in vehicle"],
-         orgs=[("OVERSEAS AGENT B", "b_seizure.pdf")]),
+         orgs=[("OVERSEAS AGENT B", "b_seizure.pdf", "cin-oab-7")]),
     onto("Lone Forger", flags=["Forged passport recovered",
                                "Counterfeit visa found"]),
     onto("Clean Subject", flags=["Late tax filing noted"])])
@@ -130,10 +139,11 @@ print("=" * 72)
 print("REMITTANCE / HAWALA — flag via rule, ring via shared corridor counterparty")
 print("=" * 72)
 
+# Ring anchors on the corridor counterparty's shared ACCOUNT (hard id).
 rem = mine_remittance_hawala([
-    onto("Remitter A", txns=[(35000, "Corridor Agent", "a_bank.csv") for _ in range(6)]),
-    onto("Remitter B", txns=[(30000, "CORRIDOR AGENT", "b_bank.csv") for _ in range(6)]),
-    onto("Isolated Remitter", txns=[(40000, "Other Beneficiary", "c.csv")
+    onto("Remitter A", txns=[(35000, "Corridor Agent", "a_bank.csv", "AC-COR-1") for _ in range(6)]),
+    onto("Remitter B", txns=[(30000, "CORRIDOR AGENT", "b_bank.csv", "AC-COR-1") for _ in range(6)]),
+    onto("Isolated Remitter", txns=[(40000, "Other Beneficiary", "c.csv", "AC-OTH-9")
                                     for _ in range(5)]),
     onto("Small Sender", txns=[(20000, "Someone", "d.csv") for _ in range(3)])])
 rflagged = {f["subject"] for f in rem["subjects_flagged"]}
@@ -148,14 +158,20 @@ check("remitter to a different beneficiary stands alone",
       "Isolated Remitter" in rem["unlinked_flagged_subjects"])
 
 print("=" * 72)
-print("MOVEMENT / TIMELINE — flag via rule, ring via shared crossing")
+print("MOVEMENT / TIMELINE — flag via rule, ring on a hard id (crossing corroborates)")
 print("=" * 72)
 
+# Weakness 3: a shared border CROSSING is coincidence-prone and no longer a
+# sole ring link. A and B share a handler mobile (hard id) → genuine ring;
+# the shared crossing corroborates it. Two travellers who share ONLY a
+# crossing must NOT ring.
 mov = mine_movement_patterns([
     onto("Traveller A",
+         phones=[("+919812300777", "domestic", "a_cdr.csv")],
          locations=[("Petrapole land port", "a_move.csv"), ("Hili border checkpost", "a_move.csv")],
          timeline=[("Road transit staging near crossing", "a_move.csv")]),
     onto("Traveller B",
+         phones=[("+919812300777", "domestic", "b_cdr.csv")],
          locations=[("PETRAPOLE LAND PORT", "b_move.csv"), ("Moreh crossing", "b_move.csv")],
          timeline=[("Vehicle movement toward border", "b_move.csv")]),
     onto("Distant Traveller",
@@ -167,12 +183,28 @@ mflagged = {f["subject"] for f in mov["subjects_flagged"]}
 check("movement rule flags subjects with 2+ border locations + movement",
       {"Traveller A", "Traveller B", "Distant Traveller"} <= mflagged
       and "No Border Subject" not in mflagged)
-check("shared crossing forms a cited ring",
+check("ring forms on the shared handler mobile (hard id), NOT the crossing",
       mov["ring_count"] == 1
       and mov["rings"][0]["subjects"] == ["Traveller A", "Traveller B"]
-      and mov["rings"][0]["link_types"] == ["shared_location"])
+      and mov["rings"][0]["link_types"] == ["shared_phone"])
+check("the shared crossing corroborates the hard-id ring (not a link)",
+      any(set(c["subjects"]) == {"Traveller A", "Traveller B"}
+          for c in mov["location_corroborations"]))
 check("traveller through different crossings stands alone",
       "Distant Traveller" in mov["unlinked_flagged_subjects"])
+
+# A movement pair sharing ONLY a crossing (no hard id) must NOT ring.
+mov_coinc = mine_movement_patterns([
+    onto("Mover X",
+         locations=[("Petrapole land port", "x.csv"), ("Hili border checkpost", "x.csv")],
+         timeline=[("Transit near crossing", "x.csv")]),
+    onto("Mover Y",
+         locations=[("PETRAPOLE LAND PORT", "y.csv"), ("Moreh crossing", "y.csv")],
+         timeline=[("Movement toward border", "y.csv")])])
+check("two movers sharing ONLY a crossing do NOT ring (crossing is context)",
+      mov_coinc["ring_count"] == 0
+      and any(set(c["subjects"]) == {"Mover X", "Mover Y"}
+              for c in mov_coinc["shared_location_context"]))
 
 print("=" * 72)
 print("CROSS-CUTTING — identity-blindness, determinism, honesty, notice")
