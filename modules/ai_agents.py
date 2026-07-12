@@ -24,10 +24,32 @@ except ImportError:
     _NX_AVAILABLE = False
 
 import config
+from modules.statute_era import enforce_new_era
 
 # ══════════════════════════════════════════════════════════════════════════════
 # SECTION A — SHARED HELPERS
 # ══════════════════════════════════════════════════════════════════════════════
+
+# Statute-era gate (Chiron-style, see modules/statute_era.py): every statutory
+# citation that leaves the citation-bearing agents (§17 NextStepAgent,
+# §18 TacticalPlanAgent) — hardcoded, rule-built, or LLM-generated — passes
+# through enforce_new_era, so a report can never mix CrPC/IEA with BNSS/BSA.
+_ERA_TEXT_KEYS = ("step", "action", "legal_basis", "authorization",
+                  "authorization_required", "fills_gap", "title",
+                  "description", "authority_required", "reward",
+                  "human_review")
+
+
+def _era_gate_items(items: list) -> list:
+    """Apply the statute-era gate in place to every citation-bearing text
+    field of a list of step/action dicts."""
+    for it in items or []:
+        if not isinstance(it, dict):
+            continue
+        for k in _ERA_TEXT_KEYS:
+            if it.get(k):
+                it[k] = enforce_new_era(it[k])
+    return items
 
 def _call_bedrock(prompt: str, max_tokens: int = 4096) -> str:
     """
@@ -803,7 +825,7 @@ def run_next_step_agent(report: dict, user_id: str = "system") -> dict:
                         "fills_gap":              s.get("fills_gap", ""),
                     })
                 result = {
-                    "next_steps":   normalised,
+                    "next_steps":   _era_gate_items(normalised),
                     "generated_by": "NextStepAgent - AI",
                     "agent":        "NextStepAgent",
                     "generated_at": datetime.datetime.utcnow().isoformat(),
@@ -894,19 +916,19 @@ def run_next_step_agent(report: dict, user_id: str = "system") -> dict:
         },
         {
             "step":        "Apply for Mutual Legal Assistance Treaty (MLAT) request for foreign server data",
-            "legal_basis": "MLAT / IT Act 2000 — Section 69 / CrPC Section 166A",
+            "legal_basis": "MLAT / IT Act 2000 — Section 69 / BNSS Section 112",
             "priority":    len(steps) + 3, "value": "MEDIUM",
             "fills_gap":   "Cross-border digital evidence",
         },
         {
             "step":        "Conduct physical surveillance and field verification of stated address(es)",
-            "legal_basis": "CrPC Section 41/41A / BNSS Section 35",
+            "legal_basis": "BNSS Section 35 (arrest / notice of appearance)",
             "priority":    len(steps) + 4, "value": "MEDIUM",
             "fills_gap":   "Confirmed residential / operational location",
         },
         {
             "step":        "Preserve and forensically image all seized devices under chain-of-custody",
-            "legal_basis": "IT Act 2000 — Section 65B / BNSS Section 94",
+            "legal_basis": "BSA 2023 — Section 63 (electronic records) / BNSS Section 94",
             "priority":    len(steps) + 5, "value": "HIGH",
             "fills_gap":   "Admissible digital forensic evidence",
         },
@@ -920,7 +942,7 @@ def run_next_step_agent(report: dict, user_id: str = "system") -> dict:
             steps.append(candidate)
 
     result = {
-        "next_steps":   steps[:5],
+        "next_steps":   _era_gate_items(steps[:5]),
         "generated_by": "NextStepAgent - Rule-Based",
         "agent":        "NextStepAgent",
         "generated_at": datetime.datetime.utcnow().isoformat(),
@@ -1059,23 +1081,31 @@ def _tactical_plan_fallback(person_object: dict, anomalies: list, assets_data: l
     anomaly_text = " ".join(str(a).lower() for a in (anomalies or []))
     _hint = str(case_type_hint or "").strip().lower()
 
-    # Immigration wins when §09B classified the case as immigration OR when
-    # travel-document/immigration EVIDENCE is present in the flags. Evaluated
-    # first because a forged passport is unambiguously an immigration matter.
-    has_immigration = (_hint == "immigration"
-                       or any(k in anomaly_text for k in _IMMIGRATION_TACTICAL_TOKENS))
-    has_financial = (_hint == "financial") or any(k in anomaly_text for k in [
-        "fema", "pmla", "bank", "financial", "international transfer", "ed indicator",
-        "hawala", "money launder", "cash deposit", "usd",
-    ])
-    has_cyber = (_hint == "cyber") or any(k in anomaly_text for k in [
-        "it act", "cyber", "platform", "digital evidence", "cert-in",
-        "section 66", "section 43", "malicious", "deletion", "scraping",
-        "unauthori", "dpdp",
-    ])
-    has_drug = any(k in anomaly_text for k in [
-        "ndps", "drug", "narcotic", "psychotropic", "ncb",
-    ])
+    if _hint in ("immigration", "financial", "cyber"):
+        # Authoritative §09B case type present: it DECIDES. Token detection
+        # must not overrule the single source of truth — that is exactly how
+        # §09B and §18 diverged inside one report.
+        has_immigration = _hint == "immigration"
+        has_financial   = _hint == "financial"
+        has_cyber       = _hint == "cyber"
+        has_drug        = False
+    else:
+        # No authoritative type (or §09B said general/undetermined) —
+        # evidence-token detection over the anomaly text, immigration first
+        # because a forged passport is unambiguously an immigration matter.
+        has_immigration = any(k in anomaly_text for k in _IMMIGRATION_TACTICAL_TOKENS)
+        has_financial = any(k in anomaly_text for k in [
+            "fema", "pmla", "bank", "financial", "international transfer", "ed indicator",
+            "hawala", "money launder", "cash deposit", "usd",
+        ])
+        has_cyber = any(k in anomaly_text for k in [
+            "it act", "cyber", "platform", "digital evidence", "cert-in",
+            "section 66", "section 43", "malicious", "deletion", "scraping",
+            "unauthori", "dpdp",
+        ])
+        has_drug = any(k in anomaly_text for k in [
+            "ndps", "drug", "narcotic", "psychotropic", "ncb",
+        ])
 
     # ── Action 2: branches on detected case type (immigration first) ───────────
     if has_immigration:
@@ -1316,12 +1346,12 @@ def _tactical_plan_fallback(person_object: dict, anomalies: list, assets_data: l
             "time_sensitivity": "MEDIUM",
             "description": (
                 "Compile all collected evidence into formal chargesheet. File prosecution "
-                "complaint with designated court. Include Section 65B IT Act certificates "
+                "complaint with designated court. Include Section 63 BSA 2023 certificates "
                 "for all digital evidence. Brief public prosecutor."
             ),
             "legal_basis": (
                 "BNSS Section 193 (chargesheet) / "
-                "IT Act 2000 — Section 65B / CrPC Section 173"
+                "BSA 2023 — Section 63 (electronic records)"
             ),
             "authority_required": "SP / DCP (minimum) to authorize chargesheet",
             "agency": "Court",
@@ -1407,6 +1437,30 @@ Return ONLY valid JSON."""
     if not result.get("actions") or len(result.get("actions", [])) != 6:
         result = _tactical_plan_fallback(person_object, anomalies, assets_data,
                                          case_type_hint=case_type_hint)
+
+    # Single source of truth: whatever path produced the plan (LLM or
+    # fallback), the §18 case-type label is the authoritative §09B type when
+    # one was supplied — the LLM must not relabel the case, in the field or
+    # in the case-summary prose.
+    _canon = {"immigration": "Immigration Offence", "financial": "Financial Crime",
+              "cyber": "Cyber Crime"}
+    if case_type_hint in _canon:
+        result["case_type"] = _canon[case_type_hint]
+        _summary = str(result.get("case_summary") or "").lower()
+        _other = [f for f in _canon if f != case_type_hint]
+        if any(f in _summary for f in _other):
+            result["case_summary"] = (
+                f"Tactical operation plan for "
+                f"{person_object.get('confirmed_name', 'Unknown Subject')} — "
+                f"{len(anomalies or [])} confirmed evidence flag(s) across "
+                f"{_canon[case_type_hint]} case type.")
+
+    # Statute-era gate: no §18 action may cite the old era or mix eras,
+    # whichever path (LLM or fallback) produced it.
+    _era_gate_items(result.get("actions") or [])
+    for _k in ("case_summary", "critical_warning"):
+        if result.get(_k):
+            result[_k] = enforce_new_era(result[_k])
 
     result["method"]       = f"hybrid ({LAST_ENGINE_USED})" if raw else "rule-based-fallback"
     result["agent"]        = "TacticalPlanAgent"
