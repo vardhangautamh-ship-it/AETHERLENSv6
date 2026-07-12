@@ -2709,6 +2709,16 @@ _PA_ENFORCEMENT_INDICATORS = _PA_ENFORCEMENT_AGENCIES | {
 _PA_COL_CONTACT = {"contactname", "contact", "peer", "associate", "counterpart",
                    "party", "peername", "alias", "handler", "supplier"}
 
+
+def _pa_contact_col(col) -> bool:
+    """True when a column is a contact/name-role carrier, INCLUDING ordinal
+    variants (contact2_name, contact_2, handler3): digits are stripped from
+    the normalised header before the vocabulary check, so every numbered
+    secondary/alternate variant of a listed role matches without naming any
+    column. Value-shape validation (_pa_personish) still gates every cell."""
+    return _pa_token(col).translate(str.maketrans("", "", "0123456789")) \
+        in _PA_COL_CONTACT
+
 # Location-typed evidence vocabulary — §04 admits ONLY values whose column name
 # (or text-line label) contains one of these WORDS (word-level match: the header
 # is split on separators, so "tower_location" matches via "location" while
@@ -2876,7 +2886,7 @@ def _pa_graph_from_records(subject, records, transactions):
         if not isinstance(row, dict):
             continue
         for col, val in row.items():
-            if _pa_token(col) in _PA_COL_CONTACT:
+            if _pa_contact_col(col):
                 nm = str(val or "").strip()
                 if _pa_personish(nm) and _pa_norm(nm) != _pa_norm(s):
                     G.add_node(nm, type="person")
@@ -3225,7 +3235,7 @@ def build_ontology(person, entities=None, flags=None, timeline=None,
         if not isinstance(row, dict):
             continue
         for col, val in row.items():
-            if _pa_token(col) not in _PA_COL_CONTACT:
+            if not _pa_contact_col(col):
                 continue
             nm = str(val or "").strip()
             if _pa_personish(nm) and _pa_token(nm) not in _seen_person:
