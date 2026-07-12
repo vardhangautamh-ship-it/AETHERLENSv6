@@ -910,6 +910,15 @@ def _bind_header_tokens(col) -> set:
     return {t for t in re.split(r"[^a-z0-9]+", str(col).lower().strip()) if t}
 
 
+def _bind_role_stems(col) -> frozenset:
+    """Role tokens of a header with ordinal digits stripped and generic tokens
+    removed: contact_name / contact2_name / contact_2 all stem to {contact}.
+    Lets numbered secondary/alternate variants of one role be recognised as
+    the SAME role without naming any column."""
+    stems = {t.rstrip("0123456789") for t in _bind_header_tokens(col)}
+    return frozenset(s for s in stems if s and s not in _BIND_GENERIC_TOKENS)
+
+
 def _bind_id_col_type(col) -> str | None:
     """Classify a column as a hard-identifier carrier, or None. Ref/event
     columns (txn refs, order ids, device IPs, towers) are explicitly excluded —
@@ -979,10 +988,11 @@ def build_identifier_bindings(raw_documents: list) -> dict:
 
         # Per-column pairing decided once per file (schema-level, not per-row)
         pairing: dict = {}
+        first_valid_only: set = set()
         for id_col, id_type in id_cols:
-            id_toks = _bind_header_tokens(id_col) - _BIND_GENERIC_TOKENS
+            id_stems = _bind_role_stems(id_col)
             shared = [nc for nc in name_cols
-                      if id_toks & (_bind_header_tokens(nc) - _BIND_GENERIC_TOKENS)]
+                      if id_stems & _bind_role_stems(nc)]
             if shared:
                 pairing[id_col] = shared
             elif id_type == "phone":
@@ -991,7 +1001,17 @@ def build_identifier_bindings(raw_documents: list) -> dict:
                 dists = sorted((abs(col_pos[nc] - col_pos[id_col]), nc)
                                for nc in name_cols)
                 if len(dists) == 1 or dists[0][0] < dists[1][0]:
-                    pairing[id_col] = [dists[0][1]]
+                    primary = dists[0][1]
+                    # Same-role-family alternates (contact_name →
+                    # contact2_name), ordered by distance: a row whose
+                    # primary name cell is blank still names its party in
+                    # the secondary cell. First valid cell wins per row —
+                    # never bind one phone to two different names.
+                    family = [nc for _, nc in dists
+                              if nc != primary
+                              and _bind_role_stems(nc) == _bind_role_stems(primary)]
+                    pairing[id_col] = [primary] + family
+                    first_valid_only.add(id_col)
 
         for row in rows:
             if not isinstance(row, dict):
@@ -1025,6 +1045,8 @@ def build_identifier_bindings(raw_documents: list) -> dict:
                     ent.setdefault("contexts", set()).add(str(id_col).lower().strip())
                     if src:
                         ent["sources"].add(src)
+                    if id_col in first_valid_only:
+                        break  # positional pairing: one name per row per phone
     return index
 
 
@@ -1035,6 +1057,26 @@ def build_identifier_bindings(raw_documents: list) -> dict:
 _SHARED_CONTEXT_TOKENS = {"office", "work", "desk", "landline", "reception",
                           "switchboard", "helpdesk", "helpline", "shared",
                           "common"}
+
+
+def _is_landline_number(display: str) -> bool:
+    """True when the number's own format marks it as a FIXED LINE — shared
+    infrastructure by nature (an office/front-desk line serves everyone in
+    the office), so never sufficient alone to merge two names into one
+    identity. Indian numbering plan: a 10-digit national number starting
+    6-9 is a personal mobile; any other 10-digit national number is an
+    STD-code landline (e.g. 22-24450010 = Mumbai 22 + subscriber).
+    Unrecognised/foreign formats return False — their strength then rests
+    on the column-context rule alone, so foreign mobiles keep merging."""
+    digits = re.sub(r"\D", "", str(display or ""))
+    national = None
+    if len(digits) == 12 and digits.startswith("91"):
+        national = digits[2:]
+    elif len(digits) == 11 and digits.startswith("0"):
+        national = digits[1:]
+    elif len(digits) == 10:
+        national = digits
+    return bool(national) and national[0] not in "6789"
 
 
 def _is_shared_context_identifier(ent) -> bool:
@@ -1098,7 +1140,15 @@ def build_anchor_identities(raw_documents: list) -> list[dict]:
             ks.add(k)
         id_nodes[key] = ks
 
-    weak_keys = {k for k in id_nodes if _is_shared_context_identifier(index[k])}
+    # Weak identifiers never merge: shared-infrastructure column context
+    # (office/work/desk headers) OR a number whose own format is a fixed
+    # line. A landline may corroborate and is surfaced as a shared-office
+    # association / contested anchor, but two names on one landline are
+    # not one person.
+    weak_keys = {k for k in id_nodes
+                 if _is_shared_context_identifier(index[k])
+                 or (index[k]["type"] == "phone"
+                     and _is_landline_number(index[k]["display"]))}
     for key in sorted(id_nodes):
         if key in weak_keys:
             continue
