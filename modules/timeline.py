@@ -32,30 +32,105 @@ DATE_PATTERNS = [
 COMPILED_PATTERNS = [re.compile(p, re.IGNORECASE) for p in DATE_PATTERNS]
 
 
-def _parse_date(raw: str) -> datetime | None:
-    """Try to parse a raw date string into a datetime object."""
+# ── Date precision (CHIMERA fix) ──────────────────────────────────────────────
+# A source that supplies only a year ("2002") or a year-month ("January 2023")
+# must never gain a fabricated day/month — least of all one derived from
+# datetime.now(), which made rendered timeline dates track the report
+# generation date. Every parsed date carries the precision the SOURCE actually
+# provided; partial-precision dates get a deterministic anchor (Jan 1 / day 1)
+# for internal ordering ONLY, and are rendered at source precision.
+
+PRECISION_YEAR       = "YEAR"
+PRECISION_YEAR_MONTH = "YEAR_MONTH"
+PRECISION_FULL       = "FULL_DATE"
+
+# Two fixed sentinel defaults for dateutil: any field on which the two parses
+# disagree was NOT supplied by the source (dateutil filled it from `default`).
+_SENTINEL_A = datetime(2001, 1, 1)
+_SENTINEL_B = datetime(2002, 2, 2)
+
+
+def _parse_date_precision(
+    raw: str, dayfirst: bool = False
+) -> tuple[datetime | None, str | None]:
+    """Parse a raw date string into (datetime, precision).
+
+    precision is the granularity the SOURCE supplied: FULL_DATE, YEAR_MONTH,
+    or YEAR. Partial dates are anchored deterministically (Jan 1 / day 1) so
+    they can be ordered; the anchor digits must never be displayed.
+    Returns (None, None) if unparseable or if the source omits the year —
+    a year is never imputed.
+    """
     raw = raw.strip()
-    # Handle year-only
+    # Year-only
     if re.fullmatch(r"(?:19|20)\d{2}", raw):
         try:
-            return datetime(int(raw), 7, 1)  # mid-year anchor for year-only dates
+            return datetime(int(raw), 1, 1), PRECISION_YEAR
         except Exception:
-            return None
-    # Handle year-month only (2022-03)
-    ym = re.fullmatch(r"(\d{4})-(\d{2})", raw)
+            return None, None
+    # Year-month numeric (2022-03)
+    ym = re.fullmatch(r"(\d{4})-(\d{1,2})", raw)
     if ym:
         try:
-            return datetime(int(ym.group(1)), int(ym.group(2)), 15)
+            return datetime(int(ym.group(1)), int(ym.group(2)), 1), PRECISION_YEAR_MONTH
         except Exception:
-            return None
-    try:
-        return dateutil_parser.parse(raw, fuzzy=False)
-    except Exception:
-        pass
-    try:
-        return dateutil_parser.parse(raw, fuzzy=True)
-    except Exception:
-        return None
+            return None, None
+    # General case: double-parse with two sentinel defaults. Fields that
+    # differ between the two results came from the default, not the source.
+    for fuzzy in (False, True):
+        try:
+            a = dateutil_parser.parse(raw, fuzzy=fuzzy, dayfirst=dayfirst,
+                                      default=_SENTINEL_A)
+            b = dateutil_parser.parse(raw, fuzzy=fuzzy, dayfirst=dayfirst,
+                                      default=_SENTINEL_B)
+        except Exception:
+            continue
+        if a.year != b.year:
+            return None, None  # source gave no year — reject, never impute
+        if a.month != b.month:
+            return datetime(a.year, 1, 1), PRECISION_YEAR
+        if a.day != b.day:
+            return datetime(a.year, a.month, 1), PRECISION_YEAR_MONTH
+        return a, PRECISION_FULL
+    return None, None
+
+
+def _normalize_for_precision(dt: datetime, precision: str) -> str:
+    """Sortable string at source precision: '2002' / '2023-01' / '2023-04-18'."""
+    if precision == PRECISION_YEAR:
+        return dt.strftime("%Y")
+    if precision == PRECISION_YEAR_MONTH:
+        return dt.strftime("%Y-%m")
+    return dt.strftime("%Y-%m-%d")
+
+
+def _display_for_precision(dt: datetime, precision: str) -> str:
+    """Human form at source precision: '2002' / 'January 2023' / '2023-04-18'."""
+    if precision == PRECISION_YEAR:
+        return dt.strftime("%Y")
+    if precision == PRECISION_YEAR_MONTH:
+        return dt.strftime("%B %Y")
+    return dt.strftime("%Y-%m-%d")
+
+
+def _event_date_fields(dt: datetime, precision: str) -> dict:
+    """The date-bearing fields every timeline event carries."""
+    return {
+        "normalized":     _normalize_for_precision(dt, precision),
+        "datetime_obj":   dt,
+        "date_precision": precision,
+        "display_date":   _display_for_precision(dt, precision),
+        "ambiguous":      precision != PRECISION_FULL,
+    }
+
+
+def _parse_date(raw: str) -> datetime | None:
+    """Try to parse a raw date string into a datetime object.
+
+    Backward-compatible wrapper: callers that need to render a date must use
+    _parse_date_precision and respect the returned precision.
+    """
+    return _parse_date_precision(raw)[0]
 
 
 _MONETARY_CONTEXT_RE = re.compile(
@@ -123,16 +198,13 @@ def extract_dates_from_text(text: str, source_label: str = "Unknown") -> list[di
                 if re.search(r"\d", pre):
                     continue  # digits immediately before — part of a larger number
 
-            dt = _parse_date(raw)
+            dt, precision = _parse_date_precision(raw)
             if dt:
-                ambiguous = len(raw) == 4  # year-only is ambiguous
                 found.append({
-                    "raw":          raw,
-                    "normalized":   dt.strftime("%Y-%m-%d"),
-                    "datetime_obj": dt,
-                    "source":       source_label,
-                    "ambiguous":    ambiguous,
-                    "context":      text[max(0, match.start()-40):match.end()+40].strip(),
+                    "raw":     raw,
+                    **_event_date_fields(dt, precision),
+                    "source":  source_label,
+                    "context": text[max(0, match.start()-40):match.end()+40].strip(),
                 })
 
     return found
@@ -147,32 +219,28 @@ def extract_dates_from_person(person: dict, search_results: dict) -> list[dict]:
     # Join dates
     for platform, date_str in person.get("join_dates", {}).items():
         if date_str and date_str != "Not found":
-            dt = _parse_date(date_str)
+            dt, precision = _parse_date_precision(date_str)
             if dt:
                 all_events.append({
-                    "raw":          date_str,
-                    "normalized":   dt.strftime("%Y-%m-%d"),
-                    "datetime_obj": dt,
-                    "source":       f"{platform} — Account Created",
-                    "ambiguous":    False,
-                    "context":      f"Account created on {platform}",
-                    "event_type":   "account_creation",
+                    "raw":        date_str,
+                    **_event_date_fields(dt, precision),
+                    "source":     f"{platform} — Account Created",
+                    "context":    f"Account created on {platform}",
+                    "event_type": "account_creation",
                 })
 
     # GitHub joined
     gh = person.get("github_data", {})
     gh_joined = gh.get("joined", "")
     if gh_joined and gh_joined != "Not found":
-        dt = _parse_date(gh_joined)
+        dt, precision = _parse_date_precision(gh_joined)
         if dt:
             all_events.append({
-                "raw":          gh_joined,
-                "normalized":   dt.strftime("%Y-%m-%d"),
-                "datetime_obj": dt,
-                "source":       "GitHub — Account Created",
-                "ambiguous":    False,
-                "context":      "GitHub account creation date",
-                "event_type":   "account_creation",
+                "raw":        gh_joined,
+                **_event_date_fields(dt, precision),
+                "source":     "GitHub — Account Created",
+                "context":    "GitHub account creation date",
+                "event_type": "account_creation",
             })
 
     # Search results text
@@ -213,7 +281,15 @@ def identify_gaps(events: list[dict], gap_threshold_days: int = 180) -> list[dic
     """
     Identify periods of inactivity (gaps) between consecutive events.
     Returns list of gap dicts with start, end, duration_days.
+
+    Only FULL_DATE events participate: a day-count computed from the
+    ordering anchor of a year-only or month-only event would fabricate
+    precision the source never provided.
     """
+    events = [
+        e for e in events
+        if e.get("date_precision", PRECISION_FULL) == PRECISION_FULL
+    ]
     if len(events) < 2:
         return []
 
@@ -332,7 +408,10 @@ def render_timeline(
         for e in evts:
             xs.append(e["datetime_obj"])
             ys.append(y_val)
-            ambig = " (ambiguous)" if e.get("ambiguous") else ""
+            ambig = {
+                PRECISION_YEAR:       " (year precision)",
+                PRECISION_YEAR_MONTH: " (month precision)",
+            }.get(e.get("date_precision", PRECISION_FULL), "")
             hover = (
                 f"<b>{e['normalized']}{ambig}</b><br>"
                 f"Source: {e['source']}<br>"
@@ -528,17 +607,14 @@ def build_timeline_from_fusion(person_object: dict, raw_documents: list) -> dict
                     # Skip monetary amounts parsed as year (e.g. "INR 2000")
                     if len(raw) == 4 and _is_monetary_year(raw, line):
                         break
-                    dt  = _parse_date(raw)
+                    dt, precision = _parse_date_precision(raw)
                     if dt:
-                        ambiguous = len(raw) == 4
                         events.append({
-                            "raw":          raw,
-                            "normalized":   dt.strftime("%Y-%m-%d"),
-                            "datetime_obj": dt,
-                            "source":       f"Document: {filename}",
-                            "ambiguous":    ambiguous,
-                            "context":      line[:120],
-                            "event_type":   "document_mention",
+                            "raw":        raw,
+                            **_event_date_fields(dt, precision),
+                            "source":     f"Document: {filename}",
+                            "context":    line[:120],
+                            "event_type": "document_mention",
                         })
                     break  # one date match per line is sufficient
 
@@ -561,48 +637,41 @@ def build_timeline_from_fusion(person_object: dict, raw_documents: list) -> dict
                         # is caught by _MONETARY_CONTEXT_RE ("fine" keyword).
                         if len(raw) == 4 and _is_monetary_year(raw, f"{key}: {val_str}"):
                             break
-                        dt  = _parse_date(raw)
+                        dt, precision = _parse_date_precision(raw)
                         if dt:
-                            ambiguous = len(raw) == 4
                             events.append({
-                                "raw":          raw,
-                                "normalized":   dt.strftime("%Y-%m-%d"),
-                                "datetime_obj": dt,
-                                "source":       f"Document: {filename} [{key}]",
-                                "ambiguous":    ambiguous,
-                                "context":      f"{key}: {val_str[:80]}",
-                                "event_type":   "structured_data",
+                                "raw":        raw,
+                                **_event_date_fields(dt, precision),
+                                "source":     f"Document: {filename} [{key}]",
+                                "context":    f"{key}: {val_str[:80]}",
+                                "event_type": "structured_data",
                             })
                         break
 
     # ── Person object join dates ───────────────────────────────────────────────
     for platform, date_str in (person_object or {}).get("join_dates", {}).items():
         if date_str and date_str != "Not found":
-            dt = _parse_date(date_str)
+            dt, precision = _parse_date_precision(date_str)
             if dt:
                 events.append({
-                    "raw":          date_str,
-                    "normalized":   dt.strftime("%Y-%m-%d"),
-                    "datetime_obj": dt,
-                    "source":       f"{platform} — Account Created",
-                    "ambiguous":    False,
-                    "context":      f"Account created on {platform}",
-                    "event_type":   "account_creation",
+                    "raw":        date_str,
+                    **_event_date_fields(dt, precision),
+                    "source":     f"{platform} — Account Created",
+                    "context":    f"Account created on {platform}",
+                    "event_type": "account_creation",
                 })
 
     # GitHub joined
     gh_joined = (person_object or {}).get("github_data", {}).get("joined", "")
     if gh_joined and gh_joined != "Not found":
-        dt = _parse_date(gh_joined)
+        dt, precision = _parse_date_precision(gh_joined)
         if dt:
             events.append({
-                "raw":          gh_joined,
-                "normalized":   dt.strftime("%Y-%m-%d"),
-                "datetime_obj": dt,
-                "source":       "GitHub — Account Created",
-                "ambiguous":    False,
-                "context":      "GitHub account creation date",
-                "event_type":   "account_creation",
+                "raw":        gh_joined,
+                **_event_date_fields(dt, precision),
+                "source":     "GitHub — Account Created",
+                "context":    "GitHub account creation date",
+                "event_type": "account_creation",
             })
 
     # ── Targeted date-column pass (supplements regex scan) ───────────────────
@@ -975,13 +1044,13 @@ def build_timeline_from_all_files(all_files_data: list) -> list:
                 val_str = str(val).strip()
                 if not val_str or val_str in ("", "None", "nan", "NaT"):
                     continue
-                dt = _parse_date(val_str)
+                dt, precision = _parse_date_precision(val_str)
                 if not dt:
-                    # Try dateutil as fallback for unusual formats
-                    try:
-                        dt = dateutil_parser.parse(val_str, dayfirst=True)
-                    except Exception:
-                        continue
+                    # Fallback for unusual formats: day-first reading, still
+                    # precision-safe (never fills fields from the clock)
+                    dt, precision = _parse_date_precision(val_str, dayfirst=True)
+                if not dt:
+                    continue
                 # Build a description from neighbouring context columns
                 desc_parts = []
                 for ctx_col in ("description", "particulars", "narration",
@@ -994,10 +1063,8 @@ def build_timeline_from_all_files(all_files_data: list) -> list:
 
                 raw_events.append({
                     "raw":          val_str,
-                    "normalized":   dt.strftime("%Y-%m-%d"),
-                    "datetime_obj": dt,
+                    **_event_date_fields(dt, precision),
                     "source":       f"Document: {filename} [{col_key}]",
-                    "ambiguous":    False,
                     "context":      description,
                     "event_type":   "structured_data",
                     "source_file":  filename,
