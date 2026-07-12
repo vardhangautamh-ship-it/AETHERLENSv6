@@ -76,9 +76,27 @@ def _detect_case_type(patterns, onto=None) -> str:
     """
     if not patterns:
         return "undetermined"
+    # Obstruction patterns (anti-forensic deletions) evidence concealment,
+    # not the offence domain. Such a pattern loses its case-type vote ONLY
+    # when it would carry its type ALONE against other typed evidence: a
+    # laundering case whose sole "cyber" signal is a deletion stays
+    # financial, while a case with substantive cyber patterns keeps the
+    # anti-forensic vote (and a deletion-only case still counts as its own
+    # signal). Rules still fire and appear in §09B at full strength.
+    substantive = [p for p in patterns
+                   if p.pattern_id not in PR.OBSTRUCTION_PATTERN_IDS]
+    _other_typed = any(p.case_type in (PR.FINANCIAL, PR.CYBER, PR.IMMIGRATION)
+                       for p in substantive)
+
+    def _lone_obstruction(p):
+        return (p.pattern_id in PR.OBSTRUCTION_PATTERN_IDS
+                and not any(q.case_type == p.case_type for q in substantive))
+
+    voters = [p for p in patterns
+              if not (_other_typed and _lone_obstruction(p))]
     weight = {PR.FINANCIAL: 0, PR.CYBER: 0, PR.IMMIGRATION: 0, PR.GENERAL: 0}
     strongs = {PR.FINANCIAL: 0, PR.CYBER: 0, PR.IMMIGRATION: 0, PR.GENERAL: 0}
-    for p in patterns:
+    for p in voters:
         weight[p.case_type] = weight.get(p.case_type, 0) + (2 if p.confidence == "STRONG" else 1)
         if p.confidence == "STRONG":
             strongs[p.case_type] = strongs.get(p.case_type, 0) + 1

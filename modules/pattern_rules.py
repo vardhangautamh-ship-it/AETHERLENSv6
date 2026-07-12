@@ -394,6 +394,16 @@ def rule_enforcement_history_escalation(onto) -> PatternMatch | None:
 # ══════════════════════════════════════════════════════════════════════════════
 # CYBER-CRIME PATTERNS (6–8)
 # ══════════════════════════════════════════════════════════════════════════════
+# Obstruction typologies: patterns that evidence CONCEALMENT of an offence
+# (anti-forensic deletions timed to an inquiry) rather than the offence domain
+# itself. A launderer who wipes his cloud drive is still running a financial
+# case. Case-type detection discounts such a pattern's vote ONLY when it
+# would carry its case type ALONE against other typed evidence; alongside
+# substantive same-type patterns (or standing alone entirely) it votes as
+# before. The rules themselves are unchanged — they still fire, cite, and
+# appear in §09B at full strength.
+OBSTRUCTION_PATTERN_IDS = {"ANTI_FORENSIC_BEHAVIOUR"}
+
 _BENIGN_PURPOSE_TOKENS = ("research", "student", "academic", "personal", "hobby",
                           "learning", "study", "education")
 _DATA_VOLUME_TOKENS = ("data egress", "data volume", "exfil", " gb", " tb",
