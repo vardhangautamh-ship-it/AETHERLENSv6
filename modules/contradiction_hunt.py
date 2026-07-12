@@ -6,7 +6,7 @@ declared figure, and identity-critical field against every other one and
 surfaces the conflicts — with BOTH sides cited, a confidence on each side,
 and an explicit refusal to resolve the conflict by guessing.
 
-Four deterministic checks:
+Five deterministic checks:
   1. anti-forensic timing — a deletion/destruction event dated within the
      window around an official notice/inquiry date;
   2. means mismatch — observed transaction volume far exceeding declared
@@ -15,7 +15,12 @@ Four deterministic checks:
      PAN, Aadhaar, voter ID) asserted with different values in different
      documents about the subject;
   4. timeline impossibility — a transaction with an organisation dated
-     before that organisation existed (incorporation date).
+     before that organisation existed (incorporation date);
+  5. claim vs official record — a subject ASSERTION (statement/claim)
+     inconsistent with an OFFICIAL record: claimed continuous presence or
+     no-travel vs a dated entry/exit record, or a claimed status ("no
+     passport", "no account", "not a director") vs a documentary record of
+     the thing. Both sides cited; never resolved by guessing.
 
 Findings live beside the structural gaps in §10 — a separate channel from
 person["conflicts"]/anomaly_flags by design, so the risk and pattern streams
@@ -87,6 +92,202 @@ _NO_GUESS = ("NOT RESOLVED — surfaced for human review; the engine does not "
              "guess which side is true.")
 
 
+# ── Check 5 vocabulary: subject CLAIM vs OFFICIAL RECORD ──────────────────────
+# A CLAIM is a subject assertion; an OFFICIAL RECORD is registry/government
+# evidence. Classification is by vocabulary in the item's own text — general,
+# no per-case literals. An item matching the record vocabulary is a record
+# even if it also quotes the claim ("…contradicts claimed travel").
+_CLAIM_MARK_RE = re.compile(
+    r"\b(claim(?:s|ed)?|assert(?:s|ed)?|state(?:s|d)|denies|denied|maintains?"
+    r"|according to the subject|subject says)\b", re.IGNORECASE)
+_RECORD_MARK_RE = re.compile(
+    r"\b(entry[/\s-]?exit|entry record|exit record|immigration record|frro"
+    r"|bureau of immigration|passport control|arrival record|departure record"
+    r"|official record|official register|registry|registrar|e-?gate)\b",
+    re.IGNORECASE)
+
+# Travel affirmations in a record (verbs that document movement) and the
+# negations that mark a record as AGREEING with a stay-claim (must not fire).
+_TRAVEL_VERB_RE = re.compile(
+    r"\b(exit(?:ed)?|depart(?:ed|ure(?:s)?)?|re-?enter(?:ed)?|"
+    r"arriv(?:ed|al)|returned|travell?ed\s+to|left\s+(?:india|the country))\b",
+    re.IGNORECASE)
+_RECORD_NEG_RE = re.compile(
+    r"\bno\s+(?:exit|departure|entry|foreign travel|travel|record of travel)"
+    r"|did\s+not\s+(?:exit|depart|travel|leave)|\bnever\s+(?:exited|departed"
+    r"|travell?ed|left)\b", re.IGNORECASE)
+
+# Claim shapes: absolute no-travel, or continuous presence over a period.
+_NO_TRAVEL_RE = re.compile(
+    r"\bno\s+(?:foreign\s+)?travel\b|did\s+not\s+travel|never\s+travell?ed"
+    r"|did\s+not\s+leave|never\s+left\b", re.IGNORECASE)
+_PRESENCE_RE = re.compile(
+    r"\b(?:was|remained|stayed|been)\s+in\s+[A-Z][\w .\-]{2,30}"
+    r"\s+(?:throughout|during|for\s+(?:all|the whole)\s+of|the\s+entire)\b",
+    re.IGNORECASE)
+
+# Period-less absolute status claims vs the documentary record of the thing.
+_STATUS_PAIRS = (
+    (re.compile(r"\bno\s+passport\b|never\s+held\s+a\s+passport", re.IGNORECASE),
+     re.compile(r"passport\s*(?:no|number|#|issued)", re.IGNORECASE),
+     "the subject claims to hold no passport, but an official record cites one"),
+    (re.compile(r"\bno\s+bank\s+account\b|never\s+opened\s+an?\s+(?:bank\s+)?account",
+                re.IGNORECASE),
+     re.compile(r"account\s*(?:no|number|opened|statement)", re.IGNORECASE),
+     "the subject claims to hold no bank account, but an official record cites one"),
+    (re.compile(r"\bnot\s+a\s+director\b|never\s+(?:been\s+)?a\s+director",
+                re.IGNORECASE),
+     re.compile(r"\bdirector\b", re.IGNORECASE),
+     "the subject denies a directorship an official record documents"),
+)
+
+_MONTH_NUM = {m: i + 1 for i, m in enumerate(
+    ("january", "february", "march", "april", "may", "june", "july",
+     "august", "september", "october", "november", "december"))}
+_MON = r"(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*"
+_MONTH_RANGE_RE = re.compile(
+    rf"\b({_MON})\s*(?:[-–—]|to|through|until)\s*({_MON})\s+(\d{{4}})\b",
+    re.IGNORECASE)
+_MONTH_SINGLE_RE = re.compile(rf"\b({_MON})\s+(\d{{4}})\b", re.IGNORECASE)
+
+
+def _month_no(name: str) -> int | None:
+    n = str(name or "").lower()
+    for full, num in _MONTH_NUM.items():
+        if full.startswith(n[:3]):
+            return num
+    return None
+
+
+def _month_end(year: int, month: int) -> datetime.date:
+    import calendar
+    return datetime.date(year, month, calendar.monthrange(year, month)[1])
+
+
+def _claim_period(text: str):
+    """(start, end) the CLAIM itself states, or None. The bounds are internal
+    comparison limits only — findings always quote the verbatim claim text,
+    so no invented precision is ever displayed. A claim without a stated year
+    yields None (never imputed)."""
+    isos = [d for d in (_parse_date(x) for x in _ISO_DATE_RE.findall(text)) if d]
+    if len(isos) >= 2:
+        return min(isos), max(isos)
+    if len(isos) == 1:
+        return isos[0], isos[0]
+    m = _MONTH_RANGE_RE.search(text)
+    if m:
+        m1, m2, yr = _month_no(m.group(1)), _month_no(m.group(2)), int(m.group(3))
+        if m1 and m2 and m1 <= m2:
+            return datetime.date(yr, m1, 1), _month_end(yr, m2)
+    m = _MONTH_SINGLE_RE.search(text)
+    if m:
+        mo, yr = _month_no(m.group(1)), int(m.group(2))
+        if mo:
+            return datetime.date(yr, mo, 1), _month_end(yr, mo)
+    return None
+
+
+def _claim_vs_record_findings(subj_keys: set, docs: list) -> list:
+    """Check 5 — cross the subject's ASSERTIONS against OFFICIAL records.
+    Deterministic: vocabulary classification + dated-window comparison; a
+    record that itself negates travel (agreement) never fires; a claim by or
+    a record about a third party never fires; nothing is inferred beyond the
+    two texts, which are cited verbatim on each side."""
+
+    def _doc_text(d):
+        return safe_str(d.get("full_text") or d.get("raw_text") or d.get("text") or "")
+
+    def _doc_name(d):
+        return safe_str(d.get("filename") or d.get("name") or "")
+
+    def _row_items(d):
+        fname = _doc_name(d)
+        for row in (d.get("structured_rows") or []):
+            if not isinstance(row, dict):
+                continue
+            texts, name, ref = [], "", ""
+            for col, val in row.items():
+                v = safe_str(val).strip()
+                if not v:
+                    continue
+                toks = _hdr_tokens(col)
+                if toks & {"subject", "person", "name"} and not (toks & {"file", "event"}):
+                    name = name or v
+                elif toks & {"ref", "reference", "source"}:
+                    ref = ref or v
+                else:
+                    texts.append(v)
+            text = " | ".join(texts)
+            if text:
+                yield text, name, (f"{fname} [{ref}]" if ref else fname)
+
+    def _line_items(d):
+        fname = _doc_name(d)
+        for line in _doc_text(d).splitlines():
+            line = line.strip()
+            if len(line) >= 25:
+                yield line, "", fname
+
+    claims, records = [], []
+    for d in docs:
+        # Structured rows are authoritative for tabular documents; the raw
+        # text there is just the padded table render of the same rows, and
+        # scanning both would duplicate every finding. Prose documents
+        # (casenotes, statements) have no rows — they get the line scan.
+        items = (list(_row_items(d)) if (d.get("structured_rows") or [])
+                 else list(_line_items(d)))
+        for text, name, src in items:
+            # third-party guard: a named item must be a form of the subject
+            if name and normalize_name_key(name) not in subj_keys:
+                continue
+            is_record = bool(_RECORD_MARK_RE.search(text))
+            is_claim = bool(_CLAIM_MARK_RE.search(text)) and not is_record
+            if is_record:
+                records.append((text, src))
+            elif is_claim:
+                claims.append((text, src))
+
+    findings, seen = [], set()
+    for c_text, c_src in claims:
+        period = _claim_period(c_text)
+        absolute = bool(_NO_TRAVEL_RE.search(c_text))
+        presence = bool(_PRESENCE_RE.search(c_text))
+        for r_text, r_src in records:
+            if len(findings) >= 3:
+                break
+            key = (c_src, r_src)
+            if key in seen:
+                continue
+            # travel/presence vs entry-exit record
+            if ((absolute or presence)
+                    and _TRAVEL_VERB_RE.search(r_text)
+                    and not _RECORD_NEG_RE.search(r_text)):
+                r_dates = [d for d in (_parse_date(x)
+                           for x in _ISO_DATE_RE.findall(r_text)) if d]
+                hit = ((period and any(period[0] <= d <= period[1] for d in r_dates))
+                       or (period is None and absolute and r_dates))
+                if hit:
+                    seen.add(key)
+                    findings.append(_finding(
+                        "CONTRADICTION", "CLAIM_VS_RECORD",
+                        "subject claim vs official record",
+                        "the subject's stated presence/no-travel claim is "
+                        "inconsistent with a dated official entry/exit "
+                        "record covering the same period.",
+                        _side(c_text, c_src), _side(r_text, r_src)))
+                    continue
+            # claimed status vs documentary record of the thing
+            for c_re, r_re, why in _STATUS_PAIRS:
+                if c_re.search(c_text) and r_re.search(r_text):
+                    seen.add(key)
+                    findings.append(_finding(
+                        "CONTRADICTION", "CLAIM_VS_RECORD",
+                        "subject claim vs official record", why + ".",
+                        _side(c_text, c_src), _side(r_text, r_src)))
+                    break
+    return findings
+
+
 def _finding(label: str, ftype: str, nature: str, text: str,
              side_a: dict, side_b: dict) -> dict:
     return {
@@ -106,6 +307,14 @@ def hunt_contradictions(person: dict, onto, raw_documents: list,
     if not docs:
         return []
     findings: list = []
+
+    # Subject name-forms — used by checks 3 and 5 to scope items to the subject
+    subj_keys = {normalize_name_key(safe_str(person.get("confirmed_name", "")))}
+    subj_keys |= {normalize_name_key(safe_str(v))
+                  for v in safe_list(person.get("name_variants"))}
+    si = person.get("subject_identity") or {}
+    subj_keys |= {normalize_name_key(f) for f in (si.get("forms") or {})}
+    subj_keys.discard("")
 
     def _doc_text(d):
         return safe_str(d.get("full_text") or d.get("raw_text") or d.get("text") or "")
@@ -182,13 +391,6 @@ def hunt_contradictions(person: dict, onto, raw_documents: list,
                   ", ".join(txn_files[:3]), attest=len(txn_files))))
 
     # ── 3. identity-critical field asserted differently across documents ─────
-    subj_keys = {normalize_name_key(safe_str(person.get("confirmed_name", "")))}
-    subj_keys |= {normalize_name_key(safe_str(v))
-                  for v in safe_list(person.get("name_variants"))}
-    si = person.get("subject_identity") or {}
-    subj_keys |= {normalize_name_key(f) for f in (si.get("forms") or {})}
-    subj_keys.discard("")
-
     field_vals: dict = {}   # field -> {value_norm: {"display", "files": set}}
     for d in docs:
         fname = _doc_name(d)
@@ -265,6 +467,9 @@ def hunt_contradictions(person: dict, onto, raw_documents: list,
                 _side(f"incorporated {inc_dt.isoformat()}", roc_file)))
             break   # one exemplar per case is enough; the rest is officer work
 
+    # ── 5. subject claim vs official record ──────────────────────────────────
+    findings.extend(_claim_vs_record_findings(subj_keys, docs))
+
     return findings[:10]
 
 
@@ -272,9 +477,9 @@ def render_contradiction_lines(findings: list) -> list:
     """Deterministic §10 display block for the contradiction scan."""
     if not findings:
         return ["", "Contradiction scan [DETERMINISTIC ANALYSIS]: no timed "
-                    "anti-forensics, means mismatches, field conflicts, or "
-                    "timeline impossibilities detected across the provided "
-                    "documents."]
+                    "anti-forensics, means mismatches, field conflicts, "
+                    "timeline impossibilities, or claim-vs-record conflicts "
+                    "detected across the provided documents."]
     lines = ["", f"CONTRADICTION & INCONSISTENCY SCAN ({len(findings)}) "
                  f"[DETERMINISTIC ANALYSIS] — claims cross-checked against "
                  f"each other:"]
