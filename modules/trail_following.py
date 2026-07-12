@@ -22,6 +22,16 @@ If a trail breaks, the finding SAYS SO and points at the gap (Dimension 3).
 A later inflow to origin that would complete a loop is reported as
 "consistent with round-tripping" and explicitly NOT asserted — the engine
 never invents a hop that is not in the data.
+
+PARTIAL RECONSTRUCTION (subject-side): full multi-party statements are not
+required to say what the SUBJECT'S OWN records show. Subject-account legs
+are laid out chronologically even when the far side of the case is missing;
+a leg whose counterparty is BLANK in the record is flagged as an OBSCURED
+HOP (tied to the structural gap scan's trail-goes-cold channel) — its
+counterparty is never inferred. When cited legs show money leaving the
+subject and a comparable credit returning with the counterparty blank, the
+shape is reported as CONSISTENT WITH a round trip, bounded by exactly what
+is cited.
 """
 
 import re
@@ -53,6 +63,30 @@ def _parse_date(s):
         return None
 
 
+_DIR_IN_TOKENS = {"in", "inflow", "credit", "cr", "inward", "received",
+                  "deposit", "incoming"}
+_DIR_OUT_TOKENS = {"out", "outflow", "debit", "dr", "outward", "paid",
+                   "sent", "withdrawal", "outgoing"}
+
+
+def _row_direction(row: dict) -> str:
+    """'in' / 'out' / '' from an explicit direction column, else from the
+    tokenised value of a type-ish column (transaction_type=KICKBACK_IN,
+    TRANSFER_OUT, INVESTOR_INFLOW…). Conflicting or absent signals yield ''
+    — a direction is never guessed."""
+    votes = set()
+    for col, val in row.items():
+        toks = _hdr_tokens(col)
+        if not (toks & {"direction", "type", "transaction", "txn", "mode"}):
+            continue
+        vtoks = _hdr_tokens(val)
+        if vtoks & _DIR_IN_TOKENS:
+            votes.add("in")
+        if vtoks & _DIR_OUT_TOKENS:
+            votes.add("out")
+    return votes.pop() if len(votes) == 1 else ""
+
+
 def _canonicaliser(person: dict):
     """name -> canonical display, through the anchor-identity layer. Unknown
     names keep their own (whitespace-normalised) spelling — organisations are
@@ -82,7 +116,7 @@ def extract_flow_edges(person: dict, raw_documents: list) -> list:
         for row in (d.get("structured_rows") or []):
             if not isinstance(row, dict):
                 continue
-            holder = cp = direction = ""
+            holder = cp = ""
             amount = 0.0
             date = None
             for col, val in row.items():
@@ -93,8 +127,6 @@ def extract_flow_edges(person: dict, raw_documents: list) -> list:
                 elif toks & {"counterparty", "payee", "beneficiary",
                              "recipient", "sender", "payer"}:
                     cp = sval
-                elif toks & {"direction"}:
-                    direction = sval.lower()
                 elif toks & {"amount"}:
                     try:
                         amount = float(str(sval).replace(",", "") or 0)
@@ -102,6 +134,7 @@ def extract_flow_edges(person: dict, raw_documents: list) -> list:
                         amount = 0.0
                 elif toks & {"date"} and date is None:
                     date = _parse_date(sval)
+            direction = _row_direction(row)
             if not holder or not cp or amount <= 0 or date is None \
                     or direction not in ("in", "out"):
                 continue
@@ -124,6 +157,54 @@ def extract_flow_edges(person: dict, raw_documents: list) -> list:
     return edges
 
 
+def extract_obscured_legs(person: dict, raw_documents: list) -> list:
+    """Subject-account rows whose counterparty is BLANK in the record —
+    the legs the all-named edge model cannot carry. Each leg is cited and
+    marked obscured; the missing party is NEVER inferred, and these legs are
+    never traversed as graph edges (an unknown cannot be followed)."""
+    canon = _canonicaliser(person)
+    subj_norm = _norm(canon(safe_str(person.get("confirmed_name", ""))))
+    legs = []
+    for d in (raw_documents or []):
+        if not isinstance(d, dict):
+            continue
+        fname = safe_str(d.get("filename") or d.get("name") or "")
+        for row in (d.get("structured_rows") or []):
+            if not isinstance(row, dict):
+                continue
+            holder = cp = ref = ""
+            amount = 0.0
+            date = None
+            for col, val in row.items():
+                toks = _hdr_tokens(col)
+                sval = " ".join(safe_str(val).split())
+                if toks & {"holder"}:
+                    holder = sval
+                elif toks & {"counterparty", "payee", "beneficiary",
+                             "recipient", "sender", "payer"}:
+                    cp = sval
+                elif toks & {"ref", "reference"}:
+                    ref = ref or sval
+                elif toks & {"amount"}:
+                    try:
+                        amount = float(str(sval).replace(",", "") or 0)
+                    except Exception:
+                        amount = 0.0
+                elif toks & {"date"} and date is None:
+                    date = _parse_date(sval)
+            direction = _row_direction(row)
+            if cp or not holder or amount <= 0 or date is None \
+                    or direction not in ("in", "out"):
+                continue
+            if _norm(canon(holder)) != subj_norm:
+                continue   # partial mode reconstructs the SUBJECT'S side only
+            legs.append({"direction": direction, "amount": amount,
+                         "date": date, "sources": [fname] if fname else [],
+                         "ref": ref})
+    legs.sort(key=lambda l: (l["date"], -l["amount"]))
+    return legs
+
+
 def _hop_str(e) -> str:
     return (f"{e['src']} -> {e['dst']}: ₹{e['amount']:,.0f} on "
             f"{e['date'].isoformat()} ({', '.join(e['sources'])})")
@@ -143,7 +224,8 @@ def follow_trails(person: dict, onto, raw_documents: list) -> list:
     circular flows, layered chains, broken trails, and unlinked re-entries —
     each hop cited, nothing inferred."""
     edges = extract_flow_edges(person, raw_documents)
-    if not edges:
+    obscured = extract_obscured_legs(person, raw_documents)
+    if not edges and not obscured:
         return []
     subject = safe_str(person.get("confirmed_name", ""))
     subj_norm = _norm(subject)
@@ -258,16 +340,119 @@ def follow_trails(person: dict, onto, raw_documents: list) -> list:
             layered.add(key)
     # (broken trails already narrate these; only report standalone layering
     # when it did not already surface as broken/circular)
+
+    # ── PARTIAL RECONSTRUCTION (subject-side) ─────────────────────────────────
+    # 1) every blank-counterparty leg on the subject's own account is an
+    #    OBSCURED HOP — cited, flagged, never traversed, never inferred.
+    for leg in obscured[:2]:
+        kind = "credit into" if leg["direction"] == "in" else "debit out of"
+        ref = f", ref {leg['ref']}" if leg.get("ref") else ""
+        findings.append({
+            "type": "OBSCURED_HOP",
+            "hops": [dict(leg, date=leg["date"].isoformat())],
+            "finding": (
+                f"TRAIL: OBSCURED HOP — the subject's own records show a "
+                f"{kind} the subject's account of ₹{leg['amount']:,.0f} on "
+                f"{leg['date'].isoformat()} "
+                f"({', '.join(leg['sources'])}{ref}) whose counterparty is "
+                f"BLANK in the record. The missing party has NOT been "
+                f"inferred. This is where the trail goes cold — requisition "
+                f"the full narration/UTR chain for this entry (see the "
+                f"structural gap scan)."),
+        })
+
+    # 2) round-trip shape from cited legs alone: money left the subject
+    #    (chain or direct out-leg) and a comparable credit later returned
+    #    with the counterparty blank — consistent with round-tripping,
+    #    bounded by what is cited, the return counterparty NOT asserted.
+    def _anchor_candidates():
+        for last, path in sorted(broken_terminals,
+                                 key=lambda bp: -bp[1][0]["amount"]):
+            yield last, path
+        for e in sorted(out_of.get(subj_norm, []),
+                        key=lambda e: (-e["amount"], e["date"])):
+            yield e, [e]
+
+    rt_done = False
+    for anchor, path in _anchor_candidates():
+        if rt_done:
+            break
+        for leg in obscured:
+            if leg["direction"] != "in" or leg["date"] <= anchor["date"]:
+                continue
+            if (leg["date"] - anchor["date"]).days > _MAX_HOP_DAYS:
+                continue
+            if not (_AMOUNT_MIN_FRAC * anchor["amount"] <= leg["amount"]
+                    <= _AMOUNT_MAX_FRAC * anchor["amount"]):
+                continue
+            frac = round(100 * leg["amount"] / path[0]["amount"])
+            hops = "; ".join(_hop_str(p) for p in path)
+            findings.append({
+                "type": "SUBJECT_SIDE_ROUNDTRIP",
+                "hops": ([dict(p, date=p["date"].isoformat(), key=None)
+                          for p in path]
+                         + [dict(leg, date=leg["date"].isoformat())]),
+                "finding": (
+                    f"TRAIL: PARTIAL ROUND-TRIP (subject-side) — "
+                    f"₹{path[0]['amount']:,.0f} left '{subject}' through "
+                    f"{len(path)} cited hop(s): {hops}. A credit of "
+                    f"₹{leg['amount']:,.0f} (~{frac}% of the outbound leg) "
+                    f"returned to the subject's account on "
+                    f"{leg['date'].isoformat()} "
+                    f"({', '.join(leg['sources'])}) with the counterparty "
+                    f"BLANK in the record. The shape is CONSISTENT WITH "
+                    f"round-tripping through '{anchor['dst']}', BUT the "
+                    f"return leg's origin is OBSCURED and has NOT been "
+                    f"inferred — obtain the crediting bank's records to "
+                    f"close or break the loop ({_CRITERIA_NOTE})."),
+            })
+            rt_done = True
+            break
+
+    # 3) lay out the subject-side legs that ARE present (chronological),
+    #    obscured legs marked — the partial trail itself, when no full
+    #    circular flow could be reconstructed.
+    if not any(f["type"] == "CIRCULAR_FLOW" for f in findings):
+        subj_legs = []
+        for e in edges:
+            if _norm(e["src"]) == subj_norm:
+                subj_legs.append((e["date"], f"OUT ₹{e['amount']:,.0f} to "
+                                 f"'{e['dst']}' on {e['date'].isoformat()} "
+                                 f"({', '.join(e['sources'])})"))
+            elif _norm(e["dst"]) == subj_norm:
+                subj_legs.append((e["date"], f"IN ₹{e['amount']:,.0f} from "
+                                 f"'{e['src']}' on {e['date'].isoformat()} "
+                                 f"({', '.join(e['sources'])})"))
+        for leg in obscured:
+            word = "IN" if leg["direction"] == "in" else "OUT"
+            subj_legs.append((leg["date"],
+                              f"{word} ₹{leg['amount']:,.0f} on "
+                              f"{leg['date'].isoformat()} "
+                              f"({', '.join(leg['sources'])}) — COUNTERPARTY "
+                              f"BLANK [OBSCURED HOP]"))
+        if len(subj_legs) >= 2:
+            subj_legs.sort(key=lambda t: t[0])
+            findings.append({
+                "type": "SUBJECT_SIDE_PARTIAL",
+                "hops": [],
+                "finding": (
+                    f"TRAIL: SUBJECT-SIDE PARTIAL TRAIL — the subject's own "
+                    f"account records show {len(subj_legs)} dated leg(s): "
+                    + "; ".join(t[1] for t in subj_legs[:8])
+                    + ". Only the legs recorded on the subject's side are "
+                      "laid out; nothing beyond the cited rows is asserted."),
+            })
+
     findings.sort(key=lambda f: (f["type"], f["finding"]))
-    return findings[:6]
+    return findings[:8]
 
 
 def render_trail_lines(findings: list) -> list:
     """Deterministic §14 display block for trail reconstruction."""
     if not findings:
         return ["", "Trail reconstruction [DETERMINISTIC ANALYSIS]: no "
-                    "multi-hop flow is reconstructable from the provided "
-                    "records (requires multi-party financial statements)."]
+                    "multi-hop flow and no subject-side partial trail is "
+                    "reconstructable from the provided records."]
     lines = ["", f"TRAIL RECONSTRUCTION ({len(findings)}) "
                  f"[DETERMINISTIC ANALYSIS] — flows followed on cited edges "
                  f"only:"]
