@@ -456,6 +456,11 @@ _IMPOSSIBLE_NAME_WORDS = {
     "intern", "employee", "employer", "member", "customer", "client",
     "patient", "tenant", "resident", "holder", "cardholder", "guest",
     "nominee", "beneficiary", "guardian", "applicant", "subscriber",
+    # Network/relationship captions from a KNOWN ASSOCIATES / contacts block
+    # ("Online Associate 1: …", "Contact 2: …") — the label of a link, never
+    # the person, and never the case's primary subject.
+    "associate", "associates", "contact", "contacts", "counterparty",
+    "counterparties", "accomplice", "affiliate", "connection",
     # Banking / transaction-statement noise ("Current"/"Savings" account,
     # "Wallet Recharge", "Big Billion Days" sale lines).
     "current", "savings", "wallet", "recharge", "cashback", "balance",

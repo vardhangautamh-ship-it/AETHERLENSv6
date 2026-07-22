@@ -371,13 +371,20 @@ PLACE_SKIP_LIST = [
     "mulund", "thane", "powai", "vikhroli", "ghatkopar", "sion", "wadala",
 ]
 
+# Explicit-label subject extractors. The trailing name-token group uses `*`
+# (not `+`) so a mononym — a single-token legal name like "Harshvardhan",
+# common in South Asia, or a name whose surname is withheld (minor-adjacent
+# cases) — is accepted when it follows a strong, subject-specific caption
+# ("Full Name:", "PRIMARY SUBJECT:", "Suspect:", …). The value is still
+# re-validated downstream by is_bad_subject_name(), so a stray single word is
+# rejected there rather than silently anchored.
 _LABEL_PATTERNS = [
-    re.compile(r'(?:Full[ \t]+)?Name[ \t]*[:\|][ \t]*([A-Z][a-z]{1,20}(?:[ \t]+[A-Z][a-z]{1,20})+)'),
-    re.compile(r'Subject[ \t]*[A-Z]?[ \t]*[:\|—\-][ \t]*(?:PRIMARY[ \t]*)?([A-Z][a-z]{1,20}(?:[ \t]+[A-Z][a-z]{1,20})+)'),
-    re.compile(r'PRIMARY[ \t]+SUBJECT[ \t]*[:\|][ \t]*([A-Z][a-z]{1,20}(?:[ \t]+[A-Z][a-z]{1,20})+)'),
-    re.compile(r'SUBJECT[ \t]+(?:NAME[ \t]*)?[:\|][ \t]*([A-Z][a-z]{1,20}(?:[ \t]+[A-Z][a-z]{1,20})+)', re.IGNORECASE),
-    re.compile(r'Suspect[ \t]*[:\|][ \t]*([A-Z][a-z]{1,20}(?:[ \t]+[A-Z][a-z]{1,20})+)'),
-    re.compile(r'Target[ \t]*[:\|][ \t]*([A-Z][a-z]{1,20}(?:[ \t]+[A-Z][a-z]{1,20})+)'),
+    re.compile(r'(?:Full[ \t]+)?Name[ \t]*[:\|][ \t]*([A-Z][a-z]{1,20}(?:[ \t]+[A-Z][a-z]{1,20})*)'),
+    re.compile(r'Subject[ \t]*[A-Z]?[ \t]*[:\|—\-][ \t]*(?:PRIMARY[ \t]*)?([A-Z][a-z]{1,20}(?:[ \t]+[A-Z][a-z]{1,20})*)'),
+    re.compile(r'PRIMARY[ \t]+SUBJECT[ \t]*[:\|][ \t]*([A-Z][a-z]{1,20}(?:[ \t]+[A-Z][a-z]{1,20})*)'),
+    re.compile(r'SUBJECT[ \t]+(?:NAME[ \t]*)?[:\|][ \t]*([A-Z][a-z]{1,20}(?:[ \t]+[A-Z][a-z]{1,20})*)', re.IGNORECASE),
+    re.compile(r'Suspect[ \t]*[:\|][ \t]*([A-Z][a-z]{1,20}(?:[ \t]+[A-Z][a-z]{1,20})*)'),
+    re.compile(r'Target[ \t]*[:\|][ \t]*([A-Z][a-z]{1,20}(?:[ \t]+[A-Z][a-z]{1,20})*)'),
 ]
 
 _LOCATION_PATTERNS = [
