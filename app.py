@@ -1132,6 +1132,11 @@ _DEFAULTS = {
     "fusion_assets_staged": [],     # list of asset dicts from optional assets uploader
     "assets_data":          [],     # parsed AssetEntity-compatible dicts
     "raw_documents":        [],     # ingest_file() results — for source log
+    # ── Evidence Chain mode (lens over the shared case pipeline) ──────────────
+    "ec_staged":            [],     # list of {name, size, bytes, type} dicts
+    "ec_declaration":       False,  # lawful-authorization declaration
+    "ec_analysed":          False,  # True after the pipeline has run
+    "ec_bundle":            None,   # build_case_ontology() result (person, ontology, ...)
 }
 for k, v in _DEFAULTS.items():
     if k not in st.session_state:
@@ -1263,6 +1268,7 @@ try {
             ("command_center",    "COMMAND CENTER"),
             ("search",            "SEARCH"),
             ("fusion",            "FUSION"),
+            ("evidence_chain",    "EVIDENCE CHAIN"),
             ("analysis_workbench","ANALYSIS WORKBENCH"),
             ("network_map",       "NETWORK MAP"),
             ("timeline",          "TIMELINE"),
@@ -2139,118 +2145,163 @@ def _fusion_reset():
             st.session_state[k] = None
 
 
-def _process_single_file(fbs, fname, uid, declared, pb, status_el):
-    """
-    Run the full pipeline on one file's bytes.
-    Updates pb (progress bar) and status_el (st.empty).
-    Returns (result, person, method, ents, rels, tl, behavioral_data, structured_rows, primary_subject).
-    """
-    from modules.data_ingestion import ingest_file
-    from modules.entity_resolution import resolve_entity_from_documents
-    from modules.relationship_mapper import (
-        build_graph_from_person, build_graph, graph_summary,
-        extract_relationships_from_structured_rows,
+# NOTE: the per-file + cross-file pipeline formerly inlined here now lives in
+# modules.case_pipeline.build_case_ontology — the ONE shared path consumed by
+# both Fusion and the Evidence Chain mode. (Do not re-inline it here.)
+
+
+def _evidence_chain_reset():
+    for _k in ["ec_staged", "ec_declaration", "ec_analysed", "ec_bundle"]:
+        st.session_state.pop(_k, None)
+
+
+def _evidence_chain_show_results():
+    """Render the chain-layer output: the unmissable LEAD label, the candidate
+    chains with links/strength/gaps, and (if an LLM is available) a removable
+    [AI NARRATIVE] rephrasing. Everything shown is produced deterministically by
+    modules.evidence_chain — the narrative adds nothing and can be dropped with
+    zero loss."""
+    from modules.evidence_chain import (build_evidence_chains,
+                                        render_evidence_chains,
+                                        narrate_evidence_chains, LEAD_LABEL)
+    bundle = st.session_state.get("ec_bundle") or {}
+    result = build_evidence_chains(
+        bundle.get("ontology"), person=bundle.get("person"),
+        raw_documents=bundle.get("raw_documents"),
+        graph_data=bundle.get("graph_data"), subject=bundle.get("subject"))
+
+    # Unmissable LEAD label + non-autonomy markers.
+    st.markdown(
+        f'<div class="disclaimer-box"><b>LEAD — NOT A CONCLUSION.</b> {LEAD_LABEL} '
+        f'(human_review_required=True · autonomous=False)</div>',
+        unsafe_allow_html=True,
     )
-    from modules.timeline import build_timeline
-    from modules.behavioral_analysis import analyze as _analyze
 
-    status_el.text("Reading document...")
-    pb.progress(15)
-    result = ingest_file(fbs, fname, uid, declared)
-    if not result["success"]:
-        return None, None, None, [], [], {}, {}, [], ""
+    st.markdown(f"### {result['chain_count']} candidate chain(s) for "
+                f"**{result['subject'] or 'Unknown Subject'}**")
+    st.caption(f"{result['circumstance_count']} circumstance(s) "
+               f"({result['file_cited']} file-cited, {result['generic_cited']} "
+               f"generic-cited, {result['unsourced_excluded']} excluded for no cite); "
+               f"{len(result['unchained'])} unchained; "
+               f"{len(result['case_gaps'])} case-level structural gap(s).")
 
-    structured_rows  = result.get("structured_rows", [])
-    primary_subject  = result.get("primary_subject", "")
-    doc_flags        = result.get("document_flags", [])
-    doc_locations    = result.get("locations", [])
-    entities         = result["entities"]
+    # Deterministic rendering (the source of truth).
+    st.code(render_evidence_chains(result), language=None)
 
-    if not primary_subject:
-        from modules.entity_resolution import is_bad_subject_name as _is_bad
-        skip = {"Location Timeline","Date Time","City State","Activity Type",
-                "Work Entry","NexaTech","Not found","Unknown","HIGH","MEDIUM","LOW"}
-        # Also filter out location/institution strings that look like names
-        names_list = [
-            n["value"] for n in entities.get("names", [])[:10]
-            if n["value"] not in skip and not _is_bad(n["value"])
-        ]
-        if names_list:
-            primary_subject = names_list[0]
-        else:
-            # Filename stem is the last resort — reject if it contains noise tokens
-            # (underscore-joined stems like "GHOSTWIRE_CDR" need word-splitting on _ too)
-            stem = fname.rsplit(".", 1)[0].replace("_", " ").replace("-", " ")
-            primary_subject = stem if not _is_bad(stem) else ""
+    # Optional, removable LLM narrative — shown only if an LLM produced text.
+    narrative = narrate_evidence_chains(result)
+    if narrative:
+        with st.expander("[AI NARRATIVE] — readable rephrasing (adds nothing; removable)"):
+            st.markdown(narrative)
 
-    status_el.text("Extracting entities...")
-    pb.progress(35)
+    # Typed-ontology footprint (the shared pipeline's output the chains sit on).
+    onto = bundle.get("ontology")
+    counts = onto.counts() if onto is not None and hasattr(onto, "counts") else {}
+    with st.expander("Typed ontology footprint (shared pipeline — same as Fusion)"):
+        order = [("Persons", "persons"), ("Organizations", "organizations"),
+                 ("Phone numbers", "phones"), ("Locations", "locations"),
+                 ("Transactions", "transactions"), ("Timeline events", "timeline_events"),
+                 ("Legal proceedings", "legal_proceedings"),
+                 ("Deletion events", "deletion_events")]
+        cols = st.columns(4)
+        for i, (lbl, key) in enumerate(order):
+            with cols[i % 4]:
+                st.metric(lbl, int(counts.get(key, 0)))
 
-    status_el.text("Resolving identity...")
-    pb.progress(50)
-    person, method = resolve_entity_from_documents(primary_subject, structured_rows, fname)
-    if not person.get("confirmed_name") or person["confirmed_name"] in ("Unknown", ""):
-        from modules.entity_resolution import is_bad_subject_name as _is_bad_fb
-        if primary_subject and not _is_bad_fb(primary_subject):
-            person["confirmed_name"] = primary_subject
-    person["_resolution_method"] = method
 
-    # Merge document_flags into anomaly_flags
-    if doc_flags:
-        existing_flags = person.get("anomaly_flags", [])
-        person["anomaly_flags"] = existing_flags + [
-            {"flag": f.get("flag", str(f)), "source": f.get("source", fname), "severity": "MEDIUM"}
-            if isinstance(f, dict) else {"flag": str(f), "source": fname, "severity": "MEDIUM"}
-            for f in doc_flags
-        ]
-        print(f"[INGEST] Added {len(doc_flags)} document flags to person profile")
-
-    # Merge PDF-extracted locations
-    if doc_locations:
-        existing_locs = set(person.get("location_stated", []))
-        for loc in doc_locations:
-            if loc not in existing_locs:
-                person.setdefault("location_stated", []).append(loc)
-                existing_locs.add(loc)
-
-    ingested_sr = {
-        "query":   primary_subject,
-        "total":   result["total_items"],
-        "results": [{"full_name": primary_subject, "platform": f"Document: {fname}",
-                     "snippet": "", "url": "", "confidence": 70}],
-        "errors":  {},
-    }
-
-    status_el.text("Mapping relationships...")
-    pb.progress(68)
-    _, ents, rels = build_graph_from_person(person, ingested_sr)
-    struct_ents, struct_rels = extract_relationships_from_structured_rows(structured_rows, fname)
-    ents.extend(struct_ents)
-    rels.extend(struct_rels)
-
-    status_el.text("Building timeline...")
-    pb.progress(82)
-    tl = build_timeline(person, ingested_sr)
-
-    status_el.text("Behavioural analysis...")
-    pb.progress(93)
-    behav_result, behav_method = _analyze(
-        {"person": person, "search_results": ingested_sr},
-        structured_rows=structured_rows,
+def screen_evidence_chain():
+    screen_header(
+        "EVIDENCE CHAIN",
+        "Circumstantial-evidence LEAD engine · chains scattered evidence · "
+        "shows thin/broken links · cites everything · hands off to a human",
     )
-    behavioral_data = {"assessment": behav_result, "method": behav_method}
+    uid = st.session_state.get("current_user", "system")
 
-    pb.progress(100)
-    status_el.text("Complete")
+    st.markdown(
+        '<div class="al-classification-strip">TS//SCI//NOFORN · EVIDENCE CHAIN · '
+        'CIRCUMSTANTIAL LEAD ENGINE</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        '<div class="disclaimer-box">LEAD ENGINE — This mode connects circumstantial '
+        'evidence into candidate chains and shows where they are thin or broken. It '
+        'does NOT verify, decide, or weigh innocent explanations, and renders NO '
+        'guilt/innocence conclusion. Every chain is a LEAD for a human to '
+        'investigate.</div>',
+        unsafe_allow_html=True,
+    )
 
-    # Sanitise the per-file person object before it becomes the primary_person
-    try:
-        from modules.entity_resolution import clean_person_object as _cpo_file
-        _cpo_file(person)
-    except Exception:
-        pass
+    # ── Already run → show the candidate chains (links, strength, gaps, LEAD) ──
+    if st.session_state.get("ec_analysed") and st.session_state.get("ec_bundle"):
+        _evidence_chain_show_results()
+        if st.button("CLEAR & START OVER", key="ec_reset_done"):
+            _evidence_chain_reset()
+            st.rerun()
+        return
 
-    return result, person, method, ents, rels, tl, behavioral_data, structured_rows, primary_subject
+    st.markdown(
+        '<div class="disclaimer-box">LEGAL NOTICE — All uploaded data must have been '
+        'obtained through lawful authorization. Every upload is logged with your user '
+        'ID and timestamp.</div>',
+        unsafe_allow_html=True,
+    )
+
+    up = st.file_uploader(
+        "Upload the case files (the messy pile — documents, CSVs, notes)",
+        accept_multiple_files=True, key="ec_uploader",
+    )
+    if up:
+        staged = []
+        for f in up:
+            raw = f.read()
+            try:
+                data = safe_decode_file(raw, f.name)
+            except Exception:
+                data = raw
+            ext = ("." + f.name.rsplit(".", 1)[-1].lower()) if "." in f.name else ""
+            staged.append({"name": f.name, "size": len(raw), "bytes": data, "type": ext})
+        st.session_state.ec_staged = staged
+
+    staged = st.session_state.get("ec_staged", [])
+    if staged:
+        st.markdown(f"**{len(staged)} file(s) staged:** "
+                    + ", ".join(s["name"] for s in staged))
+
+    declared = st.checkbox(
+        "I declare these files were obtained through lawful authorization.",
+        key="ec_declaration",
+    )
+
+    can_run = bool(staged) and declared
+    if st.button("BUILD EVIDENCE CHAINS", key="ec_analyse", disabled=not can_run):
+        from modules.case_pipeline import build_case_ontology
+        prog = st.progress(0)
+        stat = st.empty()
+
+        def _cb(pct, message):
+            try:
+                prog.progress(max(0, min(100, int(pct))))
+                stat.text(message)
+            except Exception:
+                pass
+
+        bundle = build_case_ontology(
+            [{"name": s["name"], "bytes": s["bytes"]} for s in staged],
+            uid=uid, declared=True, progress=_cb,
+        )
+        try:
+            prog.empty()
+            stat.empty()
+        except Exception:
+            pass
+        st.session_state.ec_bundle = bundle
+        st.session_state.ec_analysed = True
+        st.rerun()
+
+    if not staged:
+        st.caption("Upload at least one file to begin.")
+    elif not declared:
+        st.caption("Check the declaration to enable chain building.")
 
 
 def screen_fusion():
@@ -2602,193 +2653,63 @@ def screen_fusion():
         )
     # ─────────────────────────────────────────────────────────────────────────
 
-    all_ents:     list = []
-    all_rels:     list = []
-    all_tl_events: list = []
-    all_struct_rows: list = []
-    all_results:  list = []
-    primary_person = None
-    primary_method = "local-fallback"
-    primary_subject_name = ""
-    total_entities = 0
-    total_relationships = 0
+    # ── STEP 4 — SHARED CASE PIPELINE ─────────────────────────────────────────
+    # Fusion is a LENS over modules.case_pipeline.build_case_ontology (ingest →
+    # resolve → graph → timeline → typed ontology). The SAME call powers the
+    # Evidence Chain mode, so no mode can drift from another. Fusion-specific
+    # layers (digital twin, agents, report) are applied below on the bundle.
+    from modules.case_pipeline import build_case_ontology
+    print("[FUSION 2] Shared pipeline starting...")
+    _fusion_pb   = st.progress(0)
+    _fusion_stat = st.empty()
 
-    print("[FUSION 2] Ingestion starting...")
-    for i, sf in enumerate(staged):
-        st.markdown(
-            f'<div style="font-size:0.88rem;font-weight:700;color:#E0E0E0;margin:0.6rem 0 0.2rem;">'
-            f'[{i+1}/{total}] {sf["name"]}</div>',
-            unsafe_allow_html=True,
-        )
-        pb     = st.progress(0)
-        status = st.empty()
-
+    def _fusion_progress(pct, message):
         try:
-            result, person, method, ents, rels, tl, behavioral_data, struct_rows, psubj = \
-                _process_single_file(sf["bytes"], sf["name"], uid, declared, pb, status)
-        except Exception as _pfe:
-            import traceback as _tb2
-            print(f"[FUSION 2] FAILED on file {sf['name']}: {_pfe}")
-            _tb2.print_exc()
-            st.error(f"Failed to process {sf['name']}: {_pfe}")
-            continue
+            _fusion_pb.progress(max(0, min(100, int(pct))))
+            _fusion_stat.text(message)
+        except Exception:
+            pass
 
-        if result is None:
-            print(f"[FUSION 2] File returned None: {sf['name']}")
-            st.error(f"Failed to process {sf['name']} — skipped.")
-            continue
+    bundle = build_case_ontology(
+        [{"name": sf["name"], "bytes": sf["bytes"]} for sf in staged],
+        uid=uid, declared=declared, progress=_fusion_progress,
+    )
+    try:
+        _fusion_pb.empty(); _fusion_stat.empty()
+    except Exception:
+        pass
 
-        print(f"[FUSION 3] Ingestion result: True — {sf['name']} ({result.get('total_items',0)} entities)")
-        # Accumulate
-        all_results.append(result)
-        all_ents.extend(ents)
-        all_rels.extend(rels)
-        all_struct_rows.extend(struct_rows)
-        all_tl_events.extend(tl.get("events", []) if tl else [])
-        total_entities    += result.get("total_items", 0)
-        total_relationships += len(rels)
+    primary_person       = bundle["person"]
+    primary_method       = bundle["resolution_method"]
+    primary_subject_name = bundle["subject"]
+    graph_data_full      = bundle["graph_data"]
+    G_full               = graph_data_full["graph"]
+    merged_ents          = graph_data_full["entities"]
+    all_rels             = graph_data_full.get("rels", [])
+    graph_summ           = graph_data_full["summary"]
+    tl_combined          = bundle["timeline_data"]
+    behavioral_data      = bundle["behavioral_data"]
+    rule_anomalies       = bundle["rule_anomalies"]
+    all_results          = bundle["raw_documents"]
+    all_struct_rows      = bundle["all_struct_rows"]
+    ingested_sr_combined = bundle["search_results"]
+    total_entities       = len(merged_ents)
+    st.success(f"✓ {len(all_results)} document(s) ingested and fused")
 
-        # First valid person becomes primary
-        if primary_person is None and person:
-            primary_person       = person
-            primary_method       = method
-            primary_subject_name = psubj
-            print(f"[FUSION 4] Entity resolution starting... primary subject: {psubj}")
-            print(f"[FUSION 5] Person object: {person is not None} — {person.get('confirmed_name','?')}")
+    # (multi-doc entity resolution now performed inside build_case_ontology)
 
-        # Mini summary per file
-        n_ents = result.get("total_items", 0)
-        n_rels = len(rels)
-        st.success(f"✓ {sf['name']} — {n_ents} entities extracted, {n_rels} relationships mapped")
-
-    # ══════════════════════════════════════════════════════════════════════════
-    # STEP 4b — MULTI-DOC ENTITY RESOLUTION (replaces per-file result)
-    # ══════════════════════════════════════════════════════════════════════════
-    if all_results:
-        from modules.entity_resolution import resolve_entity_from_multiple_docs
-        print(f"[FUSION MULTIDOC] Resolving across {len(all_results)} documents...")
-        try:
-            md_person, md_method = resolve_entity_from_multiple_docs(all_results)
-            if md_person and md_person.get("confirmed_name") not in (None, "", "Unknown Subject"):
-                primary_person = md_person
-                primary_method = md_method
-                print(f"[FUSION MULTIDOC] Resolved: {primary_person.get('confirmed_name')} "
-                      f"confidence={primary_person.get('confidence_score')} method={md_method}")
-            else:
-                print(f"[FUSION MULTIDOC] Multi-doc resolver returned no name — keeping per-file result")
-        except Exception as _mde:
-            import traceback as _tb3
-            print(f"[FUSION MULTIDOC] ERROR: {_mde}")
-            _tb3.print_exc()
-
-    # ══════════════════════════════════════════════════════════════════════════
-    # STEP 5 — CROSS-FILE LINKING
-    # ══════════════════════════════════════════════════════════════════════════
-    st.markdown('<hr class="divider">', unsafe_allow_html=True)
+    # (cross-file dedup, unified graph, graph-subject correction, boilerplate
+    #  suppression, behavioural analysis, rule anomalies and timeline are now
+    #  performed inside build_case_ontology — consumed from the bundle above)
     st.markdown(
         f'<div class="progress-summary">'
         f'<div class="tile"><div class="k">DOCUMENTS</div><div class="v">{len(all_results)}</div></div>'
         f'<div class="tile"><div class="k">ENTITIES</div><div class="v">{total_entities}</div></div>'
-        f'<div class="tile"><div class="k">RELATIONSHIPS</div><div class="v">{total_relationships}</div></div>'
-        f'<div class="tile"><div class="k">STATUS</div><div class="v" style="font-size:14px;color:var(--online);">FUSING</div></div>'
+        f'<div class="tile"><div class="k">RELATIONSHIPS</div><div class="v">{graph_summ.get("edges", 0)}</div></div>'
+        f'<div class="tile"><div class="k">STATUS</div><div class="v" style="font-size:14px;color:var(--online);">FUSED</div></div>'
         f'</div>',
         unsafe_allow_html=True,
     )
-    st.markdown('<div style="font-family:var(--f-mono);font-size:9px;letter-spacing:3px;color:var(--text-dim);text-transform:uppercase;margin:16px 0 8px;">LINKING ACROSS DOCUMENTS</div>', unsafe_allow_html=True)
-
-    linking_pb     = st.progress(0)
-    linking_status = st.empty()
-
-    from modules.relationship_mapper import build_graph, graph_summary, get_primary_subject
-    from modules.behavioral_analysis import analyze as _analyze, detect_rule_based_anomalies
-
-    linking_status.text("Resolving cross-document identities...")
-    linking_pb.progress(25)
-    # Deduplicate entities by label
-    seen_ent_ids: set = set()
-    merged_ents:  list = []
-    for e in all_ents:
-        if e["id"] not in seen_ent_ids:
-            merged_ents.append(e)
-            seen_ent_ids.add(e["id"])
-
-    linking_status.text("Building unified relationship graph...")
-    linking_pb.progress(50)
-    G_full     = build_graph(merged_ents, all_rels)
-
-    # Validate primary subject against graph — prevents a location or org node
-    # that dominated entity extraction from masquerading as the subject.
-    from modules.entity_resolution import is_bad_subject_name as _is_bad_graph
-    graph_subject = get_primary_subject(merged_ents, G_full)
-    if graph_subject and graph_subject != "Unknown Subject" and not _is_bad_graph(graph_subject):
-        person = primary_person or {}
-        current_name = person.get("confirmed_name", "")
-        if not current_name or current_name in ("Unknown Subject", "Unknown", ""):
-            # No confirmed name yet — take the graph's top person
-            if primary_person:
-                primary_person["confirmed_name"] = graph_subject
-            primary_subject_name = graph_subject
-            print(f"[FUSION 5b] Subject corrected by graph: {graph_subject!r}")
-        elif _is_bad_graph(current_name):
-            # Current name is noise — override with the clean graph subject
-            if primary_person:
-                primary_person["confirmed_name"] = graph_subject
-            primary_subject_name = graph_subject
-            print(f"[FUSION 5b] Noise name {current_name!r} replaced by graph: {graph_subject!r}")
-        else:
-            print(f"[FUSION 5b] Graph primary: {graph_subject!r} | entity resolution: {current_name!r}")
-
-    # Fix 5: suppress cross-file institutional-address boilerplate from ranking
-    from modules.relationship_mapper import detect_boilerplate_locations
-    _boilerplate = detect_boilerplate_locations(all_results)
-    graph_summ = graph_summary(
-        G_full,
-        subject_name=(primary_person or {}).get("confirmed_name", ""),
-        boilerplate=_boilerplate,
-    )
-
-    # Confidence is recalculated centrally inside _generate_report_inner
-    # (report_generator.py) where graph_data summary is already passed in.
-    print("[FUSION 6] Timeline building...")
-    linking_status.text("Running AI fusion analysis...")
-    linking_pb.progress(65)
-    ingested_sr_combined = {
-        "query":   primary_subject_name,
-        "total":   total_entities,
-        "results": [{"full_name": primary_subject_name, "platform": f"Document: {sf['name']}",
-                     "snippet": "", "url": "", "confidence": 70} for sf in staged],
-        "errors":  {},
-    }
-    print("[FUSION 7] Behavioral analysis starting...")
-    behav_result, behav_method = _analyze(
-        {"person": primary_person or {}, "search_results": ingested_sr_combined},
-        structured_rows=all_struct_rows,
-    )
-    behavioral_data = {"assessment": behav_result, "method": behav_method}
-    print(f"[FUSION 7] Behavioral result: {behav_result is not None}")
-
-    linking_status.text("Detecting anomalies...")
-    linking_pb.progress(80)
-    rule_anomalies = detect_rule_based_anomalies(all_struct_rows)
-
-    print("[FUSION 8] Report generation starting...")
-    linking_status.text("Generating intelligence report...")
-    linking_pb.progress(90)
-    from modules.timeline import build_timeline_from_fusion, build_timeline
-    # Pass per-file structured rows so build_timeline_from_all_files can attribute
-    # each event to its actual source file (bank statement, challan, CDR, etc.).
-    # Previously all_struct_rows was spread across every entry — every event
-    # ended up attributed to the first filename (Audit fix #5).
-    raw_docs_for_timeline = [
-        {
-            "filename":        r.get("filename", sf["name"]),
-            "raw_text":        r.get("raw_text", ""),
-            "structured_rows": r.get("structured_rows", []),
-        }
-        for sf, r in zip(staged, all_results)
-    ]
-    tl_combined = build_timeline_from_fusion(primary_person or {}, raw_docs_for_timeline) \
-                  if all_results else build_timeline(primary_person or {}, ingested_sr_combined)
 
     # ── Parse asset files ─────────────────────────────────────────────────────
     ast_staged   = st.session_state.get("fusion_assets_staged", [])
@@ -2834,40 +2755,14 @@ def screen_fusion():
         twin     = None
         ont_json = {}
 
-    # ── Inject flags from doc text + rule_anomalies BEFORE agents run ────────
+    # Flag list for agents (person already flag-enriched by build_case_ontology):
     if primary_person is None:
         primary_person = {}
 
-    # Step A: keyword scan across all ingested document text
-    # (CERT-In, IT Act, FEMA, DPDP, PMLA, NDPS, HAWALA, VPN, deletion, etc.)
-    try:
-        from modules.report_generator import inject_keyword_flags_from_docs
-        inject_keyword_flags_from_docs(primary_person, all_results)
-        print(f"[APP-FUSION] After keyword injection: "
-              f"{len(primary_person.get('anomaly_flags', []))} flags in person")
-    except Exception as _kfi_err:
-        print(f"[APP-FUSION] inject_keyword_flags non-fatal: {_kfi_err}")
-
-    # Step B: merge rule_anomalies (CDR / structural detections)
+    # Flag enrichment (keyword scan + rule-anomaly merge) is already applied
+    # inside build_case_ontology; build the flat string list agents read from
+    # the already-enriched person.
     _existing_flags = primary_person.get("anomaly_flags", []) or []
-    _existing_texts = {
-        (f.get("flag", str(f)) if isinstance(f, dict) else str(f)).lower()
-        for f in _existing_flags
-    }
-    for ra in (rule_anomalies or []):
-        flag_text = ra.get("flag", str(ra)) if isinstance(ra, dict) else str(ra)
-        if flag_text.lower() not in _existing_texts:
-            _existing_texts.add(flag_text.lower())
-            _existing_flags.append({
-                "flag":     flag_text,
-                "detail":   ra.get("detail", "") if isinstance(ra, dict) else "",
-                "source":   "rule-based-detector",
-                "severity": "MEDIUM",
-            })
-    primary_person["anomaly_flags"] = _existing_flags
-
-    # Also build a flat string list for report["anomalies"] so agents reading
-    # that key (NextStepAgent, TacticalPlanAgent) get the full picture
     _all_anomaly_strings = [
         (f.get("flag", str(f)) if isinstance(f, dict) else str(f))
         for f in _existing_flags
@@ -2901,22 +2796,7 @@ def screen_fusion():
         print(f"[APP] Agents ERROR: {_age}")
         ag_res = None
 
-    linking_pb.progress(100)
-    linking_status.text("Complete")
-    time.sleep(0.3)
-    linking_pb.empty()
-    linking_status.empty()
-
-    # ── FINAL CLEAN: sanitise person object before storing in session_state ───
-    # Runs after ALL resolution / graph / agent steps — last gate before PDF.
-    if primary_person:
-        try:
-            from modules.entity_resolution import clean_person_object as _cpo_fusion
-            _cpo_fusion(primary_person)
-            print(f"[FUSION CLEAN] Final name: {primary_person.get('confirmed_name','?')!r}")
-        except Exception as _cle:
-            print(f"[FUSION CLEAN] non-fatal: {_cle}")
-
+    # (person sanitisation / final clean already performed inside build_case_ontology)
     st.success("✓ All documents linked and analysed")
 
     # ── Persist all results to session state ─────────────────────────────────
@@ -5793,6 +5673,7 @@ def screen_dashboard():
     if   screen == "command_center":     screen_command_center()
     elif screen == "search":             screen_search()
     elif screen == "fusion":             screen_fusion()
+    elif screen == "evidence_chain":     screen_evidence_chain()
     elif screen == "analysis_workbench": screen_analysis_workbench()
     elif screen == "network_map":        screen_network_map()
     elif screen == "timeline":           screen_timeline()
