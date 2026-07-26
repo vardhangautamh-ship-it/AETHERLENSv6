@@ -1,0 +1,7 @@
+date,account_holder,subject_name,transaction_type,counterparty,amount_inr,transaction_ref,account_last4,notes
+2023-01-20,Ramesh Kumar R.,R. Ramesh Kumar,KICKBACK_IN,Hydra Infra Projects Pvt Ltd,5200000,TXN230120IOB3301,3301,Tender kickback to subject
+2023-02-15,R. Kumar,R. Ramesh Kumar,TRANSFER_OUT,Cauvery Procurement LLP,3100000,TXN230215IOB3302,3301,Layering to associate B's LLP
+2023-03-10,S. Kumar Ramesh,S. Kumar Ramesh,TRANSFER_OUT,Meridian Trading FZE Dubai,2800000,TXN230310IOB3303,7742,Cross-border wire (distinct person)
+2023-04-05,"Kumar, Ramesh",R. Ramesh Kumar,KICKBACK_IN,Hydra Infra Projects Pvt Ltd,4400000,TXN230405IOB3304,3301,Tender kickback to subject
+2023-05-12,Ramesh Suresh,Ramesh Suresh,CASH_WITHDRAWAL,Counter withdrawal,1200000,TXN230512IOB3305,9903,Distinct associate withdrawal
+2023-06-08,Ramesh Kumar,R. Ramesh Kumar,TRANSFER_OUT,Marina Holdings Pvt Ltd,3600000,TXN230608IOB3306,3301,Layering to shell 3

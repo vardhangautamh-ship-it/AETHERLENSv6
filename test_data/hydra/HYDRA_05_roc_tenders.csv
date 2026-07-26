@@ -1,0 +1,6 @@
+record_date,entity,director_name,subject_name,role,tender_ref,value_inr,device_ip
+2023-01-15,Hydra Infra Projects Pvt Ltd,"Kumar, Ramesh",R. Ramesh Kumar,Beneficial director (subject),TND-CHN-2301-88,52000000,10.32.7.4
+2023-02-10,Cauvery Procurement LLP,S. Kumar Ramesh,S. Kumar Ramesh,Director (Associate 1 — distinct),TND-CHN-2302-91,31000000,10.32.7.5
+2023-03-05,Marina Holdings Pvt Ltd,Ramesh Suresh,Ramesh Suresh,Director (Associate 2 — distinct),TND-CHN-2303-77,28000000,10.32.7.4
+2023-04-12,Hydra Infra Projects Pvt Ltd,R. Kumar,R. Ramesh Kumar,"Signatory (subject, variant form)",TND-CHN-2304-63,44000000,10.32.7.4
+2023-05-20,Hydra Infra Projects Pvt Ltd,Ramesh Kumar R.,R. Ramesh Kumar,"PAN-record name (subject, variant form)",TND-CHN-2305-51,36000000,10.32.7.4

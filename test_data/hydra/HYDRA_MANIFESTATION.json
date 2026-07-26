@@ -1,0 +1,118 @@
+{
+  "operation": "HYDRA",
+  "genre": "Tender/procurement fraud + benami name-fragmentation network",
+  "classification": "RESTRICTED — TEST",
+  "generated": "2026-07-08T17:10:14.716704",
+  "case_type_expected": "financial",
+  "purpose": "MAXIMALLY ADVERSARIAL entity-resolution stress test. The subject uses deliberate name-fragmentation (a real benami/laundering tradecraft) — his own name in many forms + similarly-named DISTINCT associates. The system must MERGE the subject's forms into one person AND keep distinct associates separate, resisting initial-collision and token-order-collision false merges.",
+  "upload_instructions": {
+    "main_documents": [
+      "HYDRA_01_profile.pdf",
+      "HYDRA_02_call_records.csv",
+      "HYDRA_03_financial.csv",
+      "HYDRA_04_casenote.txt",
+      "HYDRA_05_roc_tenders.csv",
+      "HYDRA_06_email_receipts.csv"
+    ],
+    "do_not_upload": "HYDRA_MANIFESTATION.json",
+    "total_files": 6
+  },
+  "GROUND_TRUTH_CAST": {
+    "note": "This is the answer key. Grade the report's entity resolution against this.",
+    "PERSON_A_SUBJECT": {
+      "canonical": "R. Ramesh Kumar",
+      "all_forms_that_MUST_MERGE_to_this_one_person": [
+        "R. Ramesh Kumar",
+        "Ramesh Kumar",
+        "R. Kumar",
+        "Kumar, Ramesh",
+        "Ramesh Kumar R."
+      ],
+      "phones": [
+        "+91-98400-31127",
+        "+91-98400-31128"
+      ],
+      "is_primary_subject": true,
+      "note": "Uses variant name-forms as benami fragmentation. Should be identified as the single primary subject."
+    },
+    "PERSON_B_associate1": {
+      "canonical": "S. Kumar Ramesh",
+      "forms": [
+        "S. Kumar Ramesh",
+        "Kumar Ramesh"
+      ],
+      "phone": "+91-98450-77321",
+      "MUST_NOT_merge_with": "PERSON_A",
+      "why_confusable": "Same tokens as the subject (Ramesh/Kumar) but REVERSED order and initial S (not R). This is the killer test — a naive matcher will wrongly merge B into A."
+    },
+    "PERSON_C_associate2": {
+      "canonical": "Ramesh Suresh",
+      "phone": "+91-99520-44810",
+      "MUST_NOT_merge_with": "PERSON_A",
+      "why_confusable": "Shares only the token 'Ramesh' with the subject."
+    },
+    "PERSON_D_associate3": {
+      "canonical": "Vijay Kumar",
+      "phone": "+91-90030-22118",
+      "MUST_NOT_merge_with": "PERSON_A",
+      "why_confusable": "Shares only the token 'Kumar' with the subject."
+    },
+    "PERSON_E_associate4": {
+      "canonical": "R. Suresh",
+      "phone": "+91-94430-33119",
+      "MUST_NOT_merge_with": "PERSON_A",
+      "why_confusable": "Shares only the INITIAL 'R.' with the subject — tests initial-collision false merge."
+    }
+  },
+  "GRADING_RUBRIC": {
+    "MERGE_test": {
+      "check": "Are all 5 forms of PERSON A (R. Ramesh Kumar / Ramesh Kumar / R. Kumar / Kumar, Ramesh / Ramesh Kumar R.) resolved to ONE primary subject?",
+      "pass": "Primary subject = R. Ramesh Kumar (or an equivalent single identity); the variant forms are recognised as the same person, not scattered as separate entities or false conflicts.",
+      "fail": "The subject is fragmented into multiple people, OR a variant form is picked as a separate associate."
+    },
+    "SPLIT_test_CRITICAL": {
+      "check": "Is PERSON B (S. Kumar Ramesh / Kumar Ramesh) kept SEPARATE from the subject?",
+      "pass": "S. Kumar Ramesh appears as a DISTINCT associate, never merged into the subject.",
+      "fail": "S. Kumar Ramesh is merged into R. Ramesh Kumar (token-order / shared-token false merge). THIS IS THE MOST IMPORTANT CHECK."
+    },
+    "initial_collision_test": {
+      "check": "Is PERSON E (R. Suresh) kept separate from the subject (R. Ramesh Kumar)?",
+      "pass": "R. Suresh is a distinct associate.",
+      "fail": "R. Suresh merged with the subject on the shared 'R.' initial."
+    },
+    "distinct_associates_test": {
+      "check": "Do §05/§08 associations list PERSON B, C, D, E as distinct named associates?",
+      "pass": "All four distinct associates appear separately with citations."
+    },
+    "benami_attribution_test": {
+      "check": "Are the accounts/entities held under the subject's variant names (Ramesh Kumar R., R. Kumar, Kumar Ramesh) attributed to the SUBJECT, while S. Kumar Ramesh's Dubai wire stays with ASSOCIATE B?",
+      "pass": "Subject's fragmented holdings consolidate to him; associate's holdings stay separate."
+    }
+  },
+  "junk_seeded_for_regression": {
+    "doubled_name_row": "R. Ramesh Kumar R. Ramesh Kumar",
+    "phone_junk": [
+      "Ref IDs REF-2302-111601",
+      "Transaction refs TXN230120IOB3301",
+      "Tender refs TND-CHN-2301-88",
+      "Device IPs 10.32.7.4",
+      "Order IDs ORD-FZE-230310-7742"
+    ],
+    "valid_phones": [
+      "+91-98400-31127",
+      "+91-98400-31128",
+      "+91-98450-77321",
+      "+91-99520-44810",
+      "+91-90030-22118",
+      "+91-94430-33119"
+    ]
+  },
+  "also_exercises_pattern_engine": [
+    "LAYERING_STRUCTURE (kickback in → shell transfers → cross-border wire)",
+    "SHELL_LAYERING_NETWORK (3 shells + associates)",
+    "NETWORK_HUB (subject central to associates and shells)",
+    "ENFORCEMENT_HISTORY_ESCALATION (Vigilance 2018 → CAG 2021 → EOW 2023)"
+  ],
+  "expected_challenges_summary": "The single hardest check is SPLIT_test_CRITICAL: keeping 'S. Kumar Ramesh' distinct from 'R. Ramesh Kumar'. A weak resolver merges them because they share both tokens. A strong resolver notices the reversed order + different initial + distinct phone/account and keeps them separate. Second-hardest: MERGE_test — pulling the subject's 5 scattered name-forms into one person without help.",
+  "all_fictional": "All persons, entities, numbers, accounts, tenders, and case references fictional. Investigation file only. The naming complexity is a deliberate stress test of entity resolution."
+}

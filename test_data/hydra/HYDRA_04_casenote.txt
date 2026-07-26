@@ -1,0 +1,71 @@
+
+ECONOMIC OFFENCES WING
+CHENNAI CITY
+CASE NOTE — RESTRICTED
+Ref: EOW/CHN/2023/CR/0614
+Period: January 2023 — August 2023
+
+SUBJECT: R. Ramesh Kumar
+(also recorded as Ramesh Kumar, R. Kumar,
+Kumar Ramesh [comma form], Ramesh Kumar R.
+— ALL the same individual)
+Home: T. Nagar, Chennai
+
+CASE LINKAGES:
+EOW FIR: EOW/CHN/2023/CR/0614
+ECIR: ECIR/CHZO/2023/0502
+Vigilance: VIG/TN/2018/0231
+
+ENTITY-RESOLUTION NOTE FOR INVESTIGATORS:
+This case is complicated by DELIBERATE NAME
+FRAGMENTATION. The subject R. Ramesh Kumar
+transacts under several forms of his own name
+across bank, ROC, and tender records to obscure
+that a single person controls multiple shells.
+Investigators must treat these forms as ONE
+person:
+  R. Ramesh Kumar = Ramesh Kumar = R. Kumar =
+  Kumar, Ramesh = Ramesh Kumar R.
+
+At the same time, the network contains DISTINCT
+associates whose names deliberately resemble the
+subject's and must NOT be conflated with him:
+  - S. Kumar Ramesh (Associate 1) — a DIFFERENT
+    person. Note the initial S and the reversed
+    Kumar-Ramesh order. Do not merge with the
+    subject.
+  - Ramesh Suresh (Associate 2) — different person;
+    shares only the token "Ramesh".
+  - Vijay Kumar (Associate 3) — different person;
+    shares only the token "Kumar".
+  - R. Suresh (Associate 4) — different person;
+    shares only the initial "R.".
+
+SUMMARY:
+The subject rigged government tenders toward shell
+entities he beneficially controls (Hydra Infra
+Projects), layering kickbacks through a second
+shell run by Associate 1 (Cauvery Procurement LLP)
+and a third run by Associate 2 (Marina Holdings).
+Active EOW investigation 2023. ECIR registered.
+Prevention of Corruption Act invoked.
+
+MONEY-FLOW OBSERVATIONS:
+Kickbacks landed in the subject's accounts held
+under variant name-forms (benami fragmentation),
+then layered outward to associate-controlled
+entities, including a cross-border wire by
+Associate 1 to a Dubai entity. Pattern consistent
+with proceeds-of-crime laundering under PMLA 2002.
+
+PENDING ACTIONS:
+Consolidate the subject's fragmented accounts under
+a single beneficial identity.
+Provisional attachment under PMLA Section 5.
+Distinguish associate holdings from subject
+holdings for accurate attachment.
+PC Act proceedings.
+
+All fictional. Educational test only. The naming
+complexity is the subject's tradecraft and the
+object of this stress test.

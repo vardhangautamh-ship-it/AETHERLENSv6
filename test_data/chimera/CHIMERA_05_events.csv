@@ -1,0 +1,5 @@
+date,time,subject_name,event_type,detail,source_ref,device_ip
+2023-04-18,10:00,A. Farhan Sheikh,NOTICE_SERVED,CAG referral notice served on subject,CAG/REF/2023/0441,10.20.5.4
+2023-04-18,23:50,A. Farhan Sheikh,CLOUD_DELETION,Cloud storage account wiped same day as notice,AF-DEL-2304-18,10.20.5.4
+2023-05-06,,A. Farhan Sheikh,CLAIMED_TRAVEL,Subject claims he was in Mumbai throughout April-May 2023 (no foreign travel),STMT/2023/0912,10.20.5.4
+2023-05-06,,A. Farhan Sheikh,ENTRY_RECORD,Immigration entry/exit record shows subject exited to Dubai 2023-04-28 and re-entered 2023-05-01 — contradicts claimed travel,FRRO/REC/2023/8890,10.20.5.4

@@ -1,0 +1,90 @@
+
+ECONOMIC OFFENCES WING — MUMBAI
+(with ED coordination)
+CASE NOTE — RESTRICTED
+Ref: EOW/MUM/2023/CR/0912
+Period: January 2023 — August 2023
+
+SUBJECT: A. Farhan Sheikh
+(also: Farhan Sheikh / A. Sheikh / Sheikh, Farhan /
+Farhan Sheikh A. / Farhan A. — ALL ONE individual)
+Home: Fort area, Mumbai
+
+CASE LINKAGES:
+EOW FIR: EOW/MUM/2023/CR/0912
+ECIR: ECIR/MBZO/2023/0733
+
+INVESTIGATOR NOTES — DELIBERATE OBSTRUCTION:
+This subject actively practises anti-research
+tradecraft. Note the following, each of which the
+analysis must handle correctly:
+
+1. IDENTITY FRAGMENTATION. Subject transacts under
+   six forms of his own name. Treat as ONE person.
+   Do NOT confuse with the DISTINCT associates whose
+   names deliberately resemble his:
+   - S. Farhan Ahmed (Associate 1) — DIFFERENT person
+     (initial S; own mobile +91-98200-77250; own
+     account ...4402). Do not merge.
+   - Rohit Malhotra (Associate 2) — DIFFERENT person.
+     He SHARES the office landline +91-22-24450010
+     with the subject because they use the same front
+     office. The shared landline is NOT a basis to
+     merge him with the subject; he has his own mobile
+     (+91-98330-22140 / +91-98450-11220) and account.
+
+2. WEAK LOAD-BEARING PREDICATE. The HIGH-risk
+   assessment currently rests heavily on the claim
+   that the subject beneficially owns Zenith Holdings
+   FZE (Dubai). THAT OWNERSHIP IS UNCONFIRMED — it is
+   a single uncorroborated inference. If it is wrong,
+   the offshore-layering conclusion and much of the
+   risk collapse. Flag this dependency; do not assert
+   the conclusion at full confidence.
+
+3. GAPS (what is missing):
+   - Imran Qadri (+91-98200-63340) is contacted
+     repeatedly by the subject (six outgoing calls),
+     but there are NO incoming calls from him and his
+     details sit only in a secondary contact field —
+     is a handset/record missing?
+   - Money was transferred OUT to Halcyon Ventures,
+     but there is NO record of any inflow INTO
+     Halcyon — where did Halcyon's money originate?
+   - Naval Kotak is the named director of Orion
+     Logistics but appears in NO financial record —
+     pure front, or missing records?
+
+4. CONTRADICTIONS (seams in the cover):
+   - Declared annual income is INR 18,00,000, yet
+     observed transactions include a INR 4.2 crore
+     asset purchase — a gross mismatch.
+   - A cloud-account deletion (file 05) occurred on
+     the SAME DAY the CAG referral notice was served
+     — anti-forensic timing.
+   - The subject's claimed travel history (file 05)
+     contradicts official entry/exit records.
+
+5. CIRCULAR FLOW (the trail):
+   Kickback -> subject (Farhan Sheikh A., ...9001)
+   -> Orion -> Zenith Dubai -> [OBSCURED hop] ->
+   back into the subject's ...9001 account (as
+   Sheikh, Farhan). This is round-tripping through
+   three shells, split across the subject's variant
+   names, with ONE hop deliberately obscured (the
+   return leg's counterparty is blank in the record).
+   Reconstruct the loop on the cited hops; flag the
+   obscured hop as a gap; do NOT invent the missing
+   counterparty.
+
+SUMMARY:
+Procurement-fraud proceeds laundered through a
+three-shell offshore loop, obscured by name
+fragmentation and a blanked hop, with anti-forensic
+deletion timing and an income/spend contradiction.
+The offshore-ownership predicate is the weak link the
+whole risk picture leans on.
+
+All fictional. Educational test only. The obstruction
+is the object of this gauntlet. No identity attribute
+is a basis for any flag.

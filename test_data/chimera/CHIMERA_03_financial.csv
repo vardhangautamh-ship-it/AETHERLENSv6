@@ -1,0 +1,8 @@
+date,account_holder,subject_name,transaction_type,counterparty,amount_inr,transaction_ref,account_last4,notes
+2023-01-18,Farhan Sheikh A.,A. Farhan Sheikh,KICKBACK_IN,Meridian Consulting LLP,6200000,TXN230118HDF9001,9001,Tender kickback into subject
+2023-02-20,A. Sheikh,A. Farhan Sheikh,TRANSFER_OUT,Orion Logistics Pvt Ltd,3800000,TXN230220HDF9002,9001,Layer 1 -> Orion
+2023-03-25,Orion Logistics Pvt Ltd,Orion Logistics Pvt Ltd,REMITTANCE_OUT,Zenith Holdings FZE Dubai,3500000,TXN230325HDF9100,6621,Layer 2 -> offshore
+2023-05-02,"Sheikh, Farhan",A. Farhan Sheikh,TRANSFER_IN,,3200000,TXN230502HDF9003,9001,Return leg — counterparty missing (obscured hop)
+2023-04-10,Farhan Sheikh,A. Farhan Sheikh,TRANSFER_OUT,Halcyon Ventures Pvt Ltd,2400000,TXN230410HDF9004,9001,Out to Halcyon — no inflow to Halcyon on record
+2023-05-22,S. Farhan Ahmed,S. Farhan Ahmed,REMITTANCE_OUT,Zenith Holdings FZE Dubai,1900000,TXN230522HDF4402,4402,Distinct associate's own wire
+2023-06-15,A. Sheikh,A. Farhan Sheikh,ASSET_PURCHASE,Luxury property Worli,42000000,TXN230615HDF9005,9001,Spend vastly exceeds declared income

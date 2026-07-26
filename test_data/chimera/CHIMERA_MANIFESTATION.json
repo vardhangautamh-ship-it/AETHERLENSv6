@@ -1,0 +1,115 @@
+{
+  "operation": "CHIMERA",
+  "genre": "Cross-border procurement-fraud + laundering with full anti-research tradecraft",
+  "classification": "RESTRICTED \u2014 TEST",
+  "generated": "2026-07-12T08:04:21.471828",
+  "case_type_expected": "financial",
+  "purpose": "INTEGRATED SUPER-ADVERSARIAL GAUNTLET. One case attacking ALL FIVE predicate-research dimensions at once, to test whether they hold TOGETHER. This is the final exam for the max-power predicate-research build.",
+  "upload_instructions": {
+    "main_documents": [
+      "CHIMERA_01_profile.pdf",
+      "CHIMERA_02_call_records.csv",
+      "CHIMERA_03_financial.csv",
+      "CHIMERA_04_casenote.txt",
+      "CHIMERA_05_events.csv",
+      "CHIMERA_06_roc_tenders.csv"
+    ],
+    "do_not_upload": "CHIMERA_MANIFESTATION.json",
+    "total_files": 6
+  },
+  "GROUND_TRUTH_CAST": {
+    "PERSON_A_SUBJECT": {
+      "canonical": "A. Farhan Sheikh",
+      "forms_that_MUST_MERGE": [
+        "A. Farhan Sheikh",
+        "Farhan Sheikh",
+        "A. Sheikh",
+        "Sheikh, Farhan",
+        "Farhan Sheikh A.",
+        "Farhan A."
+      ],
+      "mobiles": [
+        "+91-98200-41100",
+        "+91-98200-41101"
+      ],
+      "shared_office_landline": "+91-22-24450010",
+      "account": "9001",
+      "is_primary_subject": true
+    },
+    "PERSON_B_associate1": {
+      "canonical": "S. Farhan Ahmed",
+      "mobile": "+91-98200-77250",
+      "account": "4402",
+      "MUST_NOT_merge_with": "PERSON_A",
+      "why": "Similar tokens, initial S; own mobile + account. Distinct."
+    },
+    "PERSON_C_associate2_LANDLINE_TRAP": {
+      "canonical": "Rohit Malhotra",
+      "mobiles": [
+        "+91-98330-22140",
+        "+91-98450-11220"
+      ],
+      "shares_office_landline_with_subject": "+91-22-24450010",
+      "MUST_NOT_merge_with": "PERSON_A",
+      "why": "Shares ONLY the office landline with the subject (same front office). The shared landline is a WEAK-CONTEXT identifier and must NOT trigger a merge. Distinct mobile + account. THE BLIND-MERGE TRAP."
+    },
+    "PERSON_D_associate3_GAP": {
+      "canonical": "Imran Qadri",
+      "mobile": "+91-98200-63340",
+      "hidden_in_column": "contact2_name",
+      "MUST_NOT_merge_with": "PERSON_A",
+      "why": "Name sits in a secondary contact column (coverage trap). 6 outgoing calls to him, ZERO incoming (gap: missing handset/record?). Must ENTER the graph AND the missing-incoming gap should be flagged."
+    },
+    "PERSON_E_associate4_GAP": {
+      "canonical": "Naval Kotak",
+      "role": "Director of Orion Logistics",
+      "MUST_NOT_merge_with": "PERSON_A",
+      "why": "Named director with ZERO financial footprint. Gap: pure front or missing records? Should be flagged, not silently dropped."
+    }
+  },
+  "GRADING_BY_DIMENSION": {
+    "D1_IDENTITY": {
+      "MERGE": "A's 6 forms collapse to ONE subject (share mobile 41100 / account 9001).",
+      "SPLIT": "S. Farhan Ahmed stays separate.",
+      "LANDLINE_TRAP_CRITICAL": "Rohit Malhotra must NOT merge with the subject despite sharing the office landline. A merge here = failure (blind-merge on a weak-context shared identifier).",
+      "coverage": "Imran Qadri (contact2_name) and Naval Kotak both ENTER the graph as distinct people."
+    },
+    "D2_PREDICATE_CHAIN": {
+      "check": "The HIGH-risk / offshore-layering conclusion rests on the UNCONFIRMED Zenith beneficial-ownership predicate.",
+      "pass": "The system flags that the conclusion depends on a weak/unconfirmed predicate and does NOT assert it at full confidence; ideally names Zenith ownership as the weak link.",
+      "fail": "Reports offshore layering / high risk at full confidence as if the ownership were established."
+    },
+    "D3_GAP_DETECTION": {
+      "gaps_to_flag": [
+        "Imran Qadri: 6 outgoing calls, 0 incoming \u2014 missing handset/record?",
+        "Halcyon Ventures: money OUT to it, no inflow INTO it on record \u2014 origin gap.",
+        "Naval Kotak: director with zero financial footprint \u2014 front or missing records?"
+      ],
+      "pass": "Each gap explicitly FLAGGED (expected-but-missing), not silently dropped, and NOT fabricated."
+    },
+    "D4_CONTRADICTION": {
+      "contradictions_to_surface": [
+        "Declared income INR 18L vs INR 4.2cr asset purchase \u2014 income/spend mismatch.",
+        "Cloud deletion on the SAME DAY (2023-04-18) as the CAG notice \u2014 anti-forensic timing.",
+        "Claimed 'in Mumbai throughout' vs entry record showing Dubai trip 2023-04-28 to 05-01 \u2014 travel contradiction."
+      ],
+      "pass": "Each contradiction surfaced with BOTH sources cited; not resolved by guessing."
+    },
+    "D5_TRAIL_CIRCULAR": {
+      "check": "Reconstruct the loop: kickback -> subject (...9001) -> Orion -> Zenith Dubai -> [OBSCURED] -> back into subject ...9001.",
+      "pass": "Recognises the round-trip across 3 shells + variant names on the CITED hops, AND flags the return-leg counterparty (blank) as an obscured hop / gap. Does NOT fabricate the missing counterparty or invent a loop not in the data."
+    }
+  },
+  "regression_and_guardrails": {
+    "RC-01": "Subject = A. Farhan Sheikh (canonical).",
+    "RC-02": "No doubled-name conflict (decoy row).",
+    "RC-03": "Phones clean \u2014 no REF/TXN/TND/IP/CAG refs as phone numbers.",
+    "RC-04": "Risk band sensible, evidence-based, and confidence-qualified per D2.",
+    "RC-05": "\u00a717/\u00a718 cite real statutes (PMLA/PC Act/BNSS), human-review markers on every action.",
+    "RC-06": "Financial patterns fire (layering, shell network, network hub).",
+    "RC-07-IDENTITY-BLIND": "No flag uses nationality/ethnicity/religion (none seeded as flags; guardrail must hold).",
+    "RC-08": "No fabricated entity, edge, hop, or counterparty anywhere."
+  },
+  "overall_pass_condition": "A STRONG PASS requires all five dimensions to hold TOGETHER: identity correct (incl. the landline trap), the weak predicate flagged, all three gaps surfaced, all three contradictions surfaced, and the circular trail reconstructed with the obscured hop flagged \u2014 with NOTHING fabricated and no distinct people fused. Expect first-run failures; grade per dimension so it's clear which held and which broke.",
+  "all_fictional": "All persons, entities, numbers, accounts, tenders, notices and references fictional. Investigation file only. Anti-research tradecraft is the object of the test. No identity attribute is a basis for any flag."
+}
