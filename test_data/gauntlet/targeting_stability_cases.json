@@ -1,0 +1,191 @@
+[
+  {
+    "subject": "Delta",
+    "sections": {
+      "pattern_analysis": {
+        "header": "[DETERMINISTIC ANALYSIS] Rule-based pattern detection",
+        "case_type": "general",
+        "patterns": [
+          {
+            "pattern_id": "P1",
+            "pattern_name": "n",
+            "case_type": "immigration",
+            "confidence": "STRONG",
+            "explanation": "rule fired",
+            "triggers": [],
+            "sources": []
+          }
+        ],
+        "pattern_count": 1,
+        "immigration_risk": {
+          "points": 0,
+          "factors": []
+        }
+      },
+      "risk_assessment": {
+        "content": "[AI ANALYSIS] Risk score: 72/100 — Level: HIGH.",
+        "confidence": 60,
+        "items": [],
+        "risk_score": 72,
+        "risk_level": "HIGH"
+      },
+      "data_gaps": {
+        "items": []
+      }
+    }
+  },
+  {
+    "subject": "Echo",
+    "sections": {
+      "pattern_analysis": {
+        "header": "[DETERMINISTIC ANALYSIS] Rule-based pattern detection",
+        "case_type": "general",
+        "patterns": [
+          {
+            "pattern_id": "P1",
+            "pattern_name": "n",
+            "case_type": "immigration",
+            "confidence": "STRONG",
+            "explanation": "rule fired",
+            "triggers": [],
+            "sources": []
+          }
+        ],
+        "pattern_count": 1,
+        "immigration_risk": {
+          "points": 0,
+          "factors": []
+        }
+      },
+      "risk_assessment": {
+        "content": "[AI ANALYSIS] Risk score: 72/100 — Level: HIGH.",
+        "confidence": 60,
+        "items": [],
+        "risk_score": 72,
+        "risk_level": "HIGH"
+      },
+      "data_gaps": {
+        "items": []
+      }
+    }
+  },
+  {
+    "subject": "Foxtrot",
+    "sections": {
+      "pattern_analysis": {
+        "header": "[DETERMINISTIC ANALYSIS] Rule-based pattern detection",
+        "case_type": "general",
+        "patterns": [
+          {
+            "pattern_id": "P1",
+            "pattern_name": "n",
+            "case_type": "immigration",
+            "confidence": "STRONG",
+            "explanation": "rule fired",
+            "triggers": [],
+            "sources": []
+          },
+          {
+            "pattern_id": "P2",
+            "pattern_name": "n",
+            "case_type": "immigration",
+            "confidence": "STRONG",
+            "explanation": "rule fired",
+            "triggers": [],
+            "sources": []
+          }
+        ],
+        "pattern_count": 2,
+        "immigration_risk": {
+          "points": 0,
+          "factors": []
+        }
+      },
+      "risk_assessment": {
+        "content": "[AI ANALYSIS] Risk score: 90/100 — Level: CRITICAL.",
+        "confidence": 60,
+        "items": [],
+        "risk_score": 90,
+        "risk_level": "CRITICAL"
+      },
+      "data_gaps": {
+        "items": []
+      }
+    }
+  },
+  {
+    "subject": "Golf",
+    "sections": {
+      "pattern_analysis": {
+        "header": "[DETERMINISTIC ANALYSIS] Rule-based pattern detection",
+        "case_type": "general",
+        "patterns": [],
+        "pattern_count": 0,
+        "immigration_risk": {
+          "points": 0,
+          "factors": []
+        }
+      },
+      "risk_assessment": {
+        "content": "[AI ANALYSIS] Risk score: 50/100 — Level: MEDIUM.",
+        "confidence": 60,
+        "items": [],
+        "risk_score": 50,
+        "risk_level": "MEDIUM"
+      },
+      "data_gaps": {
+        "items": []
+      }
+    }
+  },
+  {
+    "subject": "Hotel",
+    "sections": {
+      "pattern_analysis": {
+        "header": "[DETERMINISTIC ANALYSIS] Rule-based pattern detection",
+        "case_type": "general",
+        "patterns": [],
+        "pattern_count": 0,
+        "immigration_risk": {
+          "points": 0,
+          "factors": []
+        }
+      },
+      "risk_assessment": {
+        "content": "[AI ANALYSIS] Risk score: None/100 — Level: UNKNOWN.",
+        "confidence": 60,
+        "items": [],
+        "risk_score": null,
+        "risk_level": "UNKNOWN"
+      },
+      "data_gaps": {
+        "items": []
+      }
+    }
+  },
+  {
+    "subject": "India",
+    "sections": {
+      "pattern_analysis": {
+        "header": "[DETERMINISTIC ANALYSIS] Rule-based pattern detection",
+        "case_type": "general",
+        "patterns": [],
+        "pattern_count": 0,
+        "immigration_risk": {
+          "points": 0,
+          "factors": []
+        }
+      },
+      "risk_assessment": {
+        "content": "[AI ANALYSIS] Risk score: 72/100 — Level: HIGH.",
+        "confidence": 60,
+        "items": [],
+        "risk_score": 72,
+        "risk_level": "HIGH"
+      },
+      "data_gaps": {
+        "items": []
+      }
+    }
+  }
+]

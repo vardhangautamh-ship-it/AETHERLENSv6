@@ -1,0 +1,37 @@
+[
+  {
+    "attack": "FEEDBACK LOOP — ranking a subject does not accrue evidence to it",
+    "expected": "Re-running prioritisation / rebuilding the watchlist on identical cases yields identical scores, ranks and membership; feeding the prior watchlist back adds nothing — no self-reinforcing spiral.",
+    "actual": "prioritise idempotent=True; watchlist membership drift over 6 fed-back rebuilds=False; final change-set added=[] removed=[] retained=['Alpha One', 'Bravo Two'].",
+    "passed": true,
+    "cause": ""
+  },
+  {
+    "attack": "PROXY FOR IDENTITY — rank is identity-blind to non-evidence attributes",
+    "expected": "Targeting ranks on evidence only: injected nationality/origin/religion and the subject NAME must not change risk score, level or watchlist membership. (Ordinal order among evidence-ties may fall to a name tie-break; upstream proxy PATTERNS, if present, are propagated as evidence.)",
+    "actual": "injected identity ignored=True; name changes score/level/membership? score-blind=True, membership-blind=True; tie order is name-asc=True; inherited FOREIGN_SIM proxy case ranked #1=True (by-design evidence, inherited-proxy caveat).",
+    "passed": true,
+    "cause": ""
+  },
+  {
+    "attack": "THIN-EVIDENCE INFLATION — rank must track cited evidence, not a bare score",
+    "expected": "A subject with a high score but ZERO cited patterns and an EMPTY risk basis should NOT outrank an evidence-rich lower-scored subject — or should at least be flagged as thin at the ranking layer before it lands on the watchlist.",
+    "actual": "rank order=[(1, 'Thin Eighty'), (2, 'Rich Sixty')]; Thin-Eighty rank=#1 with pattern_count=0, strong_count=0, risk_basis_lines=0; on watchlist=True.",
+    "passed": false,
+    "cause": "targeting._rank_key ranks by risk_score FIRST with no cross-check that the score is backed by cited patterns or risk-basis lines; a citation-less score of 80 outranks a 3-STRONG-pattern score of 60 and is auto-added to the watchlist (>=55). No thin-basis guard exists at the projection/ranking layer. Upstream, the §16 score itself can be inflated by raw source COUNT (ai_agents.run_risk_agent: 6 pts per source up to ~36), so volume alone can manufacture the number this layer then trusts."
+  },
+  {
+    "attack": "STABILITY — same input yields same ranking",
+    "expected": "30 shuffles of the same 6 cases produce byte-identical prioritised output; ties break by name deterministically; the unscored case ranks LAST.",
+    "actual": "identical across 30 shuffles=True; unscored 'Hotel' last=True; canonical order=['Foxtrot', 'Delta', 'Echo', 'India', 'Golf', 'Hotel'].",
+    "passed": true,
+    "cause": ""
+  },
+  {
+    "attack": "HUMAN-REVIEW / NON-AUTONOMY MARKERS present on every output",
+    "expected": "Every package, result, watchlist and rendered string carries the human-authorisation / legal-basis markers unconditionally; malformed cases are skipped (never emitted as marker-less packages). No LLM path exists to drop the marker.",
+    "actual": "packages_marked=True; result_marked=True; malformed_skipped(3)=True; watchlist_marked=True; entries_marked=True; renders_carry_notices=True.",
+    "passed": true,
+    "cause": ""
+  }
+]

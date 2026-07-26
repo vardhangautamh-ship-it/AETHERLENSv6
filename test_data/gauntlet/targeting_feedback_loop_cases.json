@@ -1,0 +1,113 @@
+[
+  {
+    "subject": "Alpha One",
+    "sections": {
+      "pattern_analysis": {
+        "header": "[DETERMINISTIC ANALYSIS] Rule-based pattern detection",
+        "case_type": "general",
+        "patterns": [
+          {
+            "pattern_id": "P1",
+            "pattern_name": "Pat One",
+            "case_type": "immigration",
+            "confidence": "STRONG",
+            "explanation": "rule fired",
+            "triggers": [],
+            "sources": []
+          },
+          {
+            "pattern_id": "P2",
+            "pattern_name": "Pat Two",
+            "case_type": "immigration",
+            "confidence": "STRONG",
+            "explanation": "rule fired",
+            "triggers": [],
+            "sources": []
+          }
+        ],
+        "pattern_count": 2,
+        "immigration_risk": {
+          "points": 0,
+          "factors": []
+        }
+      },
+      "risk_assessment": {
+        "content": "[AI ANALYSIS] Risk score: 80/100 — Level: CRITICAL.",
+        "confidence": 60,
+        "items": [
+          "RISK SCORE: 80/100 — CRITICAL",
+          "[F] cited"
+        ],
+        "risk_score": 80,
+        "risk_level": "CRITICAL"
+      },
+      "data_gaps": {
+        "items": []
+      }
+    }
+  },
+  {
+    "subject": "Bravo Two",
+    "sections": {
+      "pattern_analysis": {
+        "header": "[DETERMINISTIC ANALYSIS] Rule-based pattern detection",
+        "case_type": "general",
+        "patterns": [
+          {
+            "pattern_id": "P3",
+            "pattern_name": "Pat Three",
+            "case_type": "immigration",
+            "confidence": "STRONG",
+            "explanation": "rule fired",
+            "triggers": [],
+            "sources": []
+          }
+        ],
+        "pattern_count": 1,
+        "immigration_risk": {
+          "points": 0,
+          "factors": []
+        }
+      },
+      "risk_assessment": {
+        "content": "[AI ANALYSIS] Risk score: 60/100 — Level: HIGH.",
+        "confidence": 60,
+        "items": [
+          "RISK SCORE: 60/100 — HIGH"
+        ],
+        "risk_score": 60,
+        "risk_level": "HIGH"
+      },
+      "data_gaps": {
+        "items": []
+      }
+    }
+  },
+  {
+    "subject": "Charlie Three",
+    "sections": {
+      "pattern_analysis": {
+        "header": "[DETERMINISTIC ANALYSIS] Rule-based pattern detection",
+        "case_type": "general",
+        "patterns": [],
+        "pattern_count": 0,
+        "immigration_risk": {
+          "points": 0,
+          "factors": []
+        }
+      },
+      "risk_assessment": {
+        "content": "[AI ANALYSIS] Risk score: 40/100 — Level: MEDIUM.",
+        "confidence": 60,
+        "items": [
+          "RISK SCORE: 40/100 — MEDIUM"
+        ],
+        "risk_score": 40,
+        "risk_level": "MEDIUM"
+      },
+      "data_gaps": {
+        "items": []
+      }
+    }
+  }
+]

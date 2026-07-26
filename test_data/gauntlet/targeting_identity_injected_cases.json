@@ -1,0 +1,102 @@
+[
+  {
+    "subject": "Same Subject",
+    "sections": {
+      "pattern_analysis": {
+        "header": "[DETERMINISTIC ANALYSIS] Rule-based pattern detection",
+        "case_type": "general",
+        "patterns": [
+          {
+            "pattern_id": "P1",
+            "pattern_name": "Pat One",
+            "case_type": "immigration",
+            "confidence": "STRONG",
+            "explanation": "rule fired",
+            "triggers": [],
+            "sources": []
+          },
+          {
+            "pattern_id": "P2",
+            "pattern_name": "Pat Two",
+            "case_type": "immigration",
+            "confidence": "MODERATE",
+            "explanation": "rule fired",
+            "triggers": [],
+            "sources": []
+          }
+        ],
+        "pattern_count": 2,
+        "immigration_risk": {
+          "points": 0,
+          "factors": []
+        }
+      },
+      "risk_assessment": {
+        "content": "[AI ANALYSIS] Risk score: 70/100 — Level: HIGH.",
+        "confidence": 60,
+        "items": [
+          "RISK SCORE: 70/100 — HIGH"
+        ],
+        "risk_score": 70,
+        "risk_level": "HIGH"
+      },
+      "data_gaps": {
+        "items": []
+      }
+    },
+    "nationality": "Indian",
+    "origin": "Assam",
+    "religion": "Hindu",
+    "foreign_sim": false
+  },
+  {
+    "subject": "Same Subject",
+    "sections": {
+      "pattern_analysis": {
+        "header": "[DETERMINISTIC ANALYSIS] Rule-based pattern detection",
+        "case_type": "general",
+        "patterns": [
+          {
+            "pattern_id": "P1",
+            "pattern_name": "Pat One",
+            "case_type": "immigration",
+            "confidence": "STRONG",
+            "explanation": "rule fired",
+            "triggers": [],
+            "sources": []
+          },
+          {
+            "pattern_id": "P2",
+            "pattern_name": "Pat Two",
+            "case_type": "immigration",
+            "confidence": "MODERATE",
+            "explanation": "rule fired",
+            "triggers": [],
+            "sources": []
+          }
+        ],
+        "pattern_count": 2,
+        "immigration_risk": {
+          "points": 0,
+          "factors": []
+        }
+      },
+      "risk_assessment": {
+        "content": "[AI ANALYSIS] Risk score: 70/100 — Level: HIGH.",
+        "confidence": 60,
+        "items": [
+          "RISK SCORE: 70/100 — HIGH"
+        ],
+        "risk_score": 70,
+        "risk_level": "HIGH"
+      },
+      "data_gaps": {
+        "items": []
+      }
+    },
+    "nationality": "Bangladeshi",
+    "origin": "Dhaka",
+    "religion": "Muslim",
+    "foreign_sim": true
+  }
+]

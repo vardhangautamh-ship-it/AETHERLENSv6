@@ -1,0 +1,76 @@
+[
+  {
+    "subject": "Rahul Verma",
+    "sections": {
+      "pattern_analysis": {
+        "header": "[DETERMINISTIC ANALYSIS] Rule-based pattern detection",
+        "case_type": "general",
+        "patterns": [
+          {
+            "pattern_id": "P1",
+            "pattern_name": "Pat One",
+            "case_type": "immigration",
+            "confidence": "STRONG",
+            "explanation": "rule fired",
+            "triggers": [],
+            "sources": []
+          }
+        ],
+        "pattern_count": 1,
+        "immigration_risk": {
+          "points": 0,
+          "factors": []
+        }
+      },
+      "risk_assessment": {
+        "content": "[AI ANALYSIS] Risk score: 62/100 — Level: HIGH.",
+        "confidence": 60,
+        "items": [
+          "RISK SCORE: 62/100 — HIGH"
+        ],
+        "risk_score": 62,
+        "risk_level": "HIGH"
+      },
+      "data_gaps": {
+        "items": []
+      }
+    }
+  },
+  {
+    "subject": "Rahim Sheikh",
+    "sections": {
+      "pattern_analysis": {
+        "header": "[DETERMINISTIC ANALYSIS] Rule-based pattern detection",
+        "case_type": "general",
+        "patterns": [
+          {
+            "pattern_id": "P1",
+            "pattern_name": "Pat One",
+            "case_type": "immigration",
+            "confidence": "STRONG",
+            "explanation": "rule fired",
+            "triggers": [],
+            "sources": []
+          }
+        ],
+        "pattern_count": 1,
+        "immigration_risk": {
+          "points": 0,
+          "factors": []
+        }
+      },
+      "risk_assessment": {
+        "content": "[AI ANALYSIS] Risk score: 62/100 — Level: HIGH.",
+        "confidence": 60,
+        "items": [
+          "RISK SCORE: 62/100 — HIGH"
+        ],
+        "risk_score": 62,
+        "risk_level": "HIGH"
+      },
+      "data_gaps": {
+        "items": []
+      }
+    }
+  }
+]

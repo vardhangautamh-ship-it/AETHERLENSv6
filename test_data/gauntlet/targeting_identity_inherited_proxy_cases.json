@@ -1,0 +1,91 @@
+[
+  {
+    "subject": "Plain Subject",
+    "sections": {
+      "pattern_analysis": {
+        "header": "[DETERMINISTIC ANALYSIS] Rule-based pattern detection",
+        "case_type": "general",
+        "patterns": [
+          {
+            "pattern_id": "GEN",
+            "pattern_name": "General",
+            "case_type": "general",
+            "confidence": "MODERATE",
+            "explanation": "rule fired",
+            "triggers": [],
+            "sources": []
+          }
+        ],
+        "pattern_count": 1,
+        "immigration_risk": {
+          "points": 0,
+          "factors": []
+        }
+      },
+      "risk_assessment": {
+        "content": "[AI ANALYSIS] Risk score: 55/100 — Level: HIGH.",
+        "confidence": 60,
+        "items": [
+          "RISK SCORE: 55/100 — HIGH"
+        ],
+        "risk_score": 55,
+        "risk_level": "HIGH"
+      },
+      "data_gaps": {
+        "items": []
+      }
+    }
+  },
+  {
+    "subject": "Proxy Subject",
+    "sections": {
+      "pattern_analysis": {
+        "header": "[DETERMINISTIC ANALYSIS] Rule-based pattern detection",
+        "case_type": "general",
+        "patterns": [
+          {
+            "pattern_id": "FOREIGN_SIM_CORROBORATED",
+            "pattern_name": "Foreign SIM (Corroborated)",
+            "case_type": "immigration",
+            "confidence": "STRONG",
+            "explanation": "rule fired",
+            "triggers": [
+              "foreign-origin phone +880...",
+              "border location: Petrapole"
+            ],
+            "sources": [
+              "doc1.pdf"
+            ]
+          }
+        ],
+        "pattern_count": 1,
+        "immigration_risk": {
+          "points": 0,
+          "factors": []
+        }
+      },
+      "risk_assessment": {
+        "content": "[AI ANALYSIS] Risk score: 63/100 — Level: HIGH.",
+        "confidence": 60,
+        "items": [
+          "RISK SCORE: 63/100 — HIGH",
+          "IMMIGRATION RISK WEIGHTING: +8"
+        ],
+        "risk_score": 63,
+        "risk_level": "HIGH"
+      },
+      "data_gaps": {
+        "items": []
+      },
+      "immigration_profile": {
+        "header": "[DETERMINISTIC ANALYSIS] Immigration Violation Profile",
+        "content": "immigration indicators detected",
+        "confidence": 50,
+        "items": [
+          "indicator line"
+        ],
+        "pattern_count": 1
+      }
+    }
+  }
+]

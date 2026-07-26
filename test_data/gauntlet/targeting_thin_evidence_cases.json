@@ -1,0 +1,97 @@
+[
+  {
+    "subject": "Thin Eighty",
+    "sections": {
+      "pattern_analysis": {
+        "header": "[DETERMINISTIC ANALYSIS] Rule-based pattern detection",
+        "case_type": "general",
+        "patterns": [],
+        "pattern_count": 0,
+        "immigration_risk": {
+          "points": 0,
+          "factors": []
+        }
+      },
+      "risk_assessment": {
+        "content": "[AI ANALYSIS] Risk score: 80/100 — Level: CRITICAL.",
+        "confidence": 60,
+        "items": [],
+        "risk_score": 80,
+        "risk_level": "CRITICAL"
+      },
+      "data_gaps": {
+        "items": [
+          "no source documents corroborate the score"
+        ]
+      }
+    }
+  },
+  {
+    "subject": "Rich Sixty",
+    "sections": {
+      "pattern_analysis": {
+        "header": "[DETERMINISTIC ANALYSIS] Rule-based pattern detection",
+        "case_type": "general",
+        "patterns": [
+          {
+            "pattern_id": "P1",
+            "pattern_name": "Pat One",
+            "case_type": "immigration",
+            "confidence": "STRONG",
+            "explanation": "rule fired",
+            "triggers": [
+              "t1"
+            ],
+            "sources": [
+              "s1.pdf"
+            ]
+          },
+          {
+            "pattern_id": "P2",
+            "pattern_name": "Pat Two",
+            "case_type": "immigration",
+            "confidence": "STRONG",
+            "explanation": "rule fired",
+            "triggers": [
+              "t2"
+            ],
+            "sources": [
+              "s2.pdf"
+            ]
+          },
+          {
+            "pattern_id": "P3",
+            "pattern_name": "Pat Three",
+            "case_type": "immigration",
+            "confidence": "STRONG",
+            "explanation": "rule fired",
+            "triggers": [
+              "t3"
+            ],
+            "sources": [
+              "s3.pdf"
+            ]
+          }
+        ],
+        "pattern_count": 3,
+        "immigration_risk": {
+          "points": 0,
+          "factors": []
+        }
+      },
+      "risk_assessment": {
+        "content": "[AI ANALYSIS] Risk score: 60/100 — Level: HIGH.",
+        "confidence": 60,
+        "items": [
+          "RISK SCORE: 60/100 — HIGH",
+          "[FACTOR] Weight: 8 — Evidence: ... — Source: s1.pdf"
+        ],
+        "risk_score": 60,
+        "risk_level": "HIGH"
+      },
+      "data_gaps": {
+        "items": []
+      }
+    }
+  }
+]
