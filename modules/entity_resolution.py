@@ -12,7 +12,7 @@ import requests
 import config
 from modules.sanitizer import (
     safe_str, safe_list, safe_int, safe_phone, defensive,
-    most_common_by_key, normalize_name_key,
+    most_common_by_key, normalize_name_key, phone_key,
 )
 
 # ── Person Object schema ───────────────────────────────────────────────────────
@@ -943,8 +943,10 @@ def _bind_id_col_type(col) -> str | None:
 
 
 def _bind_norm_phone(v) -> str | None:
-    digits = re.sub(r"\D", "", str(v or ""))
-    return digits[-10:] if len(digits) >= 10 else None
+    """Identity-binding phone key. Thin delegate to the single source of
+    truth (sanitizer.phone_key): a full 10-digit MSISDN is required to
+    anchor identity, so the default min_digits=10 applies."""
+    return phone_key(v)
 
 
 def build_identifier_bindings(raw_documents: list) -> dict:
@@ -1677,9 +1679,9 @@ def extract_all_phones(raw_documents: list) -> list:
     # Preference order: +country format > bare 10-digit > other
     seen_digits: dict = {}   # last-10-digit key -> canonical representation
     for p in filtered:
-        digits = re.sub(r"\D", "", p)
-        # Use last 10 digits as the dedup key (handles 91XXXXXXXXXX, 0XXXXXXXXXX, +91...)
-        key = digits[-10:] if len(digits) >= 10 else digits
+        # Shared canonicalizer; inputs are safe_phone/is_valid_phone survivors
+        # (>= 8 digits), so min_digits=7 keeps every 8-9 digit line keyed.
+        key = phone_key(p, min_digits=7) or p
         existing = seen_digits.get(key)
         if existing is None:
             seen_digits[key] = p
@@ -1730,8 +1732,7 @@ def build_phone_source_map(raw_documents: list) -> dict:
     # Normalise keys to last-10-digit canonical form (same dedup as extract_all_phones)
     seen_digits: dict = {}   # last-10-digit -> (canonical_phone, set_of_sources)
     for phone, sources in raw_map.items():
-        digits = re.sub(r"\D", "", phone)
-        key = digits[-10:] if len(digits) >= 10 else digits
+        key = phone_key(phone, min_digits=7) or phone
         existing = seen_digits.get(key)
         if existing is None:
             seen_digits[key] = (phone, sources)
@@ -2027,11 +2028,11 @@ def resolve_entity_from_multiple_docs(raw_documents: list) -> tuple[dict, str]:
         _owner_of = {}
         for _i in _identities:
             for _ph in _i.get("phones", []):
-                _k10 = re.sub(r"\D", "", str(_ph))[-10:]
+                _k10 = _bind_norm_phone(_ph)
                 if _k10 and f"phone:{_k10}" not in _contested_keys:
                     _owner_of[_k10] = _i["canonical"]
         person["case_phones"] = [
-            {"number": p, "owner": _owner_of.get(re.sub(r"\D", "", str(p))[-10:], "")}
+            {"number": p, "owner": _owner_of.get(_bind_norm_phone(p) or "", "")}
             for p in safe_list(person.get("phones_found", []))
         ]
         # Benami attribution: accounts consolidate to the identity whose

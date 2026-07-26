@@ -56,7 +56,6 @@ _GENERIC_TOKENS = {"unknown", "n a", "na", "none", "nil", "self", "cash", "",
 _GENERIC_LOCATIONS = {"india", "bharat"}
 
 _MIN_PHONE_DIGITS = 7   # below this a digit string is not a phone line
-_MSISDN_LEN = 10        # subscriber-number length used for prefix-tolerant match
 
 _LINK_TYPES = ("shared_phone", "shared_organization",
                "shared_counterparty", "shared_location")
@@ -70,11 +69,11 @@ def _norm_text(s) -> str:
 def _norm_phone(s) -> str:
     """Digits-only canonical form; last 10 digits when longer (so a line with
     a country code matches the same line written without one — both raw forms
-    stay visible in the citations). Empty when too short to be a line."""
-    digits = re.sub(r"\D", "", str(s or ""))
-    if len(digits) < _MIN_PHONE_DIGITS:
-        return ""
-    return digits[-_MSISDN_LEN:] if len(digits) > _MSISDN_LEN else digits
+    stay visible in the citations). Empty when too short to be a line.
+    Thin delegate to the single source of truth (sanitizer.phone_key) with
+    this module's historical junk gate (_MIN_PHONE_DIGITS) preserved."""
+    from modules.sanitizer import phone_key
+    return phone_key(s, min_digits=_MIN_PHONE_DIGITS) or ""
 
 
 def _get(obj, key, default=None):

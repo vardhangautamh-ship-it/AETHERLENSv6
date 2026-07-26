@@ -132,8 +132,8 @@ def detect_structural_gaps(person: dict, onto, raw_documents: list) -> list:
 
     # phones found only in free text join the unbound check too
     for ph, srcs in (person.get("phone_sources") or {}).items():
-        k10 = re.sub(r"\D", "", str(ph))[-10:]
-        if len(k10) == 10:
+        k10 = _bind_norm_phone(ph)
+        if k10:
             key = f"phone:{k10}"
             if key not in seen and key not in bound_keys:
                 seen[key] = {"display": safe_str(ph),

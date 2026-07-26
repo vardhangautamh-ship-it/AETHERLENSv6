@@ -174,6 +174,24 @@ def safe_phone(val) -> str | None:
     return cleaned.strip() or None
 
 
+def phone_key(val, min_digits: int = 10) -> str | None:
+    """Canonical COMPARISON key for a phone line: digits only, last 10 kept
+    when longer (so a line written with a country code matches the same line
+    written without one). Returns None below `min_digits` digits.
+
+    Single source of truth for every phone matching/binding key. Identity
+    binding uses the default min_digits=10 (a full MSISDN is required to
+    anchor identity); cross-case mining passes 7 (its historical junk gate).
+    Comparison-key ONLY — display forms come from safe_phone, E.164 display
+    canonicalization from ontology.normalize_phone, and mobile-vs-landline
+    TYPING from entity_resolution._is_landline_number. Never used for typing.
+    """
+    digits = re.sub(r"\D", "", str(val or ""))
+    if len(digits) < min_digits:
+        return None
+    return digits[-10:]
+
+
 def safe_confidence(val, min_val: int = 0, max_val: int = 100) -> int:
     """Clamp a confidence score to [min_val, max_val]."""
     score = safe_int(val, 0)
