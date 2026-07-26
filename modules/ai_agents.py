@@ -1455,6 +1455,24 @@ Return ONLY valid JSON."""
                 f"{len(anomalies or [])} confirmed evidence flag(s) across "
                 f"{_canon[case_type_hint]} case type.")
 
+    # Human-in-the-loop gate (structural, path-independent): a tactical plan is
+    # decision-support only and may NEVER ship without the human-review marker.
+    # The deterministic fallback stamps its own actions, but a successful LLM
+    # plan used to skip this entirely — so enforce it HERE, after assembly, the
+    # single point every path flows through. Existing (more specific) markers
+    # from the fallback are preserved; only missing ones are filled.
+    result["human_review_required"] = True
+    result["autonomous"] = False
+    for _act in (result.get("actions") or []):
+        if isinstance(_act, dict):
+            if not str(_act.get("human_review") or "").strip():
+                _act["human_review"] = (
+                    "REQUIRED — decision-support only. A designated human officer "
+                    "must review and authorise this action before any execution; "
+                    "no step may proceed autonomously."
+                )
+            _act["human_review_required"] = True
+
     # Statute-era gate: no §18 action may cite the old era or mix eras,
     # whichever path (LLM or fallback) produced it.
     _era_gate_items(result.get("actions") or [])
