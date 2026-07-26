@@ -30,7 +30,8 @@ are never perturbed by this layer.
 import re
 import datetime
 
-from modules.sanitizer import normalize_name_key, safe_list, safe_str
+from modules.sanitizer import (normalize_name_key, parse_iso_date_strict,
+                               safe_list, safe_str)
 
 _ISO_DATE_RE = re.compile(r"\b(\d{4}-\d{2}-\d{2})\b")
 
@@ -58,10 +59,8 @@ def _hdr_tokens(col) -> set:
 
 
 def _parse_date(s):
-    try:
-        return datetime.date.fromisoformat(str(s).strip()[:10])
-    except Exception:
-        return None
+    """Strict ISO-only parse. Thin delegate to the shared never-guess parser."""
+    return parse_iso_date_strict(s)
 
 
 def _parse_amount(num: str, unit: str) -> float:

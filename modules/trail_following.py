@@ -35,9 +35,9 @@ is cited.
 """
 
 import re
-import datetime
 
-from modules.sanitizer import normalize_name_key, safe_list, safe_str
+from modules.sanitizer import (normalize_name_key, parse_iso_date_strict,
+                               safe_list, safe_str)
 
 _AMOUNT_MIN_FRAC = 0.50
 _AMOUNT_MAX_FRAC = 1.15
@@ -53,10 +53,8 @@ def _hdr_tokens(col) -> set:
 
 
 def _parse_date(s):
-    try:
-        return datetime.date.fromisoformat(str(s).strip()[:10])
-    except Exception:
-        return None
+    """Strict ISO-only parse. Thin delegate to the shared never-guess parser."""
+    return parse_iso_date_strict(s)
 
 
 _DIR_IN_TOKENS = {"in", "inflow", "credit", "cr", "inward", "received",

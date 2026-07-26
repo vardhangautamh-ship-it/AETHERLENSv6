@@ -124,15 +124,6 @@ def _event_date_fields(dt: datetime, precision: str) -> dict:
     }
 
 
-def _parse_date(raw: str) -> datetime | None:
-    """Try to parse a raw date string into a datetime object.
-
-    Backward-compatible wrapper: callers that need to render a date must use
-    _parse_date_precision and respect the returned precision.
-    """
-    return _parse_date_precision(raw)[0]
-
-
 _MONETARY_CONTEXT_RE = re.compile(
     r"(?:inr|rs\.?|rupees?|usd|\$|eur|aed|sgd|fine|amount|penalty|fee|charge|paid|balance|due|total)"
     r"\s*[\d,]*",

@@ -3,6 +3,7 @@ AetherLens — Universal Input Sanitizer & Defensive Decorator
 Imported by every module. Makes every input safe before processing.
 """
 
+import datetime
 import functools
 import traceback
 import logging
@@ -190,6 +191,22 @@ def phone_key(val, min_digits: int = 10) -> str | None:
     if len(digits) < min_digits:
         return None
     return digits[-10:]
+
+
+def parse_iso_date_strict(s) -> datetime.date | None:
+    """Strict never-guess date parse: first 10 chars must satisfy
+    date.fromisoformat, else None. No format guessing, no fuzzy matching,
+    no year imputation — a date this cannot read is treated as absent.
+
+    Single source of truth for the strict parser shared by the accusation
+    modules (contradiction_hunt, trail_following), where a guessed date could
+    fabricate a finding. Lenient parsing (multi-format, precision-tracked)
+    lives in timeline._parse_date_precision and must not replace this.
+    """
+    try:
+        return datetime.date.fromisoformat(str(s).strip()[:10])
+    except Exception:
+        return None
 
 
 def safe_confidence(val, min_val: int = 0, max_val: int = 100) -> int:

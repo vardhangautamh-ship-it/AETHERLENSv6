@@ -29,7 +29,7 @@ subject-name / file-name branches.
 import statistics
 from datetime import date, datetime
 
-from modules.sanitizer import normalize_name_key
+from modules.sanitizer import normalize_name_key, parse_iso_date_strict
 
 # Verbatim on every result. Do not shorten.
 PREDICTION_NOTICE = (
@@ -61,10 +61,9 @@ def _parse_date(s):
     txt = str(s or "").strip()
     if not txt:
         return None
-    try:
-        return date.fromisoformat(txt[:10])
-    except ValueError:
-        pass
+    iso = parse_iso_date_strict(txt)
+    if iso is not None:
+        return iso
     for fmt in _DATE_FORMATS:
         try:
             return datetime.strptime(txt, fmt).date()
