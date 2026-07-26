@@ -2829,6 +2829,53 @@ def _log_report(user_id: str, subject: str, pdf_path: str, gemini_used: bool):
     "pdf_filename": "",
     "gemini_used": False,
 })
+
+
+def build_typed_ontology(person, graph_data=None, timeline_data=None,
+                         behavioral_data=None, raw_documents=None,
+                         assets_data=None):
+    """SINGLE deterministic build path for the typed Ontology consumed by the
+    pattern engine, the report §09 sections, and any mode-level lens (Fusion,
+    Evidence Chain). Assembles the deterministic flag stream + per-file cited
+    records/texts exactly as the report pipeline does, then calls build_ontology.
+
+    This is the one place the typed ontology is assembled: report generation and
+    the shared case pipeline (modules/case_pipeline) both call it, so no mode can
+    drift from another. No LLM, no new extraction — pure projection of pipeline
+    artifacts already produced upstream."""
+    from modules.ontology import build_ontology
+    # Deterministic flag stream only (never the §09 display section, which may
+    # carry the behavioral LLM's own flags). No AI text can satisfy a trigger.
+    _pa_flags = _assemble_anomaly_flags(
+        person, timeline_data or {},
+        (behavioral_data or {}).get("assessment", {}) or {},
+        raw_documents, deterministic_only=True)
+    # Flatten structured rows per document; each row keeps its origin file under
+    # the reserved _source_file key so typed Transactions stay per-file cited.
+    _pa_records = [
+        {**r, "_source_file": str(_d.get("filename") or _d.get("name") or "")}
+        for _d in (raw_documents or [])
+        for r in (_d.get("structured_rows") or []) if isinstance(r, dict)]
+    # Raw narrative text (case notes, surveillance logs) — names/enforcement
+    # references live here, not in the structured rows.
+    _pa_texts = [str(_d.get("raw_text") or _d.get("full_text") or _d.get("text") or "")
+                 for _d in (raw_documents or [])]
+    return build_ontology(
+        person=person,
+        entities=(graph_data or {}).get("entities", []),
+        flags=_pa_flags,
+        timeline=timeline_data,
+        graph=(graph_data or {}).get("graph"),
+        # Owner-annotated inventory when anchor identities exist, so each
+        # PhoneNumber knows whose line it is; plain list otherwise.
+        phones=person.get("case_phones") or person.get("phones_found", []),
+        financial_data=assets_data,
+        records=_pa_records,
+        texts=_pa_texts,
+        documents=raw_documents,
+    )
+
+
 def generate_report(
     person:          dict,
     search_results:  dict  = None,
@@ -3160,42 +3207,10 @@ def _generate_report_inner(
         # never from the §09 display section (which may carry the behavioral
         # LLM's own flags, or be Gemini-drafted on that report path). No AI
         # text can satisfy a deterministic pattern trigger.
-        _pa_flags = _assemble_anomaly_flags(
-            person, timeline_data or {},
-            (behavioral_data or {}).get("assessment", {}) or {},
-            raw_documents, deterministic_only=True)
-        _s9_flags = list(sections.get("anomalies_and_flags", {}).get("flags", []) or [])
-        _excluded = len(_s9_flags) - len(_pa_flags)
-        if _excluded > 0:
-            print(f"[REPORT] §09B pattern input: {_excluded} non-deterministic "
-                  f"flag(s) excluded from the deterministic stream.")
-        # Flatten structured source rows from every document so dated deletion/
-        # legal/comm events keep their dates (HOP 3). Empty for OSINT (no docs).
-        # Each row copy carries its origin file under the reserved _source_file
-        # key so typed Transactions stay per-file cited (cross-case mining and
-        # §09B supporting_sources read Transaction.source).
-        _pa_records = [
-            {**r, "_source_file": str(_d.get("filename") or _d.get("name") or "")}
-            for _d in (raw_documents or [])
-            for r in (_d.get("structured_rows") or []) if isinstance(r, dict)]
-        # Raw narrative text (case notes, surveillance logs) — app names and
-        # enforcement references live here, not in the structured rows.
-        _pa_texts = [str(_d.get("raw_text") or _d.get("full_text") or _d.get("text") or "")
-                     for _d in (raw_documents or [])]
-        _onto = build_ontology(
-            person=person,
-            entities=(graph_data or {}).get("entities", []),
-            flags=_pa_flags,
-            timeline=timeline_data,
-            graph=(graph_data or {}).get("graph"),
-            # Owner-annotated inventory when anchor identities exist, so each
-            # PhoneNumber knows whose line it is; plain list otherwise.
-            phones=person.get("case_phones") or person.get("phones_found", []),
-            financial_data=assets_data,
-            records=_pa_records,
-            texts=_pa_texts,
-            documents=raw_documents,
-        )
+        _onto = build_typed_ontology(
+            person, graph_data=graph_data, timeline_data=timeline_data,
+            behavioral_data=behavioral_data, raw_documents=raw_documents,
+            assets_data=assets_data)
         _pa_result = analyze_ontology(_onto)
         sections["pattern_analysis"] = _build_pattern_analysis_section(_pa_result)
         print(f"[REPORT] Pattern analysis: "
