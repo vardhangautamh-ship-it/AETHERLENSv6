@@ -333,11 +333,6 @@ def get_or_create_node(G: nx.DiGraph, name: str, node_type: str = "person") -> s
     return clean_name
 
 
-def normalize_name(name: str) -> str:
-    """Normalise a name/label for deduplication comparison."""
-    return str(name).strip().lower().replace("  ", " ")
-
-
 def build_graph(entities: list[dict], relationships: list[dict]) -> nx.DiGraph:
     """
     Build a directed weighted graph.
@@ -372,15 +367,20 @@ def build_graph(entities: list[dict], relationships: list[dict]) -> nx.DiGraph:
         e["_resolved_id"]    = node_id
 
     def _resolve(raw: str) -> str:
-        """Resolve a raw relationship endpoint to its canonical node_id."""
+        """Resolve a raw relationship endpoint to its canonical node_id.
+
+        NO-FABRICATION GUARDRAIL: an endpoint that was never declared in the
+        entities list has no source record, so it may NOT be materialized as a
+        node. Previously this fell back to get_or_create_node(..., "unknown"),
+        which asserted a full-weight edge to an invented "unknown" node. Now
+        the edge is dropped (returns ""), and the drop is logged for audit.
+        """
         if not raw:
             return raw
         if raw in id_to_node:
             return id_to_node[raw]
-        # Last resort: get_or_create (creates a new node for unknown entities)
-        node_id = get_or_create_node(G, raw, "unknown")
-        id_to_node[raw] = node_id
-        return node_id
+        print(f"[GRAPH] Dropping edge endpoint with no source entity: {repr(str(raw)[:50])}")
+        return ""
 
     for r in relationships:
         src_raw = r.get("source", "")
@@ -460,34 +460,14 @@ def build_graph_from_person(person: dict, search_results: dict) -> tuple[nx.DiGr
                 "detail": f"Location stated: {loc}",
             })
 
-    # Co-appearances from web mentions and news
-    all_mentions = (
-        person.get("web_mentions", []) +
-        person.get("news_appearances", [])
-    )
-    co_appear_count = {}
-    for mention in all_mentions:
-        if " — " in mention:
-            title = mention.split(" — ")[0]
-            words = title.split()
-            # Look for capitalized word pairs (potential co-appearing entities)
-            for i in range(len(words) - 1):
-                if (words[i][0].isupper() if words[i] else False) and \
-                   (words[i+1][0].isupper() if words[i+1] else False):
-                    pair = f"{words[i]} {words[i+1]}"
-                    if pair.lower() != subject_label.lower() and len(pair) > 4:
-                        co_appear_count[pair] = co_appear_count.get(pair, 0) + 1
-
-    for entity_name, count in list(co_appear_count.items())[:8]:
-        co_id = f"co:{entity_name}"
-        add_node(co_id, entity_name, "entity")
-        relationships.append({
-            "source": subject_id,
-            "target": co_id,
-            "type":   "co_appears",
-            "weight": count,
-            "detail": f"Co-appears in {count} source(s)",
-        })
+    # NO-FABRICATION GUARDRAIL: co-appearance mining from mention titles was
+    # removed here. It invented "entities" from any two adjacent capitalized
+    # words in a headline ("Annual Tech", "Summit Keynote") and asserted them
+    # as co_appears edges with no source record — fabrication reaching the
+    # network view. A person/entity may only enter the graph from a real
+    # extracted entity that carries a source record (person fields above, or
+    # extract_relationships_from_structured_rows). Raw web/news mentions stay
+    # available as uninterpreted text in the person object for §03/§07 display.
 
     G = build_graph(entities, relationships)
     return G, entities, relationships
