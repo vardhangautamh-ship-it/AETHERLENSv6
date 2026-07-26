@@ -50,10 +50,6 @@ def _gap(gtype: str, kind: str, finding: str, why: str, sources: list) -> dict:
     }
 
 
-def _norm(v) -> str:
-    return " ".join(str(v or "").split()).lower()
-
-
 def _person_shaped_fragments(text: str) -> list:
     """Person-shaped fragments inside free text, validated with the same
     stopword machinery the extractor uses. Citation pointers only."""
@@ -217,7 +213,7 @@ def detect_structural_gaps(person: dict, onto, raw_documents: list) -> list:
                 toks = _hdr_tokens(col)
                 if not (toks & {"call", "direction"} and toks & {"type", "direction"}):
                     continue
-                v = _norm(val)
+                v = normalize_name_key(val)
                 if v in ("in", "incoming", "inbound", "received"):
                     _dir_vals["in"] += 1
                     _dir_files.add(fname)
@@ -290,7 +286,7 @@ def detect_structural_gaps(person: dict, onto, raw_documents: list) -> list:
         cp = " ".join(safe_str(getattr(t, "counterparty", "")).split())
         if not cp:
             continue
-        cpn = cp.lower()
+        cpn = normalize_name_key(cp)
         if cpn in _GENERIC_TOKENS:
             continue
         ent = receivers.setdefault(cpn, {"display": cp, "n": 0, "total": 0.0,
@@ -300,7 +296,7 @@ def detect_structural_gaps(person: dict, onto, raw_documents: list) -> list:
         src = safe_str(getattr(t, "source", ""))
         if src:
             ent["files"].add(src)
-    in_side: set = {_norm(getattr(t, "counterparty", "")) for t in ins}
+    in_side: set = {normalize_name_key(getattr(t, "counterparty", "")) for t in ins}
     # "Receiving-side records" means the entity HOLDS something on financial
     # rows (account holder / payer). Two non-evidence appearances must not
     # silence a cold trail: a ROC registration row is not money movement, and
@@ -312,7 +308,7 @@ def detect_structural_gaps(person: dict, onto, raw_documents: list) -> list:
     for fname, row in fin_rows:
         for col, val in row.items():
             if _is_name_column(col) and not (_hdr_tokens(col) & _RECEIVER_LABEL_TOKENS):
-                holder_side.add(_norm(val))
+                holder_side.add(normalize_name_key(val))
     for cpn in sorted(receivers):
         ent = receivers[cpn]
         if ent["n"] < 2 and ent["total"] < 500000:

@@ -52,10 +52,6 @@ def _hdr_tokens(col) -> set:
     return {t for t in re.split(r"[^a-z0-9]+", str(col).lower().strip()) if t}
 
 
-def _norm(v) -> str:
-    return " ".join(str(v or "").split()).lower()
-
-
 def _parse_date(s):
     try:
         return datetime.date.fromisoformat(str(s).strip()[:10])
@@ -140,9 +136,9 @@ def extract_flow_edges(person: dict, raw_documents: list) -> list:
                 continue
             src, dst = (holder, cp) if direction == "out" else (cp, holder)
             src, dst = canon(src), canon(dst)
-            if _norm(src) == _norm(dst):
+            if normalize_name_key(src) == normalize_name_key(dst):
                 continue
-            key = (_norm(src), _norm(dst), date.isoformat(), round(amount, 2))
+            key = (normalize_name_key(src), normalize_name_key(dst), date.isoformat(), round(amount, 2))
             if key in seen:
                 # same transfer seen from both sides (payer + payee statements)
                 for e in edges:
@@ -152,8 +148,8 @@ def extract_flow_edges(person: dict, raw_documents: list) -> list:
             seen.add(key)
             edges.append({"key": key, "src": src, "dst": dst, "amount": amount,
                           "date": date, "sources": [fname] if fname else []})
-    edges.sort(key=lambda e: (e["date"], -e["amount"], _norm(e["src"]),
-                              _norm(e["dst"])))
+    edges.sort(key=lambda e: (e["date"], -e["amount"], normalize_name_key(e["src"]),
+                              normalize_name_key(e["dst"])))
     return edges
 
 
@@ -163,7 +159,7 @@ def extract_obscured_legs(person: dict, raw_documents: list) -> list:
     marked obscured; the missing party is NEVER inferred, and these legs are
     never traversed as graph edges (an unknown cannot be followed)."""
     canon = _canonicaliser(person)
-    subj_norm = _norm(canon(safe_str(person.get("confirmed_name", ""))))
+    subj_norm = normalize_name_key(canon(safe_str(person.get("confirmed_name", ""))))
     legs = []
     for d in (raw_documents or []):
         if not isinstance(d, dict):
@@ -196,7 +192,7 @@ def extract_obscured_legs(person: dict, raw_documents: list) -> list:
             if cp or not holder or amount <= 0 or date is None \
                     or direction not in ("in", "out"):
                 continue
-            if _norm(canon(holder)) != subj_norm:
+            if normalize_name_key(canon(holder)) != subj_norm:
                 continue   # partial mode reconstructs the SUBJECT'S side only
             legs.append({"direction": direction, "amount": amount,
                          "date": date, "sources": [fname] if fname else [],
@@ -228,10 +224,10 @@ def follow_trails(person: dict, onto, raw_documents: list) -> list:
     if not edges and not obscured:
         return []
     subject = safe_str(person.get("confirmed_name", ""))
-    subj_norm = _norm(subject)
+    subj_norm = normalize_name_key(subject)
     out_of: dict = {}
     for e in edges:
-        out_of.setdefault(_norm(e["src"]), []).append(e)
+        out_of.setdefault(normalize_name_key(e["src"]), []).append(e)
 
     findings: list = []
     broken_terminals: list = []   # (terminal edge, path) for re-entry check
@@ -239,7 +235,7 @@ def follow_trails(person: dict, onto, raw_documents: list) -> list:
 
     def dfs(path):
         last = path[-1]
-        node = _norm(last["dst"])
+        node = normalize_name_key(last["dst"])
         if len(path) >= _MAX_DEPTH:
             return
         nxts = [e for e in out_of.get(node, []) if _continues(last, e)]
@@ -253,7 +249,7 @@ def follow_trails(person: dict, onto, raw_documents: list) -> list:
             if e["key"] in {p["key"] for p in path}:
                 continue
             newp = path + [e]
-            if _norm(e["dst"]) == subj_norm:
+            if normalize_name_key(e["dst"]) == subj_norm:
                 key = tuple(p["key"] for p in newp)
                 if key not in seen_paths:
                     seen_paths.add(key)
@@ -284,9 +280,9 @@ def follow_trails(person: dict, onto, raw_documents: list) -> list:
     for last, path in sorted(broken_terminals,
                              key=lambda bp: -bp[1][0]["amount"])[:2]:
         node = last["dst"]
-        if _norm(node) in reported_breaks:
+        if normalize_name_key(node) in reported_breaks:
             continue
-        reported_breaks.add(_norm(node))
+        reported_breaks.add(normalize_name_key(node))
         hops = "; ".join(_hop_str(p) for p in path)
         findings.append({
             "type": "BROKEN_TRAIL",
@@ -304,12 +300,12 @@ def follow_trails(person: dict, onto, raw_documents: list) -> list:
         # unlinked re-entry: a later inflow to origin that WOULD complete the
         # loop — reported as consistent-with, explicitly NOT asserted.
         for e in edges:
-            if _norm(e["dst"]) != subj_norm or e["date"] <= last["date"]:
+            if normalize_name_key(e["dst"]) != subj_norm or e["date"] <= last["date"]:
                 continue
             if not (_AMOUNT_MIN_FRAC * last["amount"] <= e["amount"]
                     <= _AMOUNT_MAX_FRAC * last["amount"]):
                 continue
-            payer_has_inflow = any(_norm(x["dst"]) == _norm(e["src"])
+            payer_has_inflow = any(normalize_name_key(x["dst"]) == normalize_name_key(e["src"])
                                    for x in edges)
             if payer_has_inflow:
                 continue
@@ -415,11 +411,11 @@ def follow_trails(person: dict, onto, raw_documents: list) -> list:
     if not any(f["type"] == "CIRCULAR_FLOW" for f in findings):
         subj_legs = []
         for e in edges:
-            if _norm(e["src"]) == subj_norm:
+            if normalize_name_key(e["src"]) == subj_norm:
                 subj_legs.append((e["date"], f"OUT ₹{e['amount']:,.0f} to "
                                  f"'{e['dst']}' on {e['date'].isoformat()} "
                                  f"({', '.join(e['sources'])})"))
-            elif _norm(e["dst"]) == subj_norm:
+            elif normalize_name_key(e["dst"]) == subj_norm:
                 subj_legs.append((e["date"], f"IN ₹{e['amount']:,.0f} from "
                                  f"'{e['src']}' on {e['date'].isoformat()} "
                                  f"({', '.join(e['sources'])})"))

@@ -53,10 +53,6 @@ _INCOME_RE = re.compile(
     re.IGNORECASE)
 
 
-def _norm(v) -> str:
-    return " ".join(str(v or "").split()).lower()
-
-
 def _hdr_tokens(col) -> set:
     return {t for t in re.split(r"[^a-z0-9]+", str(col).lower().strip()) if t}
 
@@ -398,7 +394,7 @@ def hunt_contradictions(person: dict, onto, raw_documents: list,
         # only documents that are ABOUT the subject may assert subject fields
         is_subject_doc = (
             normalize_name_key(safe_str(d.get("primary_subject"))) in subj_keys
-            or any(k and k in _norm(text) for k in subj_keys))
+            or any(k and k in normalize_name_key(text) for k in subj_keys))
         if not is_subject_doc:
             continue
         for m in _FIELD_LABEL_RE.finditer(text):
@@ -447,9 +443,9 @@ def hunt_contradictions(person: dict, onto, raw_documents: list,
                     if dt:
                         inc_dt = dt
             if org_val and inc_dt:
-                inc_dates.setdefault(_norm(org_val), (inc_dt, org_val, fname))
+                inc_dates.setdefault(normalize_name_key(org_val), (inc_dt, org_val, fname))
     for t in txns:
-        cp = _norm(getattr(t, "counterparty", ""))
+        cp = normalize_name_key(getattr(t, "counterparty", ""))
         if cp not in inc_dates:
             continue
         tdt = _parse_date(safe_str(getattr(t, "date", "")))

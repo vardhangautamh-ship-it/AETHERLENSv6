@@ -19,10 +19,6 @@ never altered here.
 from modules.sanitizer import normalize_name_key, safe_list, safe_str
 
 
-def _norm(v) -> str:
-    return " ".join(str(v or "").split()).lower()
-
-
 def _header_tokens(col) -> set:
     import re
     return {t for t in re.split(r"[^a-z0-9]+", str(col).lower().strip()) if t}
@@ -86,7 +82,7 @@ def ownership_predicates(person: dict, onto, raw_documents: list) -> list:
     forms = _subject_form_keys(person)
     org_by_norm = {}
     for o in orgs:
-        nm = _norm(getattr(o, "name", ""))
+        nm = normalize_name_key(getattr(o, "name", ""))
         if nm:
             org_by_norm.setdefault(nm, o)
 
@@ -102,7 +98,7 @@ def ownership_predicates(person: dict, onto, raw_documents: list) -> list:
                 for c, v in row.items())
             if not subj_in_control:
                 continue
-            row_vals = {_norm(v) for v in row.values()}
+            row_vals = {normalize_name_key(v) for v in row.values()}
             for on in org_by_norm:
                 if on in row_vals:
                     h = hits.setdefault(on, {"rows": 0, "files": set()})
@@ -240,9 +236,9 @@ def annotate_conclusions(sections: dict, person: dict, onto,
         srcs = [safe_str(s) for s in (p.get("sources") or []) if safe_str(s)]
         ev_conf = 88 if len(set(srcs)) >= 2 else (68 if srcs else 50)
         chain_preds = [pid, {"id": "P-EVIDENCE", "confidence": ev_conf}]
-        blob = _norm(f"{p.get('explanation', '')} {' '.join(p.get('triggers') or [])}")
+        blob = normalize_name_key(f"{p.get('explanation', '')} {' '.join(p.get('triggers') or [])}")
         for op in own_preds:
-            oname = _norm(op["id"].split(":", 1)[-1])
+            oname = normalize_name_key(op["id"].split(":", 1)[-1])
             if oname and oname in blob:
                 chain_preds.append(op)
         weakest = min(chain_preds, key=lambda x: x["confidence"])

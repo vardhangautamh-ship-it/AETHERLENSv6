@@ -29,6 +29,8 @@ subject-name / file-name branches.
 import statistics
 from datetime import date, datetime
 
+from modules.sanitizer import normalize_name_key
+
 # Verbatim on every result. Do not shorten.
 PREDICTION_NOTICE = (
     "SPECULATIVE — FOR HUMAN REVIEW ONLY: each item below extrapolates a "
@@ -51,10 +53,6 @@ def _get(obj, key, default=None):
     if isinstance(obj, dict):
         return obj.get(key, default)
     return getattr(obj, key, default)
-
-
-def _norm(s) -> str:
-    return " ".join(str(s or "").strip().lower().split())
 
 
 def _parse_date(s):
@@ -83,10 +81,10 @@ def _transaction_series(onto) -> dict:
     series: dict = {}
     for t in (_get(onto, "transactions") or []):
         cp_raw = str(_get(t, "counterparty", "") or "").strip()
-        cp = _norm(cp_raw)
+        cp = normalize_name_key(cp_raw)
         if not cp:
             continue
-        direction = _norm(_get(t, "direction", "")) or "transfer"
+        direction = normalize_name_key(_get(t, "direction", "")) or "transfer"
         cross = bool(_get(t, "cross_border", False))
         key = (direction, cross, cp)
         label = (f"{direction} {'cross-border ' if cross else ''}"
