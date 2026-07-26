@@ -35,15 +35,18 @@ jupiter = {
         "VPN usage detected", "Night-time burst activity",
         "HAWALA transfer flagged", "Malicious deployment detected",
     ],
+    "assets_data": [
+        {"type": "property", "detail": "Flat 1404, Marine Heights, Mumbai",
+         "source": "registry"},
+    ],
 }
 r = run_risk_agent(jupiter, user_id="test")
 score = r.get("risk_score", -1)
 level = r.get("risk_level", "")
 print(f"  Jupiter case:  score={score}/100  level={level}")
-# With 7 sources * 7 = 49, 11 anomalies * 9 = 99 → capped at 100
-# But sources=7 > 4 so no -12 penalty; entity_count depends on size
-# Actual math: 7*7 + 11*9 = 49+99=148 → capped at 100 ... still 100
-# Let's just verify the cap and that it's CRITICAL
+# Saturating formula: 11 anomalies → 3*3 + 3*6 + 5*1.5 = 34.5,
+# 7 sources → 6*6 + 1*2 = 38, assets → +10 = 82.5 → 82, CRITICAL (>= 75).
+# A heavy case needs corroborated assets to cross CRITICAL; flags alone cap at HIGH.
 check("score <= 100", score <= 100)
 check("score >= 0",   score >= 0)
 check("level = CRITICAL for heavy case", level == "CRITICAL")
