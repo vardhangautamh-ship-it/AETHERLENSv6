@@ -1,0 +1,66 @@
+[
+  {
+    "attack": "SPECULATION-AS-FINDING — predictions labelled speculative, never finding-weight",
+    "expected": "Every projection carries speculative=True, determinative=False, confidence=WEAK and a SPECULATIVE suggestion; the result carries autonomous=False + human_review_required + PREDICTION_NOTICE; NO output bears a [VERIFIED DATA]/[DETERMINISTIC ANALYSIS] tag.",
+    "actual": "per-pred labelling=True; result markers=True; no finding-weight tag=True; render banner=True; predictions=1.",
+    "passed": true,
+    "cause": "",
+    "observation": ""
+  },
+  {
+    "attack": "FABRICATED FORWARD-INFERENCE — no invented future event/association/escalation",
+    "expected": "Projects exactly one median interval from the observed series (2024-02-12); every citation is a real input occurrence; the lone single-occurrence counterparty is refused (not_built), not invented; no escalation/certainty language; empty evidence invents nothing.",
+    "actual": "one_series=True; projected=2024-02-12 (expected 2024-02-12) ok=True; citations_all_real=True; label_grounded=True; ghost_refused=True; hedged=True; no_escalation=True; empty_invents_nothing=True.",
+    "passed": true,
+    "cause": "",
+    "observation": ""
+  },
+  {
+    "attack": "IDENTITY-BASED PREDICTION — identical evidence, identical prediction",
+    "expected": "Two subjects with identical transaction evidence but different nationality/religion/ethnicity/origin yield IDENTICAL predictions; a subject whose only 'signal' is identity + one foreign txn yields NO prediction.",
+    "actual": "identity-matched predictions identical=True; identity-alone produced 0 prediction(s) (expected 0) → silent=True.",
+    "passed": true,
+    "cause": "",
+    "observation": ""
+  },
+  {
+    "attack": "DETERMINISTIC-FIRST — prediction is deterministic; LLM is terminal-only",
+    "expected": "Same input → identical structured prediction; neither Phase-4 module imports or calls an LLM. (Recon: app.py:5581/5593 pass the structured result straight to the pure render_* fn — the LLM never sees or alters it; narration is strictly terminal.)",
+    "actual": "predict determinism=True; predictive.py LLM-free=True; advanced_intel.py LLM-free=True.",
+    "passed": true,
+    "cause": "",
+    "observation": "Wiring verified by recon, not re-executed here: the app renders the pure dict; no narration path mutates it."
+  },
+  {
+    "attack": "NETWORK-DISMANTLING — suggestions stay human-review recommendations",
+    "expected": "autonomous=False + human_review_required=True + guilt=False + notice on every result; every suggestion hedged 'for officer consideration / not a directive / not a finding of guilt'; nodes ⊆ input subjects (no fabrication); cut-vertex ranked first; solo/empty invent nothing.",
+    "actual": "markers=True; hedged=True; no_operational_directive=True; no_fabricated_nodes=True; cut_vertex_first=True; solo_invents_nothing=True; empty_ok=True.",
+    "passed": true,
+    "cause": "",
+    "observation": "FRAMING NOTE for triage: the module/notice/header use the word 'DISMANTLING' and node rationales say 'removal would fragment its cluster'. Every item is hedged and all autonomy markers hold, but the action-oriented vocabulary ('dismantling', 'removal', '***') reads more directive-adjacent than the rest of the system — a skeptical evaluator will notice it."
+  },
+  {
+    "attack": "IDENTITY-BLINDNESS (advanced_intel) — ranking ignores identity keys",
+    "expected": "Identity attributes attached to links are ignored: the structural ranking (degrees, articulation points, betweenness, order) is identical with or without them.",
+    "actual": "ranking identical with identity keys added=True.",
+    "passed": true,
+    "cause": "",
+    "observation": ""
+  },
+  {
+    "attack": "ESCALATION HONESTY — thin evidence degrades; confidence capped at WEAK",
+    "expected": "Thin (<3), zero-interval, and undated/garbage series produce NO prediction and state the reason in not_built; confidence never exceeds WEAK; and the irregular-cadence caveat DOES fire on a 4-occurrence dispersed series (intervals [2,2,148]).",
+    "actual": "thin_refused=True; zero_interval_refused=True; garbage_refused=True; confidence_never_above_WEAK=True; irregular_guard_fires_at_4+_occurrences=True.",
+    "passed": true,
+    "cause": "",
+    "observation": ""
+  },
+  {
+    "attack": "ESCALATION HONESTY (blind spot) — dispersed 3-occurrence cadence is never flagged irregular",
+    "expected": "A 3-occurrence series with intervals [2 days, 150 days] has no real rhythm; the irregular-cadence caveat ('rough extrapolation') should fire so the projected date is not read as a genuine cadence.",
+    "actual": "irregular_cadence flag=False; 'rough extrapolation' caveat present=False; still emits specific projected date=2024-08-16 on a claimed ~76-day median cadence.",
+    "passed": false,
+    "cause": "predictive._project_series computes irregular = max(intervals) > 3*median(intervals). For any 3-occurrence series there are exactly 2 intervals, so median = (a+b)/2 and the condition 3a+b < 0 is unsatisfiable for positive intervals — PROVEN 0/200000 by brute force. The minimum groundable series therefore NEVER receives the irregular-cadence honesty caveat, however dispersed; the guard only becomes reachable at 4+ occurrences. Global SPECULATIVE/WEAK labelling still rides on the output, so it is not presented as finding-weight — but the per-item honesty signal that distinguishes a real cadence from noise is silently absent exactly at the sparsest, most fragile case.",
+    "observation": ""
+  }
+]

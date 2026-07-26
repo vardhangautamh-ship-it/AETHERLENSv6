@@ -1,0 +1,69 @@
+[
+  {
+    "transactions": [
+      {
+        "counterparty": "Trade House",
+        "date": "2024-01-01",
+        "amount": "10000",
+        "direction": "outbound",
+        "cross_border": false,
+        "source": "ledger.csv"
+      },
+      {
+        "counterparty": "Trade House",
+        "date": "2024-02-01",
+        "amount": "10000",
+        "direction": "outbound",
+        "cross_border": false,
+        "source": "ledger.csv"
+      },
+      {
+        "counterparty": "Trade House",
+        "date": "2024-03-01",
+        "amount": "10000",
+        "direction": "outbound",
+        "cross_border": false,
+        "source": "ledger.csv"
+      }
+    ]
+  },
+  {
+    "transactions": [
+      {
+        "counterparty": "Trade House",
+        "date": "2024-01-01",
+        "amount": "10000",
+        "direction": "outbound",
+        "cross_border": false,
+        "source": "ledger.csv"
+      },
+      {
+        "counterparty": "Trade House",
+        "date": "2024-02-01",
+        "amount": "10000",
+        "direction": "outbound",
+        "cross_border": false,
+        "source": "ledger.csv"
+      },
+      {
+        "counterparty": "Trade House",
+        "date": "2024-03-01",
+        "amount": "10000",
+        "direction": "outbound",
+        "cross_border": false,
+        "source": "ledger.csv"
+      }
+    ],
+    "subject_nationality": "Bangladeshi",
+    "religion": "Muslim",
+    "ethnicity": "Bengali",
+    "origin": "Dhaka",
+    "flags": [
+      "foreign national",
+      "border district resident"
+    ],
+    "names": [
+      "Abdul Rahman"
+    ]
+  }
+]

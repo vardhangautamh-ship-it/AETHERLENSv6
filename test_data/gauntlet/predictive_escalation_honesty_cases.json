@@ -1,0 +1,15 @@
+{
+  "thin": [
+    "outbound transfer to X Co: only 2 dated occurrence(s) — need >= 3 to ground a recurrence without speculation"
+  ],
+  "zero_iv": [
+    "outbound transfer to Y Co: 3 occurrences but no positive interval between them — cadence not groundable"
+  ],
+  "garbage": [
+    "outbound transfer to Z Co: only 0 dated occurrence(s) (+3 undated) — need >= 3 to ground a recurrence without speculation"
+  ],
+  "seven_occurrence_conf": [
+    "WEAK"
+  ],
+  "reachable_irregular_flag": true
+}

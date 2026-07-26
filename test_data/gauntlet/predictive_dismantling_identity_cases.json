@@ -1,0 +1,98 @@
+{
+  "plain": [
+    {
+      "type": "shared_phone",
+      "value": "+91-1",
+      "subjects": [
+        "Node One",
+        "Node Two"
+      ],
+      "citations": {
+        "Node One": [
+          {
+            "raw": "phone +91-98111-22334",
+            "source": "a.pdf"
+          }
+        ],
+        "Node Two": [
+          {
+            "raw": "phone +91-98111-22334",
+            "source": "b.pdf"
+          }
+        ]
+      }
+    },
+    {
+      "type": "shared_phone",
+      "value": "+91-2",
+      "subjects": [
+        "Node Two",
+        "Node Three"
+      ],
+      "citations": {
+        "Node Two": [
+          {
+            "raw": "phone +91-98111-22334",
+            "source": "a.pdf"
+          }
+        ],
+        "Node Three": [
+          {
+            "raw": "phone +91-98111-22334",
+            "source": "b.pdf"
+          }
+        ]
+      }
+    }
+  ],
+  "tagged": [
+    {
+      "type": "shared_phone",
+      "value": "+91-1",
+      "subjects": [
+        "Node One",
+        "Node Two"
+      ],
+      "citations": {
+        "Node One": [
+          {
+            "raw": "phone +91-98111-22334",
+            "source": "a.pdf"
+          }
+        ],
+        "Node Two": [
+          {
+            "raw": "phone +91-98111-22334",
+            "source": "b.pdf"
+          }
+        ]
+      },
+      "nationality": "Bangladeshi",
+      "religion": "Muslim"
+    },
+    {
+      "type": "shared_phone",
+      "value": "+91-2",
+      "subjects": [
+        "Node Two",
+        "Node Three"
+      ],
+      "citations": {
+        "Node Two": [
+          {
+            "raw": "phone +91-98111-22334",
+            "source": "a.pdf"
+          }
+        ],
+        "Node Three": [
+          {
+            "raw": "phone +91-98111-22334",
+            "source": "b.pdf"
+          }
+        ]
+      },
+      "nationality": "Indian",
+      "religion": "Hindu"
+    }
+  ]
+}

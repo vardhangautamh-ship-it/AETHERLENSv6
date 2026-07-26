@@ -1,0 +1,46 @@
+[
+  {
+    "type": "shared_phone",
+    "value": "+91-90000-00001",
+    "subjects": [
+      "Adil Khan",
+      "Bilal Rana"
+    ],
+    "citations": {
+      "Adil Khan": [
+        {
+          "raw": "phone +91-98111-22334",
+          "source": "a.pdf"
+        }
+      ],
+      "Bilal Rana": [
+        {
+          "raw": "phone +91-98111-22334",
+          "source": "b.pdf"
+        }
+      ]
+    }
+  },
+  {
+    "type": "shared_phone",
+    "value": "+91-90000-00002",
+    "subjects": [
+      "Bilal Rana",
+      "Chirag Sen"
+    ],
+    "citations": {
+      "Bilal Rana": [
+        {
+          "raw": "phone +91-98111-22334",
+          "source": "a.pdf"
+        }
+      ],
+      "Chirag Sen": [
+        {
+          "raw": "phone +91-98111-22334",
+          "source": "b.pdf"
+        }
+      ]
+    }
+  }
+]

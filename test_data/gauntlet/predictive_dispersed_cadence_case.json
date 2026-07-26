@@ -1,0 +1,33 @@
+{
+  "prediction": {
+    "label": "outbound transfer to Q Co",
+    "occurrences": 3,
+    "first_date": "2024-01-01",
+    "last_date": "2024-06-01",
+    "median_interval_days": 76,
+    "projected_next_date": "2024-08-16",
+    "irregular_cadence": false,
+    "confidence": "WEAK",
+    "speculative": true,
+    "determinative": false,
+    "basis": "3 cited occurrence(s) between 2024-01-01 and 2024-06-01 at a median interval of ~76 day(s)",
+    "citations": [
+      {
+        "date": "2024-01-01",
+        "raw": "outbound 10000 to Q Co",
+        "source": "ledger.csv"
+      },
+      {
+        "date": "2024-01-03",
+        "raw": "outbound 10000 to Q Co",
+        "source": "ledger.csv"
+      },
+      {
+        "date": "2024-06-01",
+        "raw": "outbound 10000 to Q Co",
+        "source": "ledger.csv"
+      }
+    ],
+    "suggestion": "SPECULATIVE (WEAK) — FOR HUMAN REVIEW: the demonstrated pattern 'outbound transfer to Q Co' recurred 3 time(s) through 2024-06-01; IF it continues on the same cadence it may recur around 2024-08-16. This is not a determination that it will occur."
+  }
+}

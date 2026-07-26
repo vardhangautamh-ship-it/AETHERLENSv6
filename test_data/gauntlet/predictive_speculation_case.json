@@ -1,0 +1,36 @@
+{
+  "transactions": [
+    {
+      "counterparty": "Rahim Traders",
+      "date": "2024-01-01",
+      "amount": "10000",
+      "direction": "outbound",
+      "cross_border": false,
+      "source": "ledger.csv"
+    },
+    {
+      "counterparty": "Rahim Traders",
+      "date": "2024-01-15",
+      "amount": "10000",
+      "direction": "outbound",
+      "cross_border": false,
+      "source": "ledger.csv"
+    },
+    {
+      "counterparty": "Rahim Traders",
+      "date": "2024-01-29",
+      "amount": "10000",
+      "direction": "outbound",
+      "cross_border": false,
+      "source": "ledger.csv"
+    },
+    {
+      "counterparty": "Rahim Traders",
+      "date": "2024-02-12",
+      "amount": "10000",
+      "direction": "outbound",
+      "cross_border": false,
+      "source": "ledger.csv"
+    }
+  ]
+}

@@ -1,0 +1,36 @@
+{
+  "transactions": [
+    {
+      "counterparty": "Meridian Exports",
+      "date": "2024-01-01",
+      "amount": "10000",
+      "direction": "outbound",
+      "cross_border": false,
+      "source": "ledger.csv"
+    },
+    {
+      "counterparty": "Meridian Exports",
+      "date": "2024-01-15",
+      "amount": "10000",
+      "direction": "outbound",
+      "cross_border": false,
+      "source": "ledger.csv"
+    },
+    {
+      "counterparty": "Meridian Exports",
+      "date": "2024-01-29",
+      "amount": "10000",
+      "direction": "outbound",
+      "cross_border": false,
+      "source": "ledger.csv"
+    },
+    {
+      "counterparty": "Ghost Counterparty",
+      "date": "2024-03-01",
+      "amount": "10000",
+      "direction": "outbound",
+      "cross_border": false,
+      "source": "ledger.csv"
+    }
+  ]
+}
