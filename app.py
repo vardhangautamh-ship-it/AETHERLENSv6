@@ -2694,6 +2694,27 @@ def screen_fusion():
     all_struct_rows      = bundle["all_struct_rows"]
     ingested_sr_combined = bundle["search_results"]
     total_entities       = len(merged_ents)
+
+    # ── Honest failure surface ────────────────────────────────────────────────
+    # If NOTHING ingested, say so loudly with the captured per-file errors —
+    # never render a fake "FUSED" over an empty result. Partial failures are
+    # surfaced as warnings but do not block the (non-empty) analysis.
+    _ingest_errors = bundle.get("errors") or []
+    if not all_results:
+        st.error("FUSION FAILED — none of the uploaded file(s) could be processed, "
+                 "so there is nothing to fuse. Nothing was analysed.")
+        for _e in _ingest_errors:
+            st.error(f"  · {_e.get('file', '?')}: {_e.get('error', 'unknown error')}")
+        if not _ingest_errors:
+            st.error("  · No per-file error was captured — check the deployment logs "
+                     "(Streamlit Cloud → Manage app) for a traceback.")
+        # Reset so the analyst can correct the input and retry cleanly.
+        st.session_state["fusion_stage"] = "idle"
+        st.session_state["fusion_analyse_triggered"] = False
+        return
+    for _e in _ingest_errors:
+        st.warning(f"{_e.get('file', '?')} was skipped: {_e.get('error', '')}", icon="⚠️")
+
     st.success(f"✓ {len(all_results)} document(s) ingested and fused")
 
     # (multi-doc entity resolution now performed inside build_case_ontology)

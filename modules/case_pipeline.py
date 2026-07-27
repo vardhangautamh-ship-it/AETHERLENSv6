@@ -136,14 +136,20 @@ def build_case_ontology(files, uid="case_pipeline", declared=True,
     primary_subject_name = ""
 
     total = len(files) or 1
+    errors = []            # per-file failures — SURFACED, never silently swallowed
     for i, sf in enumerate(files):
-        progress(int(5 + 55 * i / total), f"Processing {sf['name']}")
+        _fname = sf.get("name", "?") if isinstance(sf, dict) else "?"
+        progress(int(5 + 55 * i / total), f"Processing {_fname}")
         try:
             result, person, method, ents, rels, tl, behavioral_data, struct_rows, psubj = \
                 _process_one(sf["bytes"], sf["name"], uid, declared)
-        except Exception:
+        except Exception as _pfe:
+            import traceback
+            traceback.print_exc()
+            errors.append({"file": _fname, "error": f"{type(_pfe).__name__}: {_pfe}"})
             continue
         if result is None:
+            errors.append({"file": _fname, "error": "ingestion returned no usable result"})
             continue
         all_results.append(result)
         all_ents.extend(ents)
@@ -270,6 +276,7 @@ def build_case_ontology(files, uid="case_pipeline", declared=True,
         "behavioral_data":   behavioral_data,
         "rule_anomalies":    rule_anomalies,
         "raw_documents":     all_results,
+        "errors":            errors,
         "all_struct_rows":   all_struct_rows,
         "search_results":    ingested_sr_combined,
         "assets_data":       assets_data or [],
