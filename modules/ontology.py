@@ -2809,7 +2809,13 @@ def _pa_events_from_pairs(pairs) -> tuple:
     keyword over its text against the vocabularies above; a pair with no matching
     signal contributes nothing (never a fabricated date/event)."""
     dels, legals, chans, seen_chan = [], [], [], set()
-    for blob, rdate, exit_val in pairs:
+    for _pair in pairs:
+        blob, rdate, exit_val = _pair[0], _pair[1], _pair[2]
+        # Real origin threaded per pair (row _source_file / timeline event source /
+        # enclosing document for a text line). "record" is used ONLY when a pair
+        # genuinely carries no origin — never a guessed or back-filled filename.
+        # Backward-compatible: 3-tuple pairs (no source slot) fall back to "record".
+        _src = (str(_pair[3]) if len(_pair) > 3 and _pair[3] else "") or "record"
         if not blob:
             continue
         # A date whose year is a statute year named in this very line
@@ -2819,13 +2825,13 @@ def _pa_events_from_pairs(pairs) -> tuple:
         if rdate and rdate[:4] in _pa_statute_years(blob):
             rdate = ""
         if _pa_any_token(blob, _PA_DELETION_TOKENS):
-            dels.append(DeletionEvent(timestamp=rdate, target="", source="record"))
+            dels.append(DeletionEvent(timestamp=rdate, target="", source=_src))
         if _pa_any_token(blob, _PA_LOC_TOKENS):
-            legals.append(LegalProceeding(status="active", date=rdate, kind="loc", source="record"))
+            legals.append(LegalProceeding(status="active", date=rdate, kind="loc", source=_src))
         if _pa_any_token(blob, _PA_NOTICE_TOKENS):
-            legals.append(LegalProceeding(date=rdate, kind="notice", source="record"))
+            legals.append(LegalProceeding(date=rdate, kind="notice", source=_src))
         if _pa_any_token(blob, _PA_INQUIRY_TOKENS):
-            legals.append(LegalProceeding(date=rdate, kind="inquiry", source="record"))
+            legals.append(LegalProceeding(date=rdate, kind="inquiry", source=_src))
         for ind in _PA_ENFORCEMENT_INDICATORS:
             if _pa_any_token(blob, (ind,)):
                 agency = ind.upper() if ind in _PA_ENFORCEMENT_AGENCIES else ""
@@ -2834,19 +2840,19 @@ def _pa_events_from_pairs(pairs) -> tuple:
                 # (_pa_year_date itself skips statute years).
                 legals.append(LegalProceeding(agency=agency,
                                               date=rdate or _pa_year_date(blob),
-                                              kind="enforcement", source="record"))
+                                              kind="enforcement", source=_src))
                 break
         for app in _PA_ENCRYPTED_APPS:
             if _pa_any_token(blob, (app,)):
                 canon = _pa_canon_app(app)
                 if canon not in seen_chan:
                     seen_chan.add(canon)
-                    chans.append(CommChannel(type=canon, encrypted=True, source="record"))
+                    chans.append(CommChannel(type=canon, encrypted=True, source=_src))
         if (_pa_any_token(blob, _PA_VPN_TOKENS) or str(exit_val or "").strip()) and "vpn" not in seen_chan:
             seen_chan.add("vpn")
             foreign = _pa_is_foreign(exit_val) or _pa_any_token(blob, _PA_FOREIGN_TOKENS)
             chans.append(CommChannel(type="vpn", encrypted=False,
-                                     foreign_exit=bool(foreign), source="record"))
+                                     foreign_exit=bool(foreign), source=_src))
     return dels, legals, chans
 
 
@@ -3248,6 +3254,35 @@ def build_ontology(person, entities=None, flags=None, timeline=None,
                                    _pa_get(person, "conflicts"))
 
     # ── phones (arg, else person.phones_found) ───────────────────────────────
+    # Real per-phone origin files live in person["phone_sources"] ({phone: [files]}
+    # from build_phone_source_map). Thread them into PhoneNumber.source when the
+    # phone-arg carries none — matched by the SAME phone_key(min_digits=7) used to
+    # build the map. Multiple files are comma-joined (the pattern Location.source
+    # already uses). A number absent from the map keeps source="" — a genuine
+    # absence, never back-filled.
+    try:
+        from modules.sanitizer import phone_key as _pa_phone_key
+    except Exception:
+        _pa_phone_key = None
+    _psrc_raw = _pa_get(person, "phone_sources") or {}
+    _psrc = {}
+    if isinstance(_psrc_raw, dict) and _pa_phone_key:
+        for _pk, _pf in _psrc_raw.items():
+            _k = _pa_phone_key(_pk, min_digits=7)
+            if _k:
+                _psrc[_k] = _pf
+
+    def _pa_phone_source(num, given):
+        given = str(given or "").strip()
+        if given:
+            return given
+        if _pa_phone_key and _psrc:
+            _k = _pa_phone_key(num, min_digits=7)
+            files = _psrc.get(_k) if _k else None
+            if files:
+                return ", ".join(str(f) for f in files if str(f).strip())[:120]
+        return ""
+
     raw_phones = _pa_listify(phones) or _pa_listify(_pa_get(person, "phones_found"))
     for ph in raw_phones:
         if isinstance(ph, dict):
@@ -3256,12 +3291,12 @@ def build_ontology(person, entities=None, flags=None, timeline=None,
             ptype = ph.get("type") or _pa_classify_phone(num, tags)
             onto.phones.append(PhoneNumber(number=str(num), type=ptype,
                                            country=str(ph.get("country", "") or ""),
-                                           source=str(ph.get("source", "") or ""),
+                                           source=_pa_phone_source(num, ph.get("source", "")),
                                            owner=str(ph.get("owner", "") or "")))
         else:
             num = str(ph)
             onto.phones.append(PhoneNumber(number=num, type=_pa_classify_phone(num, []),
-                                           source=""))
+                                           source=_pa_phone_source(num, "")))
 
     # ── organizations ────────────────────────────────────────────────────────
     for o in _pa_listify(_pa_get(entities, "organizations") or _pa_get(entities, "orgs")
@@ -3421,7 +3456,10 @@ def build_ontology(person, entities=None, flags=None, timeline=None,
                 if k != "_source_file" and str(v).strip() not in ("", "None", "nan")]
         blob = " ".join(vals)
         rdate = _pa_first_date(str(_pa_pick(row, _PA_COL_DATE) or "")) or _pa_first_date(blob)
-        _evpairs.append((blob, rdate, _pa_pick(row, _PA_COL_EXITNODE)))
+        # Thread the row's REAL origin filename (the same _source_file carrier
+        # Transaction.source reads) so row-derived events cite their file, not "record".
+        _evpairs.append((blob, rdate, _pa_pick(row, _PA_COL_EXITNODE),
+                         str(row.get("_source_file", "") or "")))
     _tl_raw = _pa_get(timeline, "events") if isinstance(timeline, dict) else timeline
     for ev in _pa_listify(_tl_raw):
         desc = (_pa_get(ev, "description") or _pa_get(ev, "context")
@@ -3429,14 +3467,26 @@ def build_ontology(person, entities=None, flags=None, timeline=None,
         edate = _pa_first_date(str(_pa_get(ev, "date") or _pa_get(ev, "normalized")
                                    or _pa_pick(ev, _PA_COL_DATE) or ""))
         if desc:
-            _evpairs.append((str(desc), edate, None))
+            # Timeline events carry their own real source (e.g. "Document: X").
+            _evpairs.append((str(desc), edate, None, str(_pa_get(ev, "source", "") or "")))
     # Raw narrative text (case notes, surveillance logs): scan LINE BY LINE so an
     # app name / enforcement reference keeps any date (or embedded year) on its line.
-    for txt in _pa_listify(texts):
+    # Cite the ENCLOSING document (where the statement textually appears) — NOT any
+    # other file the sentence merely references. texts[i] corresponds to documents[i]
+    # as built by build_typed_ontology; trust that mapping ONLY when the two lists
+    # align 1:1, else leave the source blank (→ "record"), never guessing a filename.
+    _texts_list = _pa_listify(texts)
+    _docs_list = _pa_listify(documents)
+    _text_aligned = bool(_docs_list) and len(_docs_list) == len(_texts_list)
+    for _ti, txt in enumerate(_texts_list):
+        _tfname = ""
+        if _text_aligned and isinstance(_docs_list[_ti], dict):
+            _tfname = str(_docs_list[_ti].get("filename")
+                          or _docs_list[_ti].get("name") or "")
         for line in str(txt or "").splitlines():
             line = line.strip()
             if line:
-                _evpairs.append((line, _pa_first_date(line), None))
+                _evpairs.append((line, _pa_first_date(line), None, _tfname))
     rec_dels, rec_legals, rec_chans = _pa_events_from_pairs(_evpairs)
 
     # ── comm channels (explicit entities → records → flags) ───────────────────
