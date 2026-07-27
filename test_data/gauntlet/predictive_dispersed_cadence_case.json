@@ -6,11 +6,11 @@
     "last_date": "2024-06-01",
     "median_interval_days": 76,
     "projected_next_date": "2024-08-16",
-    "irregular_cadence": false,
+    "irregular_cadence": true,
     "confidence": "WEAK",
     "speculative": true,
     "determinative": false,
-    "basis": "3 cited occurrence(s) between 2024-01-01 and 2024-06-01 at a median interval of ~76 day(s)",
+    "basis": "3 cited occurrence(s) between 2024-01-01 and 2024-06-01 at a median interval of ~76 day(s); intervals are irregular (2–150 days), so the projected date is only a rough extrapolation",
     "citations": [
       {
         "date": "2024-01-01",

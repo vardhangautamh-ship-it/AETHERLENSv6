@@ -56,11 +56,11 @@
     "observation": ""
   },
   {
-    "attack": "ESCALATION HONESTY (blind spot) — dispersed 3-occurrence cadence is never flagged irregular",
-    "expected": "A 3-occurrence series with intervals [2 days, 150 days] has no real rhythm; the irregular-cadence caveat ('rough extrapolation') should fire so the projected date is not read as a genuine cadence.",
-    "actual": "irregular_cadence flag=False; 'rough extrapolation' caveat present=False; still emits specific projected date=2024-08-16 on a claimed ~76-day median cadence.",
-    "passed": false,
-    "cause": "predictive._project_series computes irregular = max(intervals) > 3*median(intervals). For any 3-occurrence series there are exactly 2 intervals, so median = (a+b)/2 and the condition 3a+b < 0 is unsatisfiable for positive intervals — PROVEN 0/200000 by brute force. The minimum groundable series therefore NEVER receives the irregular-cadence honesty caveat, however dispersed; the guard only becomes reachable at 4+ occurrences. Global SPECULATIVE/WEAK labelling still rides on the output, so it is not presented as finding-weight — but the per-item honesty signal that distinguishes a real cadence from noise is silently absent exactly at the sparsest, most fragile case.",
+    "attack": "ESCALATION HONESTY — dispersed 3-occurrence cadence is flagged irregular; regular is not",
+    "expected": "A dispersed 3-occurrence series [2,150] fires irregular_cadence with the 'rough extrapolation' caveat; a regular 3-occurrence series [14,14] does NOT; top-level WEAK/speculative labels unchanged (over-precision repaired, certainty labels untouched).",
+    "actual": "dispersed: flagged=True, caveat=True, labels_honest=True; regular: clean=True.",
+    "passed": true,
+    "cause": "",
     "observation": ""
   }
 ]

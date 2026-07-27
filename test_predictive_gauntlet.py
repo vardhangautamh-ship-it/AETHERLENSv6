@@ -422,44 +422,42 @@ def attack_escalation_honesty():
 
 
 def attack_dispersed_cadence_blind_spot():
-    """FINDING probe: the irregular-cadence honesty caveat is mathematically
-    UNREACHABLE for the minimum groundable series (3 occurrences → 2 intervals),
-    no matter how dispersed the cadence, because median([a,b]) = (a+b)/2 makes
-    max > 3*median unsatisfiable. So a 3-point series with intervals [2, 150]
-    days (a 75:1 dispersion, no real rhythm) is projected as a clean ~76-day
-    cadence with a SPECIFIC projected date and NO 'rough extrapolation' hedge."""
+    """REGRESSION probe (was a finding, now fixed): the irregular-cadence caveat
+    must be REACHABLE for the minimum groundable series (3 occurrences → 2
+    intervals). The guard is now max(interval) > 3*min(interval), so a dispersed
+    3-point series like [2, 150] days (75:1) IS flagged and carries the 'rough
+    extrapolation' caveat — while a genuinely regular 3-point series is NOT
+    flagged (no over-correction). Top-level WEAK/speculative/determinative labels
+    are unchanged; only the per-item noisy-cadence signal was repaired."""
     dispersed = P.predict_from_ontology(onto([txn("Q Co", "2024-01-01"),
                                               txn("Q Co", "2024-01-03"),
                                               txn("Q Co", "2024-06-01")]))
-    p0 = dispersed["predictions"][0] if dispersed["predictions"] else {}
-    dump("dispersed_cadence_case", {"prediction": p0})
+    d0 = dispersed["predictions"][0] if dispersed["predictions"] else {}
+    dump("dispersed_cadence_case", {"prediction": d0})
+    d_flagged = bool(d0) and d0.get("irregular_cadence") is True
+    d_caveat = bool(d0) and "rough extrapolation" in d0.get("basis", "")
+    d_labels_honest = (bool(d0) and str(d0.get("confidence")).upper() == "WEAK"
+                       and d0.get("speculative") is True
+                       and d0.get("determinative") is False)
 
-    flagged = bool(p0) and p0.get("irregular_cadence") is True
-    caveat = bool(p0) and "rough extrapolation" in p0.get("basis", "")
-    emits_specific_date = bool(p0) and bool(p0.get("projected_next_date"))
-    median_iv = p0.get("median_interval_days")
+    # No over-correction: a genuinely regular 3-point series ([14, 14]) stays clean.
+    regular = P.predict_from_ontology(onto([txn("R Co", "2024-01-01"),
+                                            txn("R Co", "2024-01-15"),
+                                            txn("R Co", "2024-01-29")]))
+    r0 = regular["predictions"][0] if regular["predictions"] else {}
+    r_clean = bool(r0) and r0.get("irregular_cadence") is False
 
-    # PASS would mean the dispersed cadence was flagged irregular / caveated.
-    passed = flagged and caveat
-    expected = ("A 3-occurrence series with intervals [2 days, 150 days] has no "
-                "real rhythm; the irregular-cadence caveat ('rough extrapolation') "
-                "should fire so the projected date is not read as a genuine cadence.")
-    actual = (f"irregular_cadence flag={flagged}; 'rough extrapolation' caveat "
-              f"present={caveat}; still emits specific projected date="
-              f"{p0.get('projected_next_date')} on a claimed ~{median_iv}-day "
-              f"median cadence.")
-    cause = ("" if passed else
-             "predictive._project_series computes irregular = max(intervals) > "
-             "3*median(intervals). For any 3-occurrence series there are exactly 2 "
-             "intervals, so median = (a+b)/2 and the condition 3a+b < 0 is "
-             "unsatisfiable for positive intervals — PROVEN 0/200000 by brute force. "
-             "The minimum groundable series therefore NEVER receives the "
-             "irregular-cadence honesty caveat, however dispersed; the guard only "
-             "becomes reachable at 4+ occurrences. Global SPECULATIVE/WEAK labelling "
-             "still rides on the output, so it is not presented as finding-weight — "
-             "but the per-item honesty signal that distinguishes a real cadence from "
-             "noise is silently absent exactly at the sparsest, most fragile case.")
-    record("ESCALATION HONESTY (blind spot) — dispersed 3-occurrence cadence is never flagged irregular",
+    passed = d_flagged and d_caveat and d_labels_honest and r_clean
+    expected = ("A dispersed 3-occurrence series [2,150] fires irregular_cadence "
+                "with the 'rough extrapolation' caveat; a regular 3-occurrence "
+                "series [14,14] does NOT; top-level WEAK/speculative labels "
+                "unchanged (over-precision repaired, certainty labels untouched).")
+    actual = (f"dispersed: flagged={d_flagged}, caveat={d_caveat}, "
+              f"labels_honest={d_labels_honest}; regular: clean={r_clean}.")
+    cause = "" if passed else ("irregular-cadence guard did not behave: dispersed "
+                               "not flagged, regular falsely flagged, or a top-level "
+                               "label changed.")
+    record("ESCALATION HONESTY — dispersed 3-occurrence cadence is flagged irregular; regular is not",
            expected, actual, passed, cause)
 
 

@@ -118,7 +118,14 @@ def _project_series(label: str, items: list, undated: int) -> dict | None:
                                f"interval between them — cadence not groundable")}
     last = date.fromordinal(days[-1])
     projected = date.fromordinal(days[-1] + median_iv * _MAX_PROJECT_STEPS)
-    irregular = intervals and (max(intervals) > 3 * max(median_iv, 1))
+    # Irregular cadence = largest gap more than 3x the smallest gap. Keyed off
+    # min (not median) so it is REACHABLE for a 3-occurrence / 2-interval series
+    # (median of two values is their mean, which made the old max>3*median test
+    # unsatisfiable). Strict superset of the old guard (min <= median <= max), so
+    # nothing previously flagged is lost. Detection only — the projected date and
+    # the WEAK/speculative/determinative labels are unchanged; a flagged series
+    # just carries the "rough extrapolation" caveat below.
+    irregular = intervals and (max(intervals) > 3 * max(min(intervals), 1))
     basis = (f"{len(dated)} cited occurrence(s) between {dated[0]['date']} and "
              f"{dated[-1]['date']} at a median interval of ~{median_iv} day(s)"
              + (f"; intervals are irregular ({min(intervals)}–{max(intervals)} days), "
