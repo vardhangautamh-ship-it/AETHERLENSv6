@@ -2706,21 +2706,32 @@ def resolve_entity_from_documents(
         return parsed, model_name
 
     # ── Try Bedrock (Claude Sonnet 4 · ap-south-1 · India) — PRIMARY ─────────
+    # A live LLM call can RAISE (expired creds, model-access denied, throttling,
+    # region/network). The documented contract is Bedrock → Gemini → local, so an
+    # exception must FALL THROUGH to the next tier — never propagate and abort the
+    # whole file's ingestion. (Returning empty already falls through; this makes a
+    # raised error behave the same.)
     if getattr(config, "bedrock_client", None) is not None:
-        raw = _call_bedrock_for_fusion(prompt)
-        person, method = _parse_ai_response(raw, "claude-sonnet-4-bedrock")
-        if person:
-            return person, method
+        try:
+            raw = _call_bedrock_for_fusion(prompt)
+            person, method = _parse_ai_response(raw, "claude-sonnet-4-bedrock")
+            if person:
+                return person, method
+        except Exception as _be:
+            print(f"[RESOLVE] Bedrock call failed — falling through to Gemini/local: {_be}")
 
     # ── Try Gemini ────────────────────────────────────────────────────────────
     gemini_key = config.GEMINI_API_KEY
     if gemini_key and gemini_key not in ("", "your_gemini_key_here"):
-        raw = _call_gemini(prompt)
-        person, method = _parse_ai_response(raw, "gemini")
-        if person:
-            return person, method
+        try:
+            raw = _call_gemini(prompt)
+            person, method = _parse_ai_response(raw, "gemini")
+            if person:
+                return person, method
+        except Exception as _ge:
+            print(f"[RESOLVE] Gemini call failed — falling through to local: {_ge}")
 
-    # ── Local rule-based fallback ─────────────────────────────────────────────
+    # ── Local rule-based fallback (always succeeds; never raises) ─────────────
     return _local_resolve_from_rows(subject_name, structured_rows, filename), "local-fallback"
 
 
