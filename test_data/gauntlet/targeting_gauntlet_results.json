@@ -16,9 +16,9 @@
   {
     "attack": "THIN-EVIDENCE INFLATION — rank must track cited evidence, not a bare score",
     "expected": "A subject with a high score but ZERO cited patterns and an EMPTY risk basis should NOT outrank an evidence-rich lower-scored subject — or should at least be flagged as thin at the ranking layer before it lands on the watchlist.",
-    "actual": "rank order=[(1, 'Thin Eighty'), (2, 'Rich Sixty')]; Thin-Eighty rank=#1 with pattern_count=0, strong_count=0, risk_basis_lines=0; on watchlist=True.",
-    "passed": false,
-    "cause": "targeting._rank_key ranks by risk_score FIRST with no cross-check that the score is backed by cited patterns or risk-basis lines; a citation-less score of 80 outranks a 3-STRONG-pattern score of 60 and is auto-added to the watchlist (>=55). No thin-basis guard exists at the projection/ranking layer. Upstream, the §16 score itself can be inflated by raw source COUNT (ai_agents.run_risk_agent: 6 pts per source up to ~36), so volume alone can manufacture the number this layer then trusts."
+    "actual": "rank order=[(1, 'Rich Sixty'), (2, 'Thin Eighty')]; Thin-Eighty rank=#2 with pattern_count=0, strong_count=0, risk_basis_lines=0; on watchlist=False.",
+    "passed": true,
+    "cause": ""
   },
   {
     "attack": "STABILITY — same input yields same ranking",

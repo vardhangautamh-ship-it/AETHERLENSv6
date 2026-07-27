@@ -57,6 +57,17 @@ def _extract_subject(case, sections: dict) -> str:
     return v.strip() if isinstance(v, str) and v.strip() else "Unknown Subject"
 
 
+def _has_cited_basis(risk_basis) -> bool:
+    """True when at least one §16 risk-basis line carries a per-factor citation
+    (an Evidence:/Source: marker). The bare RISK SCORE:/CONFIDENCE: header lines
+    do NOT corroborate the number — cited evidence is the currency, not the score."""
+    for l in (risk_basis or []):
+        low = str(l).lower()
+        if "evidence:" in low or "source:" in low or "sources:" in low:
+            return True
+    return False
+
+
 def build_target_package(case) -> dict | None:
     """Build ONE officer-review target package from an analysed case.
 
@@ -85,6 +96,15 @@ def build_target_package(case) -> dict | None:
     imm = sections.get("immigration_profile")
     imm_present = isinstance(imm, dict) and bool(imm.get("pattern_count"))
 
+    # Corroboration guard (ranking-layer, identity-blind): a scored subject is
+    # CORROBORATED when the number is backed by cited evidence targeting can see
+    # — at least one fired §09B pattern OR at least one cited §16 basis line. A
+    # scored-but-uncorroborated subject (thin_basis) is ranked below cited
+    # evidence and never silently auto-watchlisted. Derived ONLY from evidence
+    # counts — no identity attribute is read.
+    corroborated = bool(patterns) or _has_cited_basis(risk_basis)
+    thin_basis = (risk_score is not None) and not corroborated
+
     pkg = {
         "subject": subject,
         "case_type": str(pa.get("case_type") or "undetermined"),
@@ -96,6 +116,8 @@ def build_target_package(case) -> dict | None:
         "strong_count": strong_count,
         "immigration_profile_present": imm_present,
         "data_gaps": data_gaps,
+        "corroborated": corroborated,
+        "thin_basis": thin_basis,
         "human_authorisation_required": True,
         "authorisation_notice": HUMAN_AUTHORISATION_NOTICE,
     }
@@ -116,6 +138,11 @@ def _render_package_lines(pkg: dict) -> list:
     lines.append(f"CASE TYPE: {pkg['case_type'].upper()} — "
                  f"{pkg['pattern_count']} pattern(s) fired "
                  f"({pkg['strong_count']} STRONG)")
+    if pkg.get("thin_basis"):
+        lines.append("⚠ UNCORROBORATED — this score is NOT backed by any cited "
+                     "pattern or cited risk-basis line; ranked below cited-evidence "
+                     "subjects and NOT auto-watchlisted. Treat as a lead for human "
+                     "review, not as established priority.")
     if not pkg["patterns"]:
         lines.append("PATTERNS: none fired — no deterministic behavioural "
                      "indicators; see risk basis and data gaps.")
@@ -143,11 +170,18 @@ def _render_package_lines(pkg: dict) -> list:
 def _rank_key(pkg: dict):
     """Deterministic ranking key — evidence-based inputs ONLY.
 
-    Order: risk score desc (unscored last), STRONG pattern count desc, total
-    pattern count desc, subject name asc as the final stable tie-break."""
-    score = pkg.get("risk_score")
-    score = int(score) if isinstance(score, (int, float)) else -1
-    return (-score, -int(pkg.get("strong_count") or 0),
+    Cited evidence is the currency, not the number. Three tiers, in order:
+    0 = corroborated scored (score backed by a cited pattern or cited risk-basis
+    line); 1 = thin-basis scored (a bare number with no cited backing); 2 =
+    unscored (no §16 score — ranked last, unchanged). So a bare number can never
+    outrank cited evidence, and an unscored case still ranks last. Within each
+    tier: risk score desc, STRONG pattern count desc, total pattern count desc,
+    subject name asc (stable tie-break). No identity attribute is ever an input."""
+    score_val = pkg.get("risk_score")
+    scored = isinstance(score_val, (int, float))
+    score = int(score_val) if scored else -1
+    tier = 2 if not scored else (1 if pkg.get("thin_basis") else 0)
+    return (tier, -score, -int(pkg.get("strong_count") or 0),
             -int(pkg.get("pattern_count") or 0),
             str(pkg.get("subject", "")).lower())
 
@@ -174,6 +208,11 @@ def prioritize_cases(cases) -> dict:
             basis = (f"no risk score available — ranked last; "
                      f"{pkg['pattern_count']} pattern(s) fired "
                      f"({pkg['strong_count']} STRONG)")
+        elif pkg.get("thin_basis"):
+            basis = (f"risk {pkg['risk_score']}/100 ({pkg['risk_level']}) — "
+                     f"UNCORROBORATED: no cited patterns and no cited risk basis; "
+                     f"ranked below cited-evidence subjects, not auto-watchlisted "
+                     f"— needs human review")
         else:
             basis = (f"risk {pkg['risk_score']}/100 ({pkg['risk_level']}); "
                      f"{pkg['pattern_count']} pattern(s) fired "
@@ -187,6 +226,8 @@ def prioritize_cases(cases) -> dict:
             "pattern_count": pkg["pattern_count"],
             "strong_count": pkg["strong_count"],
             "case_type": pkg["case_type"],
+            "corroborated": bool(pkg.get("corroborated")),
+            "thin_basis": bool(pkg.get("thin_basis")),
             "basis": basis,
         })
 
@@ -211,7 +252,8 @@ def render_priority_list(result: dict) -> str:
     if not entries:
         lines.append("No analysed cases to prioritise.")
     for e in entries:
-        lines.append(f"{e.get('rank', '?'):>3}. {e.get('subject', '?')} — "
+        flag = " [UNCORROBORATED]" if e.get("thin_basis") else ""
+        lines.append(f"{e.get('rank', '?'):>3}. {e.get('subject', '?')}{flag} — "
                      f"{e.get('basis', '')}")
     if result.get("skipped"):
         lines.append(f"({result['skipped']} malformed case(s) skipped — "
@@ -269,7 +311,7 @@ def build_watchlist(cases, previous: dict | None = None) -> dict:
     PENDING OFFICER REVIEW status that only a human can move."""
     ranked = prioritize_cases(cases)
 
-    entries, manual_triage, excluded = [], [], 0
+    entries, manual_triage, uncorroborated_review, excluded = [], [], [], 0
     for e in ranked["prioritised"]:
         if e["risk_score"] is None:
             manual_triage.append({
@@ -278,6 +320,23 @@ def build_watchlist(cases, previous: dict | None = None) -> dict:
                          "automatically; requires manual officer triage"),
                 "pattern_count": e["pattern_count"],
                 "strong_count": e["strong_count"],
+            })
+        elif e["risk_score"] >= WATCHLIST_MIN_SCORE and e.get("thin_basis"):
+            # High score but UNCORROBORATED — never silently auto-watchlisted.
+            # Surfaced for a human to review before any watchlisting (flag, don't
+            # assert; surface, don't hide).
+            uncorroborated_review.append({
+                "subject": e["subject"],
+                "risk_score": e["risk_score"],
+                "risk_level": e["risk_level"],
+                "pattern_count": e["pattern_count"],
+                "strong_count": e["strong_count"],
+                "case_type": e["case_type"],
+                "note": ("high score but UNCORROBORATED — no cited patterns and no "
+                         "cited risk basis; NOT auto-watchlisted; requires human "
+                         "review before any watchlisting"),
+                "review_status": "PENDING OFFICER REVIEW",
+                "legal_basis_required": True,
             })
         elif e["risk_score"] >= WATCHLIST_MIN_SCORE:
             entries.append({
@@ -315,6 +374,8 @@ def build_watchlist(cases, previous: dict | None = None) -> dict:
         "watchlist": entries,
         "watchlist_count": len(entries),
         "manual_triage": manual_triage,
+        "uncorroborated_review": uncorroborated_review,
+        "uncorroborated_count": len(uncorroborated_review),
         "excluded_below_threshold": excluded,
         "skipped_malformed": ranked["skipped"],
         "threshold": {
@@ -347,6 +408,10 @@ def render_watchlist(wl: dict) -> str:
         lines.append(f"{e.get('rank', '?'):>3}. {e.get('subject', '?')} — "
                      f"{e.get('listed_because', '')} — "
                      f"[{e.get('review_status', 'PENDING OFFICER REVIEW')}]")
+    for u in (wl.get("uncorroborated_review") or []):
+        lines.append(f"  ⚠ UNCORROBORATED (high score, NOT watchlisted): "
+                     f"{u.get('subject', '?')} — risk {u.get('risk_score', '?')}/100 "
+                     f"({u.get('risk_level', '?')}) — {u.get('note', '')}")
     for t in (wl.get("manual_triage") or []):
         lines.append(f"  ⚑ MANUAL TRIAGE: {t.get('subject', '?')} — {t.get('note', '')}")
     if wl.get("excluded_below_threshold"):
